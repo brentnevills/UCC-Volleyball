@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "TeamMember": {
+      "title": "Team Member",
+      "description": "A coach or user with access to the team data.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user's UID." },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "joinedAt"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Team settings, core config.",
+      "type": "object",
+      "properties": {
+        "roster": { "type": "array" },
+        "savedRosters": { "type": "object" },
+        "savedLineups": { "type": "object" }
+      }
+    },
+    "Opponent": {
+      "title": "Opponent",
+      "description": "Scouting and opponent details.",
+      "type": "object",
+      "properties": {
+        "defaultLineup": { "type": "array" },
+        "notes": { "type": "object" },
+        "setterId": { "type": "string" },
+        "liberoId": { "type": "string" }
+      }
+    },
+    "Match": {
+      "title": "Match",
+      "description": "A scheduled match.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teamId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "opponent": { "type": "string" },
+        "format": { "type": "string" },
+        "cap": { "type": "string" }
+      },
+      "required": ["id", "teamId", "date", "type", "opponent", "format"]
+    },
+    "MatchSet": {
+      "title": "Set",
+      "description": "A distinct set in a match.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teamId": { "type": "string" },
+        "matchId": { "type": "string" },
+        "setNum": { "type": "number" },
+        "scoreUcc": { "type": "number" },
+        "scoreOpp": { "type": "number" }
+      },
+      "required": ["id", "teamId", "matchId", "setNum", "scoreUcc", "scoreOpp"]
+    },
+    "Stat": {
+      "title": "Stat",
+      "description": "An action or event that occurred in a match.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teamId": { "type": "string" },
+        "matchId": { "type": "string" },
+        "setId": { "type": "string" },
+        "playerId": { "type": "string" },
+        "category": { "type": "string" },
+        "metric": { "type": "string" },
+        "value": { "type": "number" },
+        "isOpponent": { "type": "boolean" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "teamId", "matchId", "setId", "playerId", "category", "metric", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/teams/{teamId}/members/{userId}": {
+      "schema": { "$ref": "#/entities/TeamMember" },
+      "description": "Users who can access this team's data."
+    },
+    "/teams/{teamId}/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/Setting" },
+      "description": "The team settings."
+    },
+    "/teams/{teamId}/opponents/{opponentId}": {
+      "schema": { "$ref": "#/entities/Opponent" },
+      "description": "Recorded opponents for the team."
+    },
+    "/teams/{teamId}/matches/{matchId}": {
+      "schema": { "$ref": "#/entities/Match" },
+      "description": "The matches scheduled or played by the team."
+    },
+    "/teams/{teamId}/sets/{setId}": {
+      "schema": { "$ref": "#/entities/MatchSet" },
+      "description": "The sets played in matches."
+    },
+    "/teams/{teamId}/stats/{statId}": {
+      "schema": { "$ref": "#/entities/Stat" },
+      "description": "The atomic actions that happened during sets."
+    }
+  }
+}

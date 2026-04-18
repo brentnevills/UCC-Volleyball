@@ -31,35 +31,37 @@ import {
 import { initializeApp } from "firebase/app";
 import {
   getAuth,
-  signInAnonymously,
-  signInWithCustomToken,
+  signInWithPopup,
+  GoogleAuthProvider,
   onAuthStateChanged,
+  signOut
 } from "firebase/auth";
 import {
   getFirestore,
   collection,
   doc,
+  getDoc,
+  getDocs,
   setDoc,
   deleteDoc,
   onSnapshot,
   writeBatch,
+  serverTimestamp,
+  query,
+  where
 } from "firebase/firestore";
+import firebaseConfig from "../firebase-applet-config.json";
 
 // -------------------------------------------------------------
 // ENVIRONMENT & CLOUD CONFIGURATION
 // -------------------------------------------------------------
-const isFirebaseAvailable =
-  typeof __firebase_config !== "undefined" && __firebase_config !== null;
+const isFirebaseAvailable = true;
 
-let app, auth, db;
-const appId = typeof __app_id !== "undefined" ? __app_id : "default-app-id";
-const publicPath = `artifacts/${appId}/public/data`;
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
-if (isFirebaseAvailable) {
-  app = initializeApp(JSON.parse(__firebase_config));
-  auth = getAuth(app);
-  db = getFirestore(app);
-}
+const publicPath = `teams`;
 
 const DEFAULT_ROSTER = [
   { id: "1", name: "Player 1", number: "1" },
@@ -70,12 +72,20 @@ const DEFAULT_ROSTER = [
   { id: "6", name: "Player 6", number: "6" },
 ];
 
-const TEAMS = {
-  sr_boys: { name: "Senior Boys", color: "from-[#0044cc] to-[#001b5e]" },
-  jr_boys: { name: "Junior Boys", color: "from-blue-400 to-blue-600" },
-  sr_girls: { name: "Senior Girls", color: "from-amber-500 to-amber-700" },
-  jr_girls: { name: "Junior Girls", color: "from-orange-400 to-orange-500" },
-};
+const TEAM_COLORS = [
+  "from-[#0044cc] to-[#001b5e]",
+  "from-blue-400 to-blue-600",
+  "from-amber-500 to-amber-700",
+  "from-orange-400 to-orange-500",
+  "from-emerald-500 to-teal-700",
+  "from-rose-500 to-red-700",
+  "from-purple-500 to-fuchsia-700",
+  "from-slate-600 to-gray-800"
+];
+
+function generateTeamId() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
 
 // Helper to determine Event ID/Name for grouping
 const getEventDetails = (match) => {
@@ -90,11 +100,201 @@ const getEventDetails = (match) => {
   };
 };
 
+const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
+  const [loading, setLoading] = useState(true);
+  const [careerList, setCareerList] = useState([]);
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      let teamResults = [];
+      let tot = {
+        name: "CAREER TOTAL",
+        teamColor: "bg-slate-800",
+        passCount: 0, passSum: 0,
+        attCount: 0, attKill: 0, attErr: 0,
+        blkCount: 0, blkStuff: 0, blkLate: 0, blkNet: 0, blkUsed: 0,
+        srvCount: 0, srvAce: 0, srvErr: 0,
+        digCount: 0, digErr: 0
+      };
+
+      for (let team of myTeams) {
+        try {
+          const setSnap = await getDoc(doc(db, `teams/${team.id}/settings/core`));
+          if (!setSnap.exists()) continue;
+          const r = setSnap.data().roster || [];
+          const playerMatch = r.find(p => p.name.toLowerCase() === playerName.toLowerCase());
+          if (!playerMatch) continue;
+
+          let pTeam = {
+            name: team.name,
+            teamColor: team.color,
+            passCount: 0, passSum: 0,
+            attCount: 0, attKill: 0, attErr: 0,
+            blkCount: 0, blkStuff: 0, blkLate: 0, blkNet: 0, blkUsed: 0,
+            srvCount: 0, srvAce: 0, srvErr: 0,
+            digCount: 0, digErr: 0
+          };
+
+          const q = query(
+            collection(db, `teams/${team.id}/stats`),
+            where("playerId", "==", playerMatch.id)
+          );
+          const statsSnap = await getDocs(q);
+          
+          statsSnap.forEach(docSnap => {
+            const s = docSnap.data();
+            if (s.isOpponent) return;
+
+            if (s.category === "Pass") {
+              pTeam.passCount += 1;
+              pTeam.passSum += s.value;
+            } else if (s.category === "Dig") {
+              if (s.metric === "Dig") pTeam.digCount += 1;
+              if (s.metric === "Error") pTeam.digErr += 1;
+            } else if (s.category === "Attack") {
+              if (s.metric === "Swing") pTeam.attCount += 1;
+              if (s.metric === "Kill") pTeam.attKill += 1;
+              if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net") pTeam.attErr += 1;
+            } else if (s.category === "Block") {
+              if (s.metric === "Attempt") pTeam.blkCount += 1;
+              if (s.metric === "Block") pTeam.blkStuff += 1;
+              if (s.metric === "Late") pTeam.blkLate += 1;
+              if (s.metric === "Net Viol") pTeam.blkNet += 1;
+              if (s.metric === "Used") pTeam.blkUsed += 1;
+            } else if (s.category === "Serve") {
+              if (s.metric === "Attempt") pTeam.srvCount += 1;
+              if (s.metric === "Ace") pTeam.srvAce += 1;
+              if (s.metric.includes("Miss")) pTeam.srvErr += 1;
+            }
+          });
+
+          teamResults.push(pTeam);
+          tot.passCount += pTeam.passCount;
+          tot.passSum += pTeam.passSum;
+          tot.attCount += pTeam.attCount;
+          tot.attKill += pTeam.attKill;
+          tot.attErr += pTeam.attErr;
+          tot.blkCount += pTeam.blkCount;
+          tot.blkStuff += pTeam.blkStuff;
+          tot.blkLate += pTeam.blkLate;
+          tot.blkNet += pTeam.blkNet;
+          tot.blkUsed += pTeam.blkUsed;
+          tot.srvCount += pTeam.srvCount;
+          tot.srvAce += pTeam.srvAce;
+          tot.srvErr += pTeam.srvErr;
+          tot.digCount += pTeam.digCount;
+          tot.digErr += pTeam.digErr;
+        } catch(e) {
+          console.error(e);
+        }
+      }
+      if (teamResults.length > 0) {
+        setCareerList([...teamResults, tot]);
+      } else {
+        setCareerList([]); // No matching player found
+      }
+      setLoading(false);
+    }
+    if (playerName && myTeams.length > 0) {
+      load();
+    }
+  }, [playerName, myTeams]);
+
+  return (
+    <div className="absolute inset-0 z-[100] bg-slate-900/90 backdrop-blur-md flex flex-col p-4 sm:p-12 overflow-hidden items-center justify-center">
+      <div className="bg-white max-w-5xl w-full rounded-3xl sm:rounded-[3rem] shadow-2xl flex flex-col max-h-[90vh] border border-white/20">
+        <div className="bg-gradient-to-r from-indigo-700 to-indigo-900 p-6 sm:p-10 rounded-t-3xl sm:rounded-t-[3rem] text-white flex justify-between items-center shrink-0">
+          <div>
+            <h2 className="text-3xl sm:text-5xl font-black tracking-widest uppercase flex items-center">
+               PROFILE: {playerName}
+            </h2>
+            <p className="text-indigo-200 mt-2 font-bold tracking-widest text-sm uppercase">Global Career Stats</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors shrink-0 outline-none"
+          >
+            <XCircle size={32} />
+          </button>
+        </div>
+        
+        <div className="p-4 sm:p-8 overflow-y-auto flex-1 bg-slate-50">
+          {loading ? (
+             <div className="flex justify-center items-center h-40">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+             </div>
+          ) : careerList.length === 0 ? (
+             <div className="text-center text-slate-500 py-10 font-bold tracking-widest uppercase">No stats recorded yet across your teams.</div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl shadow-sm border border-slate-200 bg-white">
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-500 text-xs tracking-widest uppercase border-b-2 border-slate-200">
+                    <th className="p-3 sm:p-4 font-black bg-slate-100 sticky left-0 z-10 w-48 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">TEAM</th>
+                    <th className="p-3 font-black text-center border-l bg-slate-50">PASS Avg(Tot)</th>
+                    <th className="p-3 font-black text-center border-l">DIGS (D-Err)</th>
+                    <th className="p-3 font-black text-center border-l bg-slate-50">SWINGS (Att-K-Err)</th>
+                    <th className="p-3 font-black text-center border-l text-green-600">KILL %</th>
+                    <th className="p-3 font-black text-center border-l bg-slate-50">BLOCKS (A-S-L-N-U)</th>
+                    <th className="p-3 font-black text-center border-l">SERVES (Tot-A-Err)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {careerList.map((p, i) => {
+                    const isTotal = p.name === "CAREER TOTAL";
+                    const passAvg = p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "-";
+                    const killPct = p.attCount > 0 ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%" : "0.0%";
+                    const blkTot = p.blkCount + p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
+                    const srvTot = p.srvCount + p.srvAce + p.srvErr;
+
+                    return (
+                      <tr key={i} className={`text-xs sm:text-sm ${isTotal ? 'bg-indigo-50/80 border-t-[3px] border-indigo-200' : 'hover:bg-slate-50 border-b border-slate-100'}`}>
+                         <td className={`p-3 font-black ${isTotal ? 'text-indigo-900 bg-indigo-50/80' : 'text-slate-800 bg-white'} sticky left-0 shadow-[2px_0_5px_rgba(0,0,0,0.05)] flex items-center gap-2 h-full min-h-[50px]`}>
+                            {!isTotal && <span className={`w-3 h-3 rounded-full bg-gradient-to-r ${p.teamColor} shadow`}></span>}
+                            {p.name}
+                         </td>
+                         <td className="p-3 text-center border-l bg-slate-50/30">
+                            <strong>{passAvg}</strong> <span className="opacity-50">({p.passCount})</span>
+                         </td>
+                         <td className="p-3 text-center border-l">
+                            <strong className="text-blue-600 text-base">{p.digCount}</strong> - <span className="text-red-500">{p.digErr}</span>
+                         </td>
+                         <td className="p-3 text-center border-l bg-slate-50/30">
+                            {p.attCount} - <strong className="text-green-600 text-base">{p.attKill}</strong> - <span className="text-red-500">{p.attErr}</span>
+                         </td>
+                         <td className="p-3 text-center border-l text-green-700 font-black tracking-wider">
+                            {killPct}
+                         </td>
+                         <td className="p-3 text-center border-l bg-slate-50/30 relative group whitespace-nowrap">
+                            <span className="font-bold">{blkTot}</span> - 
+                            <strong className="text-indigo-600 text-base mx-1">{p.blkStuff}</strong> - 
+                            <span>{p.blkLate}</span> - <span>{p.blkNet}</span> - <span>{p.blkUsed}</span>
+                         </td>
+                         <td className="p-3 text-center border-l whitespace-nowrap">
+                            <strong className="mr-1">{srvTot}</strong>
+                            <span className="text-orange-500 mx-1 font-bold text-base">{p.srvAce}</span>
+                            <span className="text-red-500 ml-1">{p.srvErr}</span>
+                         </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [view, setView] = useState(() =>
     localStorage.getItem("ucc_vball_active_team") ? "menu" : "team_select"
   );
   const [user, setUser] = useState(null);
+  const [myTeams, setMyTeams] = useState([]);
   const [activeTeam, setActiveTeam] = useState(
     () => localStorage.getItem("ucc_vball_active_team") || null
   );
@@ -169,6 +369,7 @@ export default function App() {
   const [tempNote, setTempNote] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [setWinnerModal, setSetWinnerModal] = useState(null);
+  const [careerPlayerName, setCareerPlayerName] = useState(null);
   const [statFilter, setStatFilter] = useState("all");
 
   // Hierarchical Stats Navigation State
@@ -199,17 +400,26 @@ export default function App() {
 
   useEffect(() => {
     if (!isFirebaseAvailable) return;
-    const initAuth = async () => {
-      if (typeof __initial_auth_token !== "undefined" && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+    });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!user || !isFirebaseAvailable) {
+      setMyTeams([]);
+      return;
+    }
+    const unsub = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
+      if (docSnap.exists() && docSnap.data().teams) {
+        setMyTeams(docSnap.data().teams);
+      } else {
+        setMyTeams([]);
+      }
+    });
+    return () => unsub();
+  }, [user]);
 
   // LOAD DATA BASED ON ACTIVE TEAM
   useEffect(() => {
@@ -240,13 +450,20 @@ export default function App() {
 
     if (!user) return;
 
+    // Join the team for Auth access
+    setDoc(
+      doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
+      { uid: user.uid, joinedAt: serverTimestamp() },
+      { merge: true }
+    ).catch(console.error);
+
     // Scoped Firebase Listeners
     const unsubSettings = onSnapshot(
-      doc(db, `${publicPath}/settings_${activeTeam}/core`),
+      doc(db, `${publicPath}/${activeTeam}/settings/core`),
       (d) => {
         if (d.exists()) setAppData((prev) => ({ ...prev, ...d.data() }));
         else
-          setDoc(doc(db, `${publicPath}/settings_${activeTeam}/core`), {
+          setDoc(doc(db, `${publicPath}/${activeTeam}/settings/core`), {
             roster: DEFAULT_ROSTER,
             savedRosters: {},
             savedLineups: {},
@@ -256,7 +473,7 @@ export default function App() {
     );
 
     const unsubOpponents = onSnapshot(
-      collection(db, `${publicPath}/opponents_${activeTeam}`),
+      collection(db, `${publicPath}/${activeTeam}/opponents`),
       (snap) => {
         const opps = {};
         snap.forEach((d) => {
@@ -268,7 +485,7 @@ export default function App() {
     );
 
     const unsubMatches = onSnapshot(
-      collection(db, `${publicPath}/matches_${activeTeam}`),
+      collection(db, `${publicPath}/${activeTeam}/matches`),
       (snap) => {
         const arr = [];
         snap.forEach((d) => arr.push(d.data()));
@@ -278,7 +495,7 @@ export default function App() {
     );
 
     const unsubSets = onSnapshot(
-      collection(db, `${publicPath}/sets_${activeTeam}`),
+      collection(db, `${publicPath}/${activeTeam}/sets`),
       (snap) => {
         const arr = [];
         snap.forEach((d) => arr.push(d.data()));
@@ -288,7 +505,7 @@ export default function App() {
     );
 
     const unsubStats = onSnapshot(
-      collection(db, `${publicPath}/stats_${activeTeam}`),
+      collection(db, `${publicPath}/${activeTeam}/stats`),
       (snap) => {
         const arr = [];
         snap.forEach((d) => arr.push(d.data()));
@@ -344,7 +561,7 @@ export default function App() {
       if (isFirebaseAvailable && user) {
         const newRoster = [...appData.roster, newPlayer];
         await setDoc(
-          doc(db, `${publicPath}/settings_${activeTeam}/core`),
+          doc(db, `${publicPath}/${activeTeam}/settings/core`),
           { roster: newRoster },
           { merge: true }
         );
@@ -360,7 +577,7 @@ export default function App() {
     const newRoster = appData.roster.filter((p) => p.id !== id);
     if (isFirebaseAvailable && user) {
       await setDoc(
-        doc(db, `${publicPath}/settings_${activeTeam}/core`),
+        doc(db, `${publicPath}/${activeTeam}/settings/core`),
         { roster: newRoster },
         { merge: true }
       );
@@ -382,7 +599,7 @@ export default function App() {
     };
     if (isFirebaseAvailable && user) {
       await setDoc(
-        doc(db, `${publicPath}/settings_${activeTeam}/core`),
+        doc(db, `${publicPath}/${activeTeam}/settings/core`),
         { savedRosters: updatedRosters },
         { merge: true }
       );
@@ -398,7 +615,7 @@ export default function App() {
       const loadedRoster = appData.savedRosters[name];
       if (isFirebaseAvailable && user) {
         await setDoc(
-          doc(db, `${publicPath}/settings_${activeTeam}/core`),
+          doc(db, `${publicPath}/${activeTeam}/settings/core`),
           { roster: loadedRoster },
           { merge: true }
         );
@@ -523,7 +740,7 @@ export default function App() {
     if (isFirebaseAvailable && user) {
       const batch = writeBatch(db);
       batch.set(
-        doc(db, `${publicPath}/opponents_${activeTeam}/${safeOppName}`),
+        doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
         {
           defaultLineup: finalOppLineup,
           notes: oppNotesMem,
@@ -532,10 +749,10 @@ export default function App() {
         }
       );
       batch.set(
-        doc(db, `${publicPath}/matches_${activeTeam}/${matchId}`),
+        doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
         newMatch
       );
-      batch.set(doc(db, `${publicPath}/sets_${activeTeam}/${setId}`), newSet);
+      batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
       await batch.commit();
     } else if (!isFirebaseAvailable) {
       writeLocalDb({
@@ -604,10 +821,10 @@ export default function App() {
 
       const batch = writeBatch(db);
       statsToDelete.forEach((id) =>
-        batch.delete(doc(db, `${publicPath}/stats_${activeTeam}/${id}`))
+        batch.delete(doc(db, `${publicPath}/${activeTeam}/stats/${id}`))
       );
       lastState.sets.forEach((s) =>
-        batch.set(doc(db, `${publicPath}/sets_${activeTeam}/${s.id}`), s)
+        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${s.id}`), s)
       );
       await batch.commit();
     } else if (!isFirebaseAvailable) {
@@ -650,7 +867,7 @@ export default function App() {
 
     if (isFirebaseAvailable && user) {
       await setDoc(
-        doc(db, `${publicPath}/stats_${activeTeam}/${statId}`),
+        doc(db, `${publicPath}/${activeTeam}/stats/${statId}`),
         newStat
       );
     } else if (!isFirebaseAvailable) {
@@ -726,7 +943,7 @@ export default function App() {
       const currentSet = appData.sets.find((s) => s.id === activeSetId);
       if (currentSet)
         await setDoc(
-          doc(db, `${publicPath}/sets_${activeTeam}/${activeSetId}`),
+          doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
           { ...currentSet, scoreUcc: newUcc, scoreOpp: newOpp }
         );
     } else if (!isFirebaseAvailable) {
@@ -788,7 +1005,7 @@ export default function App() {
 
     if (isFirebaseAvailable && user) {
      await setDoc(
-        doc(db, `${publicPath}/sets_${activeTeam}/${setId}`),
+        doc(db, `${publicPath}/${activeTeam}/sets/${setId}`),
         newSet
       );
     } else if (!isFirebaseAvailable)
@@ -836,7 +1053,7 @@ export default function App() {
       const currentSet = appData.sets.find((s) => s.id === activeSetId);
       if (currentSet)
         await setDoc(
-          doc(db, `${publicPath}/sets_${activeTeam}/${activeSetId}`),
+          doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
           { ...currentSet, scoreUcc: newScore.ucc, scoreOpp: newScore.opp }
         );
     } else if (!isFirebaseAvailable) {
@@ -875,7 +1092,7 @@ export default function App() {
 
     if (isFirebaseAvailable && user) {
       await setDoc(
-        doc(db, `${publicPath}/opponents_${activeTeam}/${safeOppName}`),
+        doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
         { notes: updatedMem },
         { merge: true }
       );
@@ -901,7 +1118,7 @@ export default function App() {
 
     if (isFirebaseAvailable && user) {
       await setDoc(
-        doc(db, `${publicPath}/opponents_${activeTeam}/${safeOppName}`),
+        doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
         { setterId: newSetter },
         { merge: true }
       );
@@ -1170,6 +1387,61 @@ export default function App() {
   const benchPlayers = appData.roster.filter(p => !lineup.includes(p.id));
   const selectedPlayerObj = appData.roster.find((r) => r.id === selectedPlayerId);
 
+  const handleCreateTeam = async () => {
+    if (!user) return;
+    const name = prompt("Enter new team name (e.g. 'Varsity Boys 2026'):");
+    if (!name) return;
+    const tId = generateTeamId();
+    const color = TEAM_COLORS[Math.floor(Math.random() * TEAM_COLORS.length)];
+    
+    try {
+      const batch = writeBatch(db);
+      // Give access
+      batch.set(doc(db, `${publicPath}/${tId}/members/${user.uid}`), { uid: user.uid, joinedAt: serverTimestamp() });
+      // Core settings with teamName
+      batch.set(doc(db, `${publicPath}/${tId}/settings/core`), { roster: DEFAULT_ROSTER, savedRosters: {}, savedLineups: {}, teamName: name });
+      // Save visually to user profile
+      const newTeams = [...myTeams, { id: tId, name, color }];
+      batch.set(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
+      
+      await batch.commit();
+      alert(`Team created!\n\nYour Team Share Code is:\n${tId}\n\nGive this to other coaches so they can join.`);
+    } catch(e) {
+      console.error(e);
+      alert("Failed to create team.");
+    }
+  };
+
+  const handleJoinTeam = async () => {
+    if (!user) return;
+    const tIdRaw = prompt("Enter the Team Share Code:");
+    if (!tIdRaw) return;
+    const tId = tIdRaw.toUpperCase().trim();
+    
+    if (myTeams.find(t => t.id === tId)) {
+       alert("You are already in this team.");
+       return;
+    }
+    
+    try {
+      // 1. Give Access (via permissive member creation rule)
+      await setDoc(doc(db, `${publicPath}/${tId}/members/${user.uid}`), { uid: user.uid, joinedAt: serverTimestamp() });
+      
+      // 2. Fetch metadata that we now have access to read
+      const snap = await getDoc(doc(db, `${publicPath}/${tId}/settings/core`));
+      const tName = snap.exists() && snap.data().teamName ? snap.data().teamName : "Joined Team";
+      const color = TEAM_COLORS[Math.floor(Math.random() * TEAM_COLORS.length)];
+      
+      // 3. Update user profile
+      const newTeams = [...myTeams, { id: tId, name: tName, color }];
+      await setDoc(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
+      alert(`Successfully joined ${tName}!`);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to join. Verify the share code is correct.");
+    }
+  };
+
   // -------------------------------------------------------------
   // RENDERERS
   // -------------------------------------------------------------
@@ -1199,16 +1471,16 @@ export default function App() {
             UCC Lancers
           </h1>
           <h2 className="text-sm sm:text-lg font-bold text-slate-400 tracking-widest uppercase text-center mb-10">
-            Select Team Account
+            {user ? "Your Teams" : "Sign In to Access Teams"}
           </h2>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full px-4">
-            {Object.entries(TEAMS).map(([key, team]) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full px-4 mb-6">
+            {user && myTeams.map((team) => (
               <button
-                key={key}
+                key={team.id}
                 onClick={() => {
-                  setActiveTeam(key);
-                  localStorage.setItem("ucc_vball_active_team", key);
+                  setActiveTeam(team.id);
+                  localStorage.setItem("ucc_vball_active_team", team.id);
                   setView("menu");
                 }}
                 className={`bg-gradient-to-br ${team.color} text-white p-8 rounded-3xl font-black text-2xl tracking-widest shadow-xl border border-white/20 transition-all active:scale-95 flex flex-col items-center justify-center group`}
@@ -1220,6 +1492,51 @@ export default function App() {
                 {team.name}
               </button>
             ))}
+            {user && myTeams.length === 0 && (
+              <div className="col-span-1 sm:col-span-2 text-center text-slate-500 py-8">
+                You aren't in any teams yet. Create or join one below.
+              </div>
+            )}
+          </div>
+
+          <div className="w-full px-4 flex flex-col items-center mb-8 gap-4">
+            {!user ? (
+              <button
+                onClick={() => {
+                  const provider = new GoogleAuthProvider();
+                  signInWithPopup(auth, provider).catch(console.error);
+                }}
+                className="bg-white text-slate-800 px-6 py-3 rounded-full font-bold flex items-center shadow-lg hover:bg-slate-100 transition-colors"
+              >
+                Sign in with Google to Sync
+              </button>
+            ) : (
+              <>
+                <div className="flex gap-4 w-full justify-center">
+                  <button
+                    onClick={handleCreateTeam}
+                    className="bg-indigo-600/50 hover:bg-indigo-500/50 border border-indigo-400/30 text-white px-6 py-3 rounded-full font-bold transition-colors w-1/2"
+                  >
+                    + Create Team
+                  </button>
+                  <button
+                    onClick={handleJoinTeam}
+                    className="bg-emerald-600/50 hover:bg-emerald-500/50 border border-emerald-400/30 text-white px-6 py-3 rounded-full font-bold transition-colors w-1/2"
+                  >
+                    Join Team (Code)
+                  </button>
+                </div>
+                <div className="flex flex-col items-center text-slate-400 mt-4">
+                  <span className="mb-2">Logged in as {user.email}</span>
+                  <button
+                    onClick={() => signOut(auth)}
+                    className="text-sm underline hover:text-slate-200"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1227,7 +1544,7 @@ export default function App() {
   }
 
   if (view === "menu") {
-    const teamInfo = TEAMS[activeTeam];
+    const teamInfo = myTeams.find(t => t.id === activeTeam) || { name: "Team Data", color: "from-slate-600 to-slate-800" };
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center">
@@ -1273,6 +1590,12 @@ export default function App() {
                 {teamInfo.name} Database
               </h2>
             </div>
+            {activeTeam && (
+              <div className="mt-4 text-slate-400 text-xs sm:text-sm bg-white/5 px-4 py-2 rounded-full border border-white/10 flex items-center gap-2">
+                <Users size={14} />
+                <span>Share Code: <strong className="text-white tracking-widest select-all">{activeTeam}</strong></span>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
@@ -2860,14 +3183,16 @@ export default function App() {
                       return (
                         <tr
                           key={p.number}
-                          className="hover:bg-blue-50/30 text-[10px] sm:text-xs"
+                          onClick={() => setCareerPlayerName(p.name)}
+                          className="hover:bg-blue-50/50 text-[10px] sm:text-xs cursor-pointer transition-colors"
+                          title="Click to view full Career Stats across all teams"
                         >
-                          <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                          <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400">
                             <div className="flex items-center space-x-1 sm:space-x-2">
                               <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#0033A0]/10 text-[#0033A0] font-black flex items-center justify-center text-[9px] sm:text-[10px]">
                                 {p.number}
                               </span>
-                              <span className="font-bold text-slate-800 truncate max-w-[80px] sm:max-w-none">
+                              <span className="font-bold text-indigo-700 underline truncate max-w-[80px] sm:max-w-none">
                                 {p.name}
                               </span>
                             </div>
@@ -3057,6 +3382,13 @@ export default function App() {
             </div>
           </div>
         </div>
+        {careerPlayerName && (
+          <CareerStatsModal 
+             playerName={careerPlayerName} 
+             myTeams={myTeams} 
+             onClose={() => setCareerPlayerName(null)} 
+          />
+        )}
       </div>
     );
   }

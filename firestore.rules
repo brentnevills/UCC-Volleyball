@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { 
+      return request.auth != null && request.auth.token.email_verified == true; 
+    }
+    
+    function isTeamMember(teamId) {
+      return exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+    }
+
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /teams/{teamId} {
+      match /members/{userId} {
+        allow get: if isSignedIn() && isTeamMember(teamId);
+        allow list: if isSignedIn() && isTeamMember(teamId);
+        allow create: if isSignedIn() 
+          && isValidId(teamId) 
+          && isValidId(userId)
+          && request.auth.uid == userId
+          && incoming().keys().hasAll(['uid', 'joinedAt'])
+          && incoming().uid == request.auth.uid;
+        allow update: if isSignedIn() && request.auth.uid == userId;
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      match /settings/{settingId} {
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow create, update: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(settingId);
+        allow delete: if false;
+      }
+
+      match /opponents/{opponentId} {
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow write: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(opponentId);
+      }
+
+      match /matches/{matchId} {
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow write: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(matchId);
+      }
+
+      match /sets/{setId} {
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow write: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(setId);
+      }
+
+      match /stats/{statId} {
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow create, delete: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(statId);
+        allow update: if false;
+      }
+    }
+  }
+}
