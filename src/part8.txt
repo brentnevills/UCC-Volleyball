@@ -1,0 +1,185 @@
+            <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm">
+              <div className="flex justify-between items-center mb-3 sm:mb-4">
+                <label className="block font-black text-slate-800 uppercase tracking-widest text-sm sm:text-base">
+                  UCC Lineup
+                </label>
+                <div className="flex items-center space-x-1.5 sm:space-x-2 bg-slate-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200">
+                  <Shield
+                    size={14}
+                    className="text-[#0033A0] hidden sm:block"
+                  />
+                  <span className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    Libero:
+                  </span>
+                  <select
+                    className="bg-transparent border-none font-black text-[#0033A0] focus:ring-0 outline-none cursor-pointer text-xs sm:text-sm"
+                    value={liberoId}
+                    onChange={(e) => setLiberoId(e.target.value)}
+                  >
+                    <option value="">None</option>
+                    {appData.roster.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        #{p.number} {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3">
+                {[1, 2, 3, 4, 5, 6].map((pos, idx) => (
+                  <div
+                    key={pos}
+                    className="bg-slate-50 rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden focus-within:ring-2 focus-within:ring-[#0033A0] transition-all flex flex-col"
+                  >
+                    <div className="bg-slate-100 px-2 sm:px-3 py-1 sm:py-1.5 text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200 flex justify-between items-center">
+                      <span>Pos {pos}</span>
+                      {pos === 1 && serving === "ucc" && (
+                        <span className="text-xs sm:text-sm leading-none">
+                          🏐
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      className="p-2 sm:p-3 bg-transparent font-black text-slate-800 outline-none w-full appearance-none cursor-pointer text-center text-sm sm:text-base"
+                      value={lineup[idx] || ""}
+                      onChange={(e) => {
+                        const newLineup = [...lineup];
+                        newLineup[idx] = e.target.value;
+                        setLineup(newLineup);
+                      }}
+                    >
+                      <option value="">Select Player</option>
+                      {appData.roster.map((p) => (
+                        <option
+                          key={p.id}
+                          value={p.id}
+                          disabled={
+                            lineup.includes(p.id) && lineup[idx] !== p.id
+                          }
+                        >
+                          #{p.number} {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={startGame}
+              className="w-full bg-gradient-to-b from-green-400 to-green-600 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] font-black text-xl sm:text-2xl hover:from-green-500 hover:to-green-700 transition-all flex justify-center items-center shadow-lg active:scale-95 tracking-widest mt-2 uppercase"
+            >
+              <Play className="mr-2 sm:mr-3" fill="currentColor" size={24} />{" "}
+              Start Match
+            </button>
+          </div>
+        </div>
+
+        {/* ROSTER MODAL */}
+        {isRosterModalOpen && (
+          <div className="absolute inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-2 sm:p-4 backdrop-blur-md">
+            <div className="bg-white rounded-2xl sm:rounded-[2rem] w-full max-w-xl h-[90vh] sm:h-[85vh] overflow-hidden shadow-2xl flex flex-col">
+              <div className="bg-slate-800 p-4 sm:p-6 text-white flex justify-between items-center">
+                <h3 className="font-black text-lg sm:text-xl tracking-widest uppercase flex items-center">
+                  <Users className="mr-2 sm:mr-3 text-slate-400" size={20} />{" "}
+                  Manage Roster
+                </h3>
+                <button
+                  onClick={() => setIsRosterModalOpen(false)}
+                  className="text-slate-400 hover:text-white transition-colors bg-slate-700 p-2 rounded-full"
+                >
+                  <XCircle size={20} className="sm:w-6 sm:h-6" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-6 bg-slate-50 border-b border-slate-200 space-y-3 sm:space-y-4">
+                <div className="flex items-center space-x-2 sm:space-x-3 bg-white p-1 sm:p-2 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                  <FolderOpen
+                    size={16}
+                    className="text-slate-400 ml-2 sm:w-5 sm:h-5"
+                  />
+                  <select
+                    onChange={(e) => loadRosterPreset(e.target.value)}
+                    className="flex-1 bg-transparent border-none text-slate-700 font-bold focus:ring-0 outline-none text-xs sm:text-base"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>
+                      Load Saved Roster...
+                    </option>
+                    {Object.keys(appData.savedRosters || {}).map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-2 sm:space-x-3 bg-white p-1 sm:p-2 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                  <Save
+                    size={16}
+                    className="text-[#0033A0] ml-2 sm:w-5 sm:h-5"
+                  />
+                  <input
+                    placeholder="Save Roster As..."
+                    value={rosterPresetName}
+                    onChange={(e) => setRosterPresetName(e.target.value)}
+                    className="flex-1 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-base"
+                  />
+                  <button
+                    onClick={saveRosterAsPreset}
+                    className="bg-[#0033A0] text-white px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-sm text-xs sm:text-sm"
+                  >
+                    SAVE
+                  </button>
+                </div>
+
+                <div className="flex gap-2 pt-2 border-t border-slate-200">
+                  <input
+                    placeholder="#"
+                    className="w-12 sm:w-16 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-black text-center text-[#0033A0] text-sm sm:text-base"
+                    value={newPlayerNum}
+                    onChange={(e) => setNewPlayerNum(e.target.value)}
+                    type="number"
+                  />
+                  <input
+                    placeholder="Player Name"
+                    className="flex-1 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base"
+                    value={newPlayerName}
+                    onChange={(e) => setNewPlayerName(e.target.value)}
+                  />
+                  <button
+                    onClick={addPlayer}
+                    className="bg-green-500 text-white px-3 sm:px-4 rounded-lg sm:rounded-xl font-black hover:bg-green-600 transition-colors shadow-sm flex items-center justify-center"
+                  >
+                    <PlusCircle size={18} className="sm:w-5 sm:h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-slate-100">
+                {appData.roster.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-sm border border-slate-200"
+                  >
+                    <div className="flex items-center space-x-2 sm:space-x-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base">
+                        {p.number}
+                      </div>
+                      <span className="font-bold text-slate-700 text-sm sm:text-base">
+                        {p.name}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => removePlayer(p.id)}
+                      className="text-red-400 hover:text-red-600 transition-colors p-2"
+                    >
+                      <XCircle size={18} className="sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}

@@ -1,0 +1,197 @@
+  const handleUndo = async () => {
+    if (history.length === 0) return;
+    const lastState = history[history.length - 1];
+    setHistory((prev) => prev.slice(0, -1));
+
+    setScore(lastState.score);
+    setLineup(lastState.lineup);
+    setOppLineup(lastState.oppLineup);
+    setServing(lastState.serving);
+    setRallyPhase(lastState.rallyPhase);
+    setTeamStats(lastState.teamStats);
+    setSetsWon(lastState.setsWon);
+    setCurrentSetNum(lastState.currentSetNum);
+    setActiveSetId(lastState.activeSetId);
+
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        stats: lastState.stats,
+        sets: lastState.sets,
+      });
+    }
+
+    setSetWinnerModal(null);
+    setEndRallyVisible(false);
+    setServeErrorPrompt(null);
+    setSelectedPlayerId(null);
+    setSelectedOppId(null);
+    setSubModalVisible(false);
+  };
+
+  const logStat = async (
+    playerId,
+    category,
+    metric,
+    value = 1,
+    isOpponent = false
+  ) => {
+    if (!activeMatch || !activeSetId) return;
+    const statId =
+      Date.now().toString() + Math.random().toString(36).substring(7);
+    const newStat = {
+      id: statId,
+      matchId: activeMatch.id,
+      setId: activeSetId,
+      playerId,
+      category,
+      metric,
+      value,
+      isOpponent,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({ ...appData, stats: [...appData.stats, newStat] });
+    }
+  };
+
+  const recordStatAndCheckPoint = (playerId, category, metric, value = 1) => {
+    pushToHistory();
+    logStat(playerId, category, metric, value);
+    setSelectedPlayerId(null);
+    if (category === "Attack") {
+      if (metric === "Kill") {
+        logStat(playerId, "Attack", "Swing", 1);
+        handlePoint("ucc", true);
+      } else if (metric === "Out" || metric === "Net") handlePoint("opp", true);
+    } else if (category === "Block") {
+      if (metric === "Block") handlePoint("ucc", true);
+      else if (metric === "Net Viol") handlePoint("opp", true);
+    }
+    if (category === "Pass") setRallyPhase("play");
+  };
+
+  const recordOppStatAndCheckPoint = (oppId, category, metric, value = 1) => {
+    pushToHistory();
+    logStat(oppId, category, metric, value, true);
+    if (category === "Attack" && metric === "Kill") {
+      logStat(oppId, "Attack", "Swing", 1, true);
+      handlePoint("opp", true);
+      setSelectedOppId(null);
+    }
+  };
+
+  const isTieBreaker = () =>
+    (matchFormat === "Best of 3" && currentSetNum === 3) ||
+    (matchFormat === "Best of 5" && currentSetNum === 5);
+
+  const checkSetWin = (uScore, oScore) => {
+    const target = isTieBreaker() ? 15 : 25;
+    const cap = activeMatch?.cap ? parseInt(activeMatch.cap) : null;
+    if (cap && uScore >= cap) return "ucc";
+    if (cap && oScore >= cap) return "opp";
+    if (uScore >= target && uScore - oScore >= 2) return "ucc";
+    if (oScore >= target && oScore - uScore >= 2) return "opp";
+    return null;
+  };
+
+  const handlePoint = async (team, skipHistory = false) => {
+    if (!skipHistory) pushToHistory();
+    setEndRallyVisible(false);
+    setSelectedOppId(null);
+    setSelectedPlayerId(null);
+
+    let newUcc = score.ucc;
+    let newOpp = score.opp;
+    if (team === "ucc") {
+      newUcc += 1;
+      setScore((s) => ({ ...s, ucc: newUcc }));
+      if (serving === "opp") {
+        setServing("ucc");
+        rotateUCC();
+      }
+    } else {
+      newOpp += 1;
+      setScore((s) => ({ ...s, opp: newOpp }));
+      if (serving === "ucc") {
+        setServing("opp");
+        rotateOpp();
+      }
+    }
+
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        sets: appData.sets.map((s) =>
+          s.id === activeSetId
+            ? { ...s, scoreUcc: newUcc, scoreOpp: newOpp }
+            : s
+        ),
+      });
+    }
+
+    const winner = checkSetWin(newUcc, newOpp);
+    if (winner) setSetWinnerModal(winner);
+    else {
+      setRallyPhase("serve");
+      setTimeout(() => setServePromptVisible(true), 400);
+    }
+  };
+
+  const startNextSet = async () => {
+    const newSetsWon = { ...setsWon };
+    if (setWinnerModal === "ucc") newSetsWon.ucc += 1;
+    else newSetsWon.opp += 1;
+    setSetsWon(newSetsWon);
+
+    const nextSetNum = currentSetNum + 1;
+    setCurrentSetNum(nextSetNum);
+
+    let matchOver = false;
+    if (
+      matchFormat === "Best of 3" &&
+      (newSetsWon.ucc === 2 || newSetsWon.opp === 2)
+    )
+      matchOver = true;
+    if (
+      matchFormat === "Best of 5" &&
+      (newSetsWon.ucc === 3 || newSetsWon.opp === 3)
+    )
+      matchOver = true;
+    if (matchFormat === "2 Sets" && nextSetNum > 2) matchOver = true;
+    if (matchFormat === "Single Set" && nextSetNum > 1) matchOver = true;
+
+    if (matchOver) {
+      setSetWinnerModal(null);
+      viewStatsWithCurrentMatch();
+      return;
+    }
+
+    const setId = Date.now().toString() + "_set";
+    const newSet = {
+      id: setId,
+      matchId: activeMatch.id,
+      setNum: nextSetNum,
+      scoreUcc: 0,
+      scoreOpp: 0,
+    };
+
+    if (isFirebaseAvailable && user) {
+     // ...
+    } else if (!isFirebaseAvailable)
+      writeLocalDb({ ...appData, sets: [...appData.sets, newSet] });
+
+    setActiveSetId(setId);
+    setScore({ ucc: 0, opp: 0 });
+    setTeamStats({ uccSubs: 0, oppSubs: 0, uccTimeouts: 0, oppTimeouts: 0 });
+    setSetWinnerModal(null);
+    setRallyPhase("serve");
+    setTimeout(() => setServePromptVisible(true), 500);
+  };

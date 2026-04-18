@@ -1,0 +1,272 @@
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  Download,
+  Users,
+  Play,
+  CheckCircle2,
+  XCircle,
+  Menu,
+  Activity,
+  Shield,
+  Crosshair,
+  ArrowRightLeft,
+  Save,
+  FolderOpen,
+  FileText,
+  Clock,
+  ChevronUp,
+  ChevronDown,
+  PlusCircle,
+  Trophy,
+  BarChart3,
+  Database,
+  Undo,
+  ChevronRight,
+  Home,
+  LogOut,
+} from "lucide-react";
+
+// Firebase Imports
+import { initializeApp } from "firebase/app";
+import {
+  getAuth,
+  signInAnonymously,
+  signInWithCustomToken,
+  onAuthStateChanged,
+} from "firebase/auth";
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+  writeBatch,
+} from "firebase/firestore";
+
+// -------------------------------------------------------------
+// ENVIRONMENT & CLOUD CONFIGURATION
+// -------------------------------------------------------------
+const isFirebaseAvailable = false;
+
+let app, auth, db;
+const appId = "default-app-id";
+const publicPath = `artifacts/${appId}/public/data`;
+
+/*
+if (isFirebaseAvailable) {
+  app = initializeApp(JSON.parse(__firebase_config));
+  auth = getAuth(app);
+  db = getFirestore(app);
+}
+*/
+
+const DEFAULT_ROSTER = [
+  { id: "1", name: "Player 1", number: "1" },
+  { id: "2", name: "Player 2", number: "2" },
+  { id: "3", name: "Player 3", number: "3" },
+  { id: "4", name: "Player 4", number: "4" },
+  { id: "5", name: "Player 5", number: "5" },
+  { id: "6", name: "Player 6", number: "6" },
+];
+
+const TEAMS = {
+  sr_boys: { name: "Senior Boys", color: "from-[#0044cc] to-[#001b5e]" },
+  jr_boys: { name: "Junior Boys", color: "from-blue-400 to-blue-600" },
+  sr_girls: { name: "Senior Girls", color: "from-amber-500 to-amber-700" },
+  jr_girls: { name: "Junior Girls", color: "from-orange-400 to-orange-500" },
+};
+
+// Helper to determine Event ID/Name for grouping
+const getEventDetails = (match) => {
+  if (match.type === "Tournament" && match.title)
+    return { id: `tourney_${match.title}`, name: `Tournament: ${match.title}` };
+  const dateStr = match.date
+    ? new Date(match.date).toLocaleDateString()
+    : "Unknown Date";
+  return {
+    id: `day_${match.type}_${dateStr}`,
+    name: `${match.type} Day - ${dateStr}`,
+  };
+};
+
+export default function App() {
+  const [view, setView] = useState(() =>
+    localStorage.getItem("ucc_vball_active_team") ? "menu" : "team_select"
+  );
+  const [user, setUser] = useState(null);
+  const [activeTeam, setActiveTeam] = useState(
+    () => localStorage.getItem("ucc_vball_active_team") || null
+  );
+
+  // Master Cloud Data State (Scoped to activeTeam)
+  const [appData, setAppData] = useState({
+    roster: DEFAULT_ROSTER,
+    savedRosters: {},
+    savedLineups: {},
+    opponents: {},
+    matches: [],
+    sets: [],
+    stats: [],
+  });
+
+  // Current Session State
+  const [activeMatch, setActiveMatch] = useState(null);
+  const [activeSetId, setActiveSetId] = useState(null);
+  const [matchFormat, setMatchFormat] = useState("Best of 5");
+  const [matchType, setMatchType] = useState("League");
+  const [tourneyTitle, setTourneyTitle] = useState("");
+  const [scoreCap, setScoreCap] = useState("");
+  const [history, setHistory] = useState([]);
+
+  // Setup State
+  const [newPlayerName, setNewPlayerName] = useState("");
+  const [newPlayerNum, setNewPlayerNum] = useState("");
+  const [opponentName, setOpponentName] = useState("");
+  const [rosterPresetName, setRosterPresetName] = useState("");
+  const [isRosterModalOpen, setIsRosterModalOpen] = useState(false);
+
+  // Game State
+  const [lineup, setLineup] = useState([null, null, null, null, null, null]);
+  const [oppLineup, setOppLineup] = useState([
+    "O1",
+    "O2",
+    "O3",
+    "O4",
+    "O5",
+    "O6",
+  ]);
+  const [score, setScore] = useState({ ucc: 0, opp: 0 });
+  const [setsWon, setSetsWon] = useState({ ucc: 0, opp: 0 });
+  const [currentSetNum, setCurrentSetNum] = useState(1);
+  const [serving, setServing] = useState("ucc");
+  const [teamStats, setTeamStats] = useState({
+    uccSubs: 0,
+    oppSubs: 0,
+    uccTimeouts: 0,
+    oppTimeouts: 0,
+  });
+
+  // Game Tracking States
+  const [selectedPlayerId, setSelectedPlayerId] = useState(null);
+  const [liberoId, setLiberoId] = useState("");
+  const [liberoSwappedOutId, setLiberoSwappedOutId] = useState(null);
+  const [oppLiberoId, setOppLiberoId] = useState("");
+  const [oppLiberoSwappedOutId, setOppLiberoSwappedOutId] = useState(null);
+  const [oppSetterId, setOppSetterId] = useState(null);
+  const [rallyPhase, setRallyPhase] = useState("serve");
+  const [oppNotesMem, setOppNotesMem] = useState({});
+
+  // Modals & UI
+  const [servePromptVisible, setServePromptVisible] = useState(false);
+  const [serveErrorPrompt, setServeErrorPrompt] = useState(null);
+  const [endRallyVisible, setEndRallyVisible] = useState(false);
+  const [subModalVisible, setSubModalVisible] = useState(false);
+  const [showOppLineupPrompt, setShowOppLineupPrompt] = useState(false);
+  const [tempOppLineup, setTempOppLineup] = useState(["", "", "", "", "", ""]);
+  const [newOppNumber, setNewOppNumber] = useState("");
+  const [selectedOppId, setSelectedOppId] = useState(null);
+  const [tempNote, setTempNote] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+  const [setWinnerModal, setSetWinnerModal] = useState(null);
+  const [statFilter, setStatFilter] = useState("all");
+
+  // Hierarchical Stats Navigation State
+  const [statsPath, setStatsPath] = useState([
+    { level: "season", id: "all", name: "Season Totals" },
+  ]);
+
+  // -------------------------------------------------------------
+  // INITIALIZATION (APP ICON & FIREBASE OR LOCAL FALLBACK)
+  // -------------------------------------------------------------
+
+  useEffect(() => {
+    let link = document.querySelector("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
+    }
+    link.href = "./LancerVolleyballLogo.png";
+    let appleLink = document.querySelector("link[rel~='apple-touch-icon']");
+    if (!appleLink) {
+      appleLink = document.createElement("link");
+      appleLink.rel = "apple-touch-icon";
+      document.head.appendChild(appleLink);
+    }
+    appleLink.href = "./LancerVolleyballLogo.png";
+  }, []);
+
+  useEffect(() => {
+    if (!isFirebaseAvailable) return;
+    const initAuth = async () => {
+      /*
+      if (typeof __initial_auth_token !== "undefined" && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+      */
+    };
+    initAuth();
+    // const unsubscribe = onAuthStateChanged(auth, setUser);
+    // return () => unsubscribe();
+  }, []);
+
+  // LOAD DATA BASED ON ACTIVE TEAM
+  useEffect(() => {
+    if (!activeTeam) return;
+
+    // Reset local state when switching teams
+    setAppData({
+      roster: DEFAULT_ROSTER,
+      savedRosters: {},
+      savedLineups: {},
+      opponents: {},
+      matches: [],
+      sets: [],
+      stats: [],
+    });
+    setActiveMatch(null);
+    setActiveSetId(null);
+
+    if (!isFirebaseAvailable) {
+      try {
+        const storedData = localStorage.getItem(`ucc_vball_db_${activeTeam}`);
+        if (storedData) setAppData(JSON.parse(storedData));
+      } catch (e) {
+        console.error("Local storage load failed", e);
+      }
+      return;
+    }
+
+    if (!user) return;
+
+    // Firebase listeners omitted for local version...
+    return () => {};
+  }, [user, activeTeam]);
+
+  useEffect(() => {
+    if (activeSetId && appData.sets.length > 0) {
+      const currentSet = appData.sets.find((s) => s.id === activeSetId);
+      if (
+        currentSet &&
+        (score.ucc !== currentSet.scoreUcc || score.opp !== currentSet.scoreOpp)
+      ) {
+        setScore({ ucc: currentSet.scoreUcc, opp: currentSet.scoreOpp });
+      }
+    }
+  }, [appData.sets, activeSetId]);
+
+  // -------------------------------------------------------------
+  // HELPER FUNCTIONS & DUAL-MODE DATA WRITES
+  // -------------------------------------------------------------
+
+  const writeLocalDb = (updatedData) => {
+    setAppData(updatedData);
+    if (!isFirebaseAvailable)
+      localStorage.setItem(
+        `ucc_vball_db_${activeTeam}`,
+        JSON.stringify(updatedData)
+      );
+  };

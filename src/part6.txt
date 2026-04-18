@@ -1,0 +1,151 @@
+  // -------------------------------------------------------------
+  // RENDERERS
+  // -------------------------------------------------------------
+
+  if (view === "team_select") {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
+          <img
+            src="./LancerVolleyballLogo.png"
+            alt="bg"
+            className="h-[800px] w-[800px] object-contain blur-sm rounded-full"
+            onError={(e) => (e.target.style.display = "none")}
+          />
+        </div>
+
+        <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
+          <div className="bg-white p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8">
+            <img
+              src="./LancerVolleyballLogo.png"
+              alt="Lancers Logo"
+              className="h-24 w-24 sm:h-32 sm:w-32 object-contain rounded-full"
+              onError={(e) => (e.target.style.display = "none")}
+            />
+          </div>
+          <h1 className="text-4xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center mb-2">
+            UCC Lancers
+          </h1>
+          <h2 className="text-sm sm:text-lg font-bold text-slate-400 tracking-widest uppercase text-center mb-10">
+            Select Team Account
+          </h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full px-4">
+            {Object.entries(TEAMS).map(([key, team]) => (
+              <button
+                key={key}
+                onClick={() => {
+                  setActiveTeam(key);
+                  localStorage.setItem("ucc_vball_active_team", key);
+                  setView("menu");
+                }}
+                className={`bg-gradient-to-br ${team.color} text-white p-8 rounded-3xl font-black text-2xl tracking-widest shadow-xl border border-white/20 transition-all active:scale-95 flex flex-col items-center justify-center group`}
+              >
+                <Users
+                  className="mb-3 opacity-50 group-hover:scale-110 transition-transform"
+                  size={32}
+                />
+                {team.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "menu") {
+    const teamInfo = TEAMS[activeTeam];
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center">
+          <img
+            src="./LancerVolleyballLogo.png"
+            alt="bg"
+            className="h-[500px] w-[500px] sm:h-[800px] sm:w-[800px] object-contain blur-sm rounded-full"
+            onError={(e) => (e.target.style.display = "none")}
+          />
+        </div>
+
+        <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-[2rem] sm:rounded-[3rem] shadow-2xl p-6 sm:p-12 max-w-3xl w-full relative z-10 flex flex-col items-center">
+          <button
+            onClick={() => {
+              setActiveTeam(null);
+              localStorage.removeItem("ucc_vball_active_team");
+              setView("team_select");
+            }}
+            className="absolute top-6 right-6 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm"
+          >
+            <LogOut size={20} className="sm:mr-2" />
+            <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
+              Switch Team
+            </span>
+          </button>
+
+          <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
+            <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6">
+              <img
+                src="./LancerVolleyballLogo.png"
+                alt="Lancers Logo"
+                className="h-20 w-20 sm:h-32 sm:w-32 object-contain rounded-full"
+                onError={(e) => (e.target.style.display = "none")}
+              />
+            </div>
+            <h1 className="text-3xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center">
+              UCC Lancers
+            </h1>
+            <div
+              className={`mt-3 inline-block px-4 py-1.5 rounded-full border border-white/30 bg-gradient-to-r ${teamInfo.color}`}
+            >
+              <h2 className="text-xs sm:text-sm font-black text-white tracking-[0.2em] sm:tracking-[0.3em] uppercase text-center">
+                {teamInfo.name} Database
+              </h2>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
+            <button
+              onClick={() => startSetup("League")}
+              className="bg-gradient-to-b from-[#0044cc] to-[#002b80] text-white p-6 sm:p-8 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-wider hover:from-[#0055ff] hover:to-[#003399] transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-blue-400/30"
+            >
+              <Play className="mb-2 sm:mb-3" size={32} />
+              <span>LEAGUE MATCH</span>
+            </button>
+            <button
+              onClick={() => startSetup("Tournament")}
+              className="bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 p-6 sm:p-8 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-wider hover:from-amber-300 hover:to-amber-500 transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-amber-200/50"
+            >
+              <Trophy className="mb-2 sm:mb-3" size={32} />
+              <span>TOURNAMENT</span>
+            </button>
+            <button
+              onClick={() => startSetup("Scrimmage")}
+              className="md:col-span-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-bold text-sm sm:text-lg tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center"
+            >
+              <Users className="mr-3 text-blue-300" size={20} /> SCRIMMAGE /
+              CUSTOM
+            </button>
+            {appData.matches.length > 0 && (
+              <button
+                onClick={joinLiveMatch}
+                className="md:col-span-2 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 border border-green-400 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-xl tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center uppercase shadow-lg"
+              >
+                <Activity className="mr-2 sm:mr-3 text-green-100" size={20} />{" "}
+                Join Live Match
+              </button>
+            )}
+          </div>
+
+          <div className="w-full">
+            <button
+              onClick={viewStatsFromMenu}
+              className="w-full bg-white text-[#001b5e] p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)]"
+            >
+              <Database className="mr-2 sm:mr-3 text-[#0033A0]" size={24} />{" "}
+              VIEW DATABASE
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }

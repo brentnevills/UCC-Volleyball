@@ -1,0 +1,255 @@
+  // -------------------------------------------------------------
+  // STATS VIEW (Hierarchical Drill-Down)
+  // -------------------------------------------------------------
+  if (view === "stats") {
+    return (
+      <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col relative z-50">
+        <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-slate-200 flex-1 flex flex-col overflow-hidden max-w-[1400px] mx-auto w-full">
+          <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center shadow-md gap-4">
+            <div className="flex items-center w-full sm:w-auto">
+              <div className="bg-white p-1 sm:p-1.5 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:block">
+                <img
+                  src="./LancerVolleyballLogo.png"
+                  alt="Logo"
+                  className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-full"
+                  onError={(e) => (e.target.style.display = "none")}
+                />
+              </div>
+              <div className="flex-1">
+                <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase drop-shadow-md">
+                  Database Stats
+                </h1>
+              </div>
+            </div>
+            <div className="flex space-x-2 w-full sm:w-auto">
+              <button
+                onClick={exportCSV}
+                className="flex-1 sm:flex-none bg-green-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+              >
+                <Download className="mr-1 sm:mr-1.5" size={14} /> CSV
+              </button>
+              {activeMatch ? (
+                <button
+                  onClick={() => setView("game")}
+                  className="flex-1 sm:flex-none bg-white text-[#0033A0] px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black justify-center flex items-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+                >
+                  Game
+                </button>
+              ) : (
+                <button
+                  onClick={() => setView("menu")}
+                  className="flex-1 sm:flex-none bg-white text-[#0033A0] px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black justify-center flex items-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+                >
+                  Menu
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-slate-800 p-3 sm:p-4 text-white overflow-x-auto whitespace-nowrap shadow-inner border-b border-slate-700 scrollbar-hide">
+            <div className="flex items-center space-x-2 text-[10px] sm:text-xs font-bold tracking-widest uppercase">
+              {statsPath.map((nav, idx) => (
+                <React.Fragment key={idx}>
+                  {idx > 0 && (
+                    <ChevronRight
+                      size={14}
+                      className="text-slate-500 flex-shrink-0"
+                    />
+                  )}
+                  <button
+                    onClick={() => popStatsTo(idx)}
+                    className={`flex-shrink-0 hover:text-white transition-colors ${
+                      idx === statsPath.length - 1
+                        ? "text-white bg-white/20 px-3 py-1 rounded-full"
+                        : "text-slate-400"
+                    }`}
+                  >
+                    {nav.name}
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+
+          {/* Drill-down Sub-navigation */}
+          {subNavOptions.length > 0 && (
+            <div className="bg-slate-100 p-3 sm:p-4 border-b border-slate-200 shadow-sm">
+              <div className="flex overflow-x-auto gap-2 sm:gap-3 pb-2 scrollbar-hide">
+                {subNavOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => navigateStats(opt.level, opt.id, opt.name)}
+                    className="flex-shrink-0 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm hover:bg-[#0033A0] hover:text-white hover:border-[#0033A0] transition-colors shadow-sm whitespace-nowrap"
+                  >
+                    {opt.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="p-3 sm:p-8 flex-1 overflow-y-auto bg-slate-50/50">
+            <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
+              <Shield className="mr-2 text-[#0033A0]" size={18} /> Lancers{" "}
+              <span className="text-slate-400 text-sm ml-2 hidden sm:inline">
+                ({currentNav.name})
+              </span>
+            </h2>
+            <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
+              {/* Scroll indicator for mobile */}
+              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-500 text-[9px] sm:text-[10px] tracking-widest uppercase border-b-2 border-slate-200">
+                      <th className="p-2 sm:p-3 font-black w-32 sm:w-40 sticky left-0 bg-slate-100 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                        PLAYER
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
+                        PASSING
+                        <br />
+                        <span className="opacity-70 font-bold tracking-normal">
+                          Avg(Tot)
+                        </span>
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-slate-50">
+                        DIGS
+                        <br />
+                        <span className="opacity-70 font-bold tracking-normal">
+                          (D-Err)
+                        </span>
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
+                        SWINGS
+                        <br />
+                        <span className="opacity-70 font-bold tracking-normal">
+                          (Att-K-Err)
+                        </span>
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-green-600">
+                        KILL %
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-slate-50">
+                        BLOCKS
+                        <br />
+                        <span className="opacity-70 font-bold tracking-normal">
+                          (Att-Blk-Lt-Net-Us)
+                        </span>
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
+                        SERVES
+                        <br />
+                        <span className="opacity-70 font-bold tracking-normal">
+                          (Att-Ace-Err)
+                        </span>
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-blue-600 bg-blue-50/50">
+                        SRV +/-
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {Object.values(uccStats).map((p) => {
+                      const passAvg =
+                        p.passCount > 0
+                          ? (p.passSum / p.passCount).toFixed(2)
+                          : "-";
+                      const blkTot =
+                        p.blkCount +
+                        p.blkStuff +
+                        p.blkLate +
+                        p.blkNet +
+                        p.blkUsed;
+                      const srvTot = p.srvCount + p.srvAce + p.srvErr;
+                      const killPct =
+                        p.attCount > 0
+                          ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+                          : "0.0%";
+                      const srvPlusMinus = p.srvAce - p.srvErr;
+
+                      return (
+                        <tr
+                          key={p.number}
+                          className="hover:bg-blue-50/30 text-[10px] sm:text-xs"
+                        >
+                          <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                            <div className="flex items-center space-x-1 sm:space-x-2">
+                              <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#0033A0]/10 text-[#0033A0] font-black flex items-center justify-center text-[9px] sm:text-[10px]">
+                                {p.number}
+                              </span>
+                              <span className="font-bold text-slate-800 truncate max-w-[80px] sm:max-w-none">
+                                {p.name}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100">
+                            {passAvg}{" "}
+                            <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold ml-0.5 sm:ml-1">
+                              ({p.passCount})
+                            </span>
+                          </td>
+                          <td className="p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50">
+                            <span className="text-blue-600 font-black text-sm">
+                              {p.digCount}
+                            </span>{" "}
+                            <span className="text-slate-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-500 font-bold">
+                              {p.digErr}
+                            </span>
+                          </td>
+                          <td className="p-2 sm:p-3 border-l border-slate-100 text-center">
+                            <span className="font-bold text-slate-600">
+                              {p.attCount}
+                            </span>{" "}
+                            <span className="text-slate-300 mx-0.5">-</span>{" "}
+                            <span className="text-green-600 font-black text-sm">
+                              {p.attKill}
+                            </span>{" "}
+                            <span className="text-slate-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-500 font-bold">
+                              {p.attErr}
+                            </span>
+                          </td>
+                          <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30">
+                            {killPct}
+                          </td>
+                          <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap">
+                            {blkTot}-{p.blkStuff}-{p.blkLate}-{p.blkNet}-
+                            {p.blkUsed}
+                          </td>
+                          <td className="p-2 sm:p-3 border-l border-slate-100 text-center">
+                            <span className="font-bold text-slate-600">
+                              {srvTot}
+                            </span>{" "}
+                            <span className="text-slate-300 mx-0.5">-</span>{" "}
+                            <span className="text-emerald-600 font-black text-sm">
+                              {p.srvAce}
+                            </span>{" "}
+                            <span className="text-slate-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-500 font-bold">
+                              {p.srvErr}
+                            </span>
+                          </td>
+                          <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm">
+                            <span
+                              className={
+                                srvPlusMinus > 0
+                                  ? "text-green-600"
+                                  : srvPlusMinus < 0
+                                  ? "text-red-500"
+                                  : "text-slate-400"
+                              }
+                            >
+                              {srvPlusMinus > 0
+                                ? `+${srvPlusMinus}`
+                                : srvPlusMinus}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>

@@ -1,0 +1,120 @@
+            <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
+              <Users className="mr-2 text-slate-500" size={18} /> Opponents
+            </h2>
+            <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-4xl mb-8 relative">
+              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[700px]">
+                  <thead>
+                    <tr className="bg-slate-800 text-slate-300 text-[9px] sm:text-[10px] tracking-widest uppercase border-b border-slate-900">
+                      <th className="p-2 sm:p-3 font-black w-24 sm:w-32">ID</th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 bg-slate-900">
+                        PASS
+                        <br />
+                        <span className="opacity-70 font-bold tracking-normal">
+                          Avg(Tot)
+                        </span>
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700">
+                        SWINGS
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700">
+                        KILLS
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 text-green-400">
+                        KILL %
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 bg-slate-900">
+                        ACES
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 bg-slate-900">
+                        SRV ERR
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 text-blue-400 bg-slate-900">
+                        +/-
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {Object.keys(opponentStats).length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan="8"
+                          className="p-6 sm:p-8 text-center text-slate-400 font-bold tracking-widest uppercase text-[10px] sm:text-xs"
+                        >
+                          No opponent data available.
+                        </td>
+                      </tr>
+                    ) : (
+                      Object.entries(opponentStats).map(([id, p]) => {
+                        const passAvg =
+                          p.passCount > 0
+                            ? (p.passSum / p.passCount).toFixed(2)
+                            : "-";
+                        const killPct =
+                          p.attCount > 0
+                            ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+                            : "0.0%";
+                        const srvPlusMinus = p.srvAce - p.srvErr;
+                        return (
+                          <tr
+                            key={id}
+                            className="hover:bg-slate-50 text-[10px] sm:text-xs"
+                          >
+                            <td className="p-2 sm:p-3">
+                              <span className="bg-slate-200 text-slate-800 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-black text-xs sm:text-sm">
+                                {id}
+                              </span>
+                            </td>
+                            <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 bg-slate-50 text-slate-700">
+                              {passAvg}{" "}
+                              <span className="text-[9px] sm:text-[10px] text-slate-400 ml-0.5 sm:ml-1">
+                                ({p.passCount})
+                              </span>
+                            </td>
+                            <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 text-slate-600">
+                              {p.attCount}
+                            </td>
+                            <td className="p-2 sm:p-3 font-black text-green-600 text-center border-l border-slate-100 text-sm">
+                              {p.attKill}
+                            </td>
+                            <td className="p-2 sm:p-3 font-black text-green-600 bg-green-50/50 text-center border-l border-slate-100">
+                              {killPct}
+                            </td>
+                            <td className="p-2 sm:p-3 font-black text-blue-600 text-center border-l border-slate-100 bg-slate-50 text-sm">
+                              {p.srvAce}
+                            </td>
+                            <td className="p-2 sm:p-3 font-bold text-red-500 text-center border-l border-slate-100 bg-slate-50 text-sm">
+                              {p.srvErr}
+                            </td>
+                            <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-slate-50 text-sm">
+                              <span
+                                className={
+                                  srvPlusMinus > 0
+                                    ? "text-green-600"
+                                    : srvPlusMinus < 0
+                                    ? "text-red-500"
+                                    : "text-slate-400"
+                                }
+                              >
+                                {srvPlusMinus > 0
+                                  ? `+${srvPlusMinus}`
+                                  : srvPlusMinus}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}

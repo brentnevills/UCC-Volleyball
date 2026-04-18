@@ -1,0 +1,216 @@
+  const rotateUCC = () => setLineup((prev) => [...prev.slice(1), prev[0]]);
+  const rotateOpp = () => setOppLineup((prev) => [...prev.slice(1), prev[0]]);
+
+  const addPlayer = async () => {
+    if (newPlayerName && newPlayerNum) {
+      const newPlayer = {
+        id: Date.now().toString(),
+        name: newPlayerName,
+        number: newPlayerNum,
+      };
+      if (isFirebaseAvailable && user) {
+        // ...
+      } else if (!isFirebaseAvailable) {
+        writeLocalDb({ ...appData, roster: [...appData.roster, newPlayer] });
+      }
+      setNewPlayerName("");
+      setNewPlayerNum("");
+    }
+  };
+
+  const removePlayer = async (id) => {
+    const newRoster = appData.roster.filter((p) => p.id !== id);
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({ ...appData, roster: newRoster });
+    }
+    if (lineup.includes(id))
+      setLineup(lineup.map((p) => (p === id ? null : p)));
+  };
+
+  const saveRosterAsPreset = async () => {
+    if (!rosterPresetName.trim()) {
+      setErrorMsg("Please enter a name for the roster preset.");
+      return;
+    }
+    const updatedRosters = {
+      ...appData.savedRosters,
+      [rosterPresetName]: appData.roster,
+    };
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({ ...appData, savedRosters: updatedRosters });
+    }
+    setRosterPresetName("");
+    setErrorMsg("");
+  };
+
+  const loadRosterPreset = async (name) => {
+    if (name && appData.savedRosters[name]) {
+      const loadedRoster = appData.savedRosters[name];
+      if (isFirebaseAvailable && user) {
+        // ...
+      } else if (!isFirebaseAvailable) {
+        writeLocalDb({ ...appData, roster: loadedRoster });
+      }
+      const currentIds = loadedRoster.map((p) => p.id);
+      setLineup((prev) =>
+        prev.map((id) => (currentIds.includes(id) ? id : null))
+      );
+    }
+  };
+
+  const handleOpponentNameChange = (e) => {
+    const val = e.target.value.replace(/\//g, "-");
+    setOpponentName(val);
+    const existingKey = Object.keys(appData.opponents).find(
+      (o) => o.toLowerCase() === val.toLowerCase()
+    );
+    if (existingKey) {
+      const opp = appData.opponents[existingKey];
+      setTempOppLineup(opp.defaultLineup || ["", "", "", "", "", ""]);
+      setOppNotesMem(opp.notes || {});
+      setOppSetterId(opp.setterId || null);
+      setOppLiberoId(opp.liberoId || "");
+    } else {
+      setTempOppLineup(["", "", "", "", "", ""]);
+      setOppNotesMem({});
+      setOppSetterId(null);
+      setOppLiberoId("");
+    }
+  };
+
+  const startSetup = (type) => {
+    setMatchType(type);
+    setView("setup");
+    if (activeMatch) {
+      setActiveMatch(null);
+      setActiveSetId(null);
+      setScore({ ucc: 0, opp: 0 });
+      setSetsWon({ ucc: 0, opp: 0 });
+      setCurrentSetNum(1);
+      setOpponentName("");
+      setTourneyTitle("");
+      setScoreCap("");
+      setLiberoId("");
+      setOppLiberoId("");
+      setOppSetterId(null);
+      setOppNotesMem({});
+    }
+  };
+
+  const joinLiveMatch = () => {
+    const sortedMatches = [...appData.matches].sort(
+      (a, b) => new Date(a.date) - new Date(b.date)
+    );
+    const latestMatch =
+      sortedMatches.length > 0 ? sortedMatches[sortedMatches.length - 1] : null;
+    if (!latestMatch) return;
+
+    const matchSets = appData.sets
+      .filter((s) => s.matchId === latestMatch.id)
+      .sort((a, b) => a.setNum - b.setNum);
+    const latestSet = matchSets[matchSets.length - 1];
+
+    setActiveMatch(latestMatch);
+    setActiveSetId(latestSet ? latestSet.id : null);
+    setOpponentName(latestMatch.opponent);
+    setMatchFormat(latestMatch.format);
+
+    if (appData.opponents[latestMatch.opponent]) {
+      const opp = appData.opponents[latestMatch.opponent];
+      setOppLineup(opp.defaultLineup || ["O1", "O2", "O3", "O4", "O5", "O6"]);
+      setOppNotesMem(opp.notes || {});
+      setOppSetterId(opp.setterId || null);
+      setOppLiberoId(opp.liberoId || "");
+    }
+
+    setView("game");
+  };
+
+  const startGame = () => {
+    if (lineup.some((p) => p === null)) {
+      setErrorMsg("Assign a player to all 6 starting positions.");
+      return;
+    }
+    if (!opponentName.trim()) {
+      setErrorMsg("Enter an opponent name.");
+      return;
+    }
+    setErrorMsg("");
+    setShowOppLineupPrompt(true);
+  };
+
+  const finalizeStartGame = async () => {
+    const finalOppLineup = tempOppLineup.map((val, idx) =>
+      val.trim() !== "" ? val : `O${idx + 1}`
+    );
+    setOppLineup(finalOppLineup);
+
+    const matchId = Date.now().toString();
+    const newMatch = {
+      id: matchId,
+      date: new Date().toISOString(),
+      type: matchType,
+      title: matchType === "Tournament" ? tourneyTitle : "",
+      opponent: opponentName,
+      format: matchFormat,
+      cap: scoreCap,
+    };
+
+    const setId = Date.now().toString() + "_set";
+    const newSet = {
+      id: setId,
+      matchId: matchId,
+      setNum: 1,
+      scoreUcc: 0,
+      scoreOpp: 0,
+    };
+    const safeOppName = opponentName.trim();
+
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        opponents: {
+          ...appData.opponents,
+          [safeOppName]: {
+            defaultLineup: finalOppLineup,
+            notes: oppNotesMem,
+            setterId: oppSetterId,
+            liberoId: oppLiberoId,
+          },
+        },
+        matches: [...appData.matches, newMatch],
+        sets: [...appData.sets, newSet],
+      });
+    }
+
+    setActiveMatch(newMatch);
+    setActiveSetId(setId);
+    setHistory([]);
+    setShowOppLineupPrompt(false);
+    setView("game");
+    setRallyPhase(serving === "ucc" ? "serve" : "receive");
+    setServePromptVisible(true);
+  };
+
+  const pushToHistory = () => {
+    const snapshot = {
+      score: { ...score },
+      lineup: [...lineup],
+      oppLineup: [...oppLineup],
+      serving,
+      rallyPhase,
+      stats: [...appData.stats],
+      sets: JSON.parse(JSON.stringify(appData.sets)),
+      teamStats: { ...teamStats },
+      setsWon: { ...setsWon },
+      currentSetNum,
+      activeSetId,
+    };
+    setHistory((prev) => [...prev.slice(-49), snapshot]);
+  };

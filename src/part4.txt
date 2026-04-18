@@ -1,0 +1,189 @@
+  const handleServeStat = (metric, team) => {
+    pushToHistory();
+    const serverId = team === "ucc" ? lineup[0] : oppLineup[0];
+    const isOpp = team === "opp";
+    setServePromptVisible(false);
+
+    if (metric === "Ace") {
+      logStat(serverId, "Serve", "Ace", 1, isOpp);
+      handlePoint(team, true);
+    } else if (metric === "Error") setServeErrorPrompt(team);
+    else if (metric === "In Play") {
+      logStat(serverId, "Serve", "Attempt", 1, isOpp);
+      setRallyPhase(team === "ucc" ? "play" : "receive");
+    }
+  };
+
+  const handleServeErrorChoice = (errorType) => {
+    const team = serveErrorPrompt;
+    const serverId = team === "ucc" ? lineup[0] : oppLineup[0];
+    logStat(serverId, "Serve", `Miss - ${errorType}`, 1, team === "opp");
+    setServeErrorPrompt(null);
+    handlePoint(team === "ucc" ? "opp" : "ucc", true);
+  };
+
+  const manualScoreAdjust = async (team, delta) => {
+    pushToHistory();
+    const newScore = { ...score };
+    newScore[team] = Math.max(0, newScore[team] + delta);
+    setScore(newScore);
+
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        sets: appData.sets.map((s) =>
+          s.id === activeSetId
+            ? { ...s, scoreUcc: newScore.ucc, scoreOpp: newScore.opp }
+            : s
+        ),
+      });
+    }
+    const winner = checkSetWin(newScore.ucc, newScore.opp);
+    if (winner) setSetWinnerModal(winner);
+  };
+
+  const handleSub = (benchPlayerId) => {
+    pushToHistory();
+    const index = lineup.indexOf(selectedPlayerId);
+    if (index !== -1) {
+      const newLineup = [...lineup];
+      newLineup[index] = benchPlayerId;
+      setLineup(newLineup);
+      setSelectedPlayerId(benchPlayerId);
+      setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+    }
+    setSubModalVisible(false);
+    setSelectedPlayerId(null);
+  };
+
+  const saveOppNote = async () => {
+    if (!opponentName) return;
+    const updatedMem = { ...oppNotesMem, [selectedOppId]: tempNote };
+    setOppNotesMem(updatedMem);
+    const safeOppName = opponentName.trim();
+
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        opponents: {
+          ...appData.opponents,
+          [safeOppName]: {
+            ...appData.opponents[safeOppName],
+            notes: updatedMem,
+          },
+        },
+      });
+    }
+  };
+
+  const handleOppSetterSwap = async () => {
+    if (!opponentName) return;
+    const newSetter = oppSetterId === selectedOppId ? null : selectedOppId;
+    setOppSetterId(newSetter);
+    const safeOppName = opponentName.trim();
+
+    if (isFirebaseAvailable && user) {
+      // ...
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        opponents: {
+          ...appData.opponents,
+          [safeOppName]: {
+            ...appData.opponents[safeOppName],
+            setterId: newSetter,
+          },
+        },
+      });
+    }
+  };
+
+  const handleOppLiberoToggle = () => {
+    pushToHistory();
+    const index = oppLineup.indexOf(selectedOppId);
+    if (index === -1) return;
+    const newLineup = [...oppLineup];
+    if (selectedOppId === oppLiberoId) {
+      newLineup[index] = oppLiberoSwappedOutId;
+      setOppLiberoSwappedOutId(null);
+    } else {
+      setOppLiberoSwappedOutId(selectedOppId);
+      newLineup[index] = oppLiberoId;
+    }
+    setOppLineup(newLineup);
+    setSelectedOppId(null);
+  };
+
+  const handleOppSub = () => {
+    if (!newOppNumber.trim()) return;
+    pushToHistory();
+    const index = oppLineup.indexOf(selectedOppId);
+    if (index !== -1) {
+      const newLineup = [...oppLineup];
+      newLineup[index] = newOppNumber;
+      setOppLineup(newLineup);
+      setTeamStats((s) => ({ ...s, oppSubs: s.oppSubs + 1 }));
+      setSelectedOppId(newOppNumber);
+      setNewOppNumber("");
+    }
+  };
+
+  const handleLiberoSwap = () => {
+    pushToHistory();
+    const index = lineup.indexOf(selectedPlayerId);
+    if (index === -1) return;
+    const newLineup = [...lineup];
+    if (selectedPlayerId === liberoId) {
+      newLineup[index] = liberoSwappedOutId;
+      setLiberoSwappedOutId(null);
+    } else {
+      setLiberoSwappedOutId(selectedPlayerId);
+      newLineup[index] = liberoId;
+    }
+    setLineup(newLineup);
+    setSelectedPlayerId(null);
+  };
+
+  const callTimeout = (team) => {
+    if (team === "ucc")
+      setTeamStats((s) => ({ ...s, uccTimeouts: s.uccTimeouts + 1 }));
+    if (team === "opp")
+      setTeamStats((s) => ({ ...s, oppTimeouts: s.oppTimeouts + 1 }));
+  };
+
+  // -------------------------------------------------------------
+  // STATS CALCULATION ENGINE
+  // -------------------------------------------------------------
+  const viewStatsFromMenu = () => {
+    setStatsPath([{ level: "season", id: "all", name: "Season Totals" }]);
+    setView("stats");
+  };
+
+  const viewStatsWithCurrentMatch = () => {
+    if (!activeMatch) return viewStatsFromMenu();
+    const eventDetails = getEventDetails(activeMatch);
+    setStatsPath([
+      { level: "season", id: "all", name: "Season Totals" },
+      { level: "event", id: eventDetails.id, name: eventDetails.name },
+      {
+        level: "match",
+        id: activeMatch.id,
+        name: `vs ${activeMatch.opponent}`,
+      },
+    ]);
+    setView("stats");
+  };
+
+  const navigateStats = (level, id, name) =>
+    setStatsPath((prev) => [...prev, { level, id, name }]);
+  const popStatsTo = (index) =>
+    setStatsPath((prev) => prev.slice(0, index + 1));
+  const currentNav = statsPath[statsPath.length - 1] || {
+    level: "season",
+    id: "all",
+    name: "Season Totals",
+  };

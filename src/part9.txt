@@ -1,0 +1,187 @@
+        {/* OPPONENT LINEUP MODAL */}
+        {showOppLineupPrompt && (
+          <div className="absolute inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-4 backdrop-blur-md">
+            <div className="bg-white rounded-2xl sm:rounded-[2rem] w-full max-w-xl overflow-hidden shadow-2xl">
+              <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-4 sm:p-6 text-white text-center relative border-b border-slate-700">
+                <h3 className="font-black text-xl sm:text-2xl tracking-widest uppercase">
+                  {opponentName} Lineup
+                </h3>
+                <p className="text-slate-400 mt-1 text-xs sm:text-sm font-bold">
+                  Lineups & notes auto-save.
+                </p>
+              </div>
+              <div className="p-4 sm:p-6 grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 bg-slate-50 border-b border-slate-200">
+                {[1, 2, 3, 4, 5, 6].map((pos, idx) => (
+                  <div
+                    key={pos}
+                    className="flex flex-col bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 focus-within:border-slate-400 transition-colors"
+                  >
+                    <label className="text-[9px] sm:text-[10px] font-black text-slate-400 mb-1 uppercase tracking-widest text-center">
+                      Pos {pos}{" "}
+                      {pos === 1 && serving === "opp" ? (
+                        <span className="ml-0.5">🏐</span>
+                      ) : (
+                        ""
+                      )}
+                    </label>
+                    <input
+                      placeholder={`Opp ${pos}`}
+                      value={tempOppLineup[idx]}
+                      onChange={(e) => {
+                        const newArr = [...tempOppLineup];
+                        newArr[idx] = e.target.value;
+                        setTempOppLineup(newArr);
+                      }}
+                      className="w-full bg-transparent border-none focus:ring-0 outline-none text-base sm:text-xl font-black text-slate-700 text-center uppercase p-0"
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="p-4 sm:p-6 bg-white flex flex-col gap-3 sm:gap-4">
+                <div className="flex items-center justify-between bg-slate-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl border border-slate-200">
+                  <label className="font-black text-slate-500 uppercase tracking-widest text-xs sm:text-sm flex items-center">
+                    <Shield size={16} className="mr-2 text-slate-400" />
+                    Opp. Libero
+                  </label>
+                  <input
+                    placeholder="#"
+                    value={oppLiberoId}
+                    onChange={(e) => setOppLiberoId(e.target.value)}
+                    className="w-12 sm:w-16 bg-white p-1.5 sm:p-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-slate-400 outline-none text-center font-black text-slate-700 uppercase shadow-sm text-sm sm:text-base"
+                  />
+                </div>
+                <div className="flex gap-2 sm:gap-3">
+                  <button
+                    onClick={() => setShowOppLineupPrompt(false)}
+                    className="px-4 sm:px-6 py-3 sm:py-4 text-slate-500 font-black tracking-widest hover:bg-slate-100 rounded-xl sm:rounded-2xl transition-colors uppercase text-xs sm:text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={finalizeStartGame}
+                    className="flex-1 bg-gradient-to-b from-[#0033A0] to-[#001b5e] hover:from-[#0044cc] hover:to-[#002277] text-white rounded-xl sm:rounded-2xl font-black text-lg sm:text-xl shadow-lg active:scale-95 transition-all uppercase tracking-widest"
+                  >
+                    Play Ball
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (view === "game") {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col font-sans select-none relative overflow-hidden">
+        {/* HEADER / SCOREBOARD */}
+        <header className="bg-gradient-to-r from-slate-900 via-[#001b5e] to-slate-900 text-white px-2 sm:px-4 py-2 sm:py-3 shadow-md flex justify-between items-center z-10 border-b border-white/10">
+          <div className="flex items-center space-x-2 sm:space-x-4 w-full">
+            <div className="bg-white/10 backdrop-blur-md p-1 sm:p-1.5 rounded-full border border-white/20 shadow-sm hidden sm:block">
+              <img
+                src="./LancerVolleyballLogo.png"
+                alt="Logo"
+                className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-full"
+                onError={(e) => (e.target.style.display = "none")}
+              />
+            </div>
+
+            <div
+              className={`flex-1 py-1.5 sm:py-2 px-3 sm:px-4 rounded-2xl sm:rounded-3xl flex items-center justify-between transition-all duration-300 ${
+                serving === "ucc"
+                  ? "bg-white/15 border border-yellow-400/50 shadow-[0_0_15px_rgba(250,204,21,0.15)]"
+                  : "bg-transparent border border-transparent"
+              }`}
+            >
+              <div className="flex flex-col">
+                <h2 className="text-[10px] sm:text-sm font-black leading-tight tracking-[0.1em] uppercase text-blue-200">
+                  Lancers
+                </h2>
+                <div className="flex items-center space-x-1 sm:space-x-2">
+                  <button
+                    onClick={() => manualScoreAdjust("ucc", -1)}
+                    className="text-white/30 hover:text-white p-1 active:scale-90 hidden sm:block"
+                  >
+                    <ChevronDown size={16} />
+                  </button>
+                  <p className="text-4xl sm:text-5xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                    {score.ucc}
+                  </p>
+                  <button
+                    onClick={() => manualScoreAdjust("ucc", 1)}
+                    className="text-white/30 hover:text-white p-1 active:scale-90 hidden sm:block"
+                  >
+                    <ChevronUp size={16} />
+                  </button>
+                </div>
+              </div>
+              {serving === "ucc" && (
+                <div className="text-2xl sm:text-3xl animate-bounce drop-shadow-md">
+                  🏐
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col items-center justify-center px-1 sm:px-2">
+              <span className="text-[8px] sm:text-[9px] font-black text-amber-400 tracking-[0.1em] sm:tracking-[0.2em] uppercase mb-1 bg-amber-400/10 px-1.5 sm:px-2 py-0.5 rounded-full text-center whitespace-nowrap">
+                {matchFormat === "Best of 3"
+                  ? "BO3"
+                  : matchFormat === "Best of 5"
+                  ? "BO5"
+                  : matchFormat}{" "}
+                • S{currentSetNum}
+              </span>
+              <div className="flex items-center space-x-1.5 sm:space-x-3 bg-white/5 px-2 sm:px-4 py-1 sm:py-1.5 rounded-xl sm:rounded-2xl border border-white/10">
+                <span className="text-xl sm:text-2xl font-black text-blue-400">
+                  {setsWon.ucc}
+                </span>
+                <span className="text-[8px] sm:text-[10px] font-black text-white/30 uppercase">
+                  Sets
+                </span>
+                <span className="text-xl sm:text-2xl font-black text-white">
+                  {setsWon.opp}
+                </span>
+              </div>
+            </div>
+
+            <div
+              className={`flex-1 py-1.5 sm:py-2 px-3 sm:px-4 rounded-2xl sm:rounded-3xl flex items-center justify-between transition-all duration-300 ${
+                serving === "opp"
+                  ? "bg-white/15 border border-yellow-400/50 shadow-[0_0_15px_rgba(250,204,21,0.15)]"
+                  : "bg-transparent border border-transparent"
+              }`}
+            >
+              {serving === "opp" && (
+                <div className="text-2xl sm:text-3xl animate-bounce drop-shadow-md">
+                  🏐
+                </div>
+              )}
+              <div className="flex flex-col items-end w-full">
+                <h2 className="text-[10px] sm:text-sm font-black leading-tight tracking-[0.1em] uppercase text-slate-300 truncate max-w-[80px] sm:max-w-[100px]">
+                  {opponentName}
+                </h2>
+                <div className="flex items-center space-x-1 sm:space-x-2">
+                  <button
+                    onClick={() => manualScoreAdjust("opp", -1)}
+                    className="text-white/30 hover:text-white p-1 active:scale-90 hidden sm:block"
+                  >
+                    <ChevronDown size={16} />
+                  </button>
+                  <p className="text-4xl sm:text-5xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                    {score.opp}
+                  </p>
+                  <button
+                    onClick={() => manualScoreAdjust("opp", 1)}
+                    className="text-white/30 hover:text-white p-1 active:scale-90 hidden sm:block"
+                  >
+                    <ChevronUp size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* FULL SCREEN COURT */}
+        <div className="flex-1 flex items-center justify-center relative bg-slate-900 shadow-inner p-2 sm:p-6 overflow-hidden">

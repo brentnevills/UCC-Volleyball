@@ -1,0 +1,164 @@
+  const filteredStats = useMemo(() => {
+    if (currentNav.level === "season") return appData.stats;
+    if (currentNav.level === "event") {
+      const matchIds = appData.matches
+        .filter((m) => getEventDetails(m).id === currentNav.id)
+        .map((m) => m.id);
+      return appData.stats.filter((s) => matchIds.includes(s.matchId));
+    }
+    if (currentNav.level === "match")
+      return appData.stats.filter((s) => s.matchId === currentNav.id);
+    if (currentNav.level === "set")
+      return appData.stats.filter((s) => s.setId === currentNav.id);
+    return appData.stats;
+  }, [appData.stats, appData.matches, currentNav]);
+
+  const subNavOptions = useMemo(() => {
+    if (currentNav.level === "season") {
+      const events = {};
+      appData.matches.forEach((m) => {
+        const detail = getEventDetails(m);
+        if (!events[detail.id])
+          events[detail.id] = { ...detail, level: "event" };
+      });
+      return Object.values(events);
+    }
+    if (currentNav.level === "event")
+      return appData.matches
+        .filter((m) => getEventDetails(m).id === currentNav.id)
+        .map((m) => ({ level: "match", id: m.id, name: `vs ${m.opponent}` }));
+    if (currentNav.level === "match")
+      return appData.sets
+        .filter((s) => s.matchId === currentNav.id)
+        .sort((a, b) => a.setNum - b.setNum)
+        .map((s) => ({ level: "set", id: s.id, name: `Set ${s.setNum}` }));
+    return [];
+  }, [currentNav, appData.matches, appData.sets]);
+
+  const { uccStats, opponentStats } = useMemo(() => {
+    const uccData = {};
+    const oppData = {};
+    appData.roster.forEach((p) => {
+      uccData[p.id] = {
+        name: p.name,
+        number: p.number,
+        passSum: 0,
+        passCount: 0,
+        attCount: 0,
+        attKill: 0,
+        attErr: 0,
+        blkCount: 0,
+        blkStuff: 0,
+        blkLate: 0,
+        blkNet: 0,
+        blkUsed: 0,
+        srvCount: 0,
+        srvAce: 0,
+        srvErr: 0,
+        digCount: 0,
+        digErr: 0,
+      };
+    });
+
+    filteredStats.forEach((s) => {
+      if (s.isOpponent) {
+        if (!oppData[s.playerId])
+          oppData[s.playerId] = {
+            attCount: 0,
+            attKill: 0,
+            srvAce: 0,
+            srvErr: 0,
+            passSum: 0,
+            passCount: 0,
+          };
+        const p = oppData[s.playerId];
+        if (s.category === "Attack") {
+          if (s.metric === "Swing") p.attCount += 1;
+          if (s.metric === "Kill") p.attKill += 1;
+        } else if (s.category === "Serve") {
+          if (s.metric === "Ace") p.srvAce += 1;
+          if (s.metric.includes("Miss")) p.srvErr += 1;
+        } else if (s.category === "Pass") {
+          p.passCount += 1;
+          p.passSum += s.value;
+        }
+      } else {
+        const p = uccData[s.playerId];
+        if (!p) return;
+        if (s.category === "Pass") {
+          p.passCount += 1;
+          p.passSum += s.value;
+        } else if (s.category === "Dig") {
+          if (s.metric === "Dig") p.digCount += 1;
+          if (s.metric === "Error") p.digErr += 1;
+        } else if (s.category === "Attack") {
+          if (s.metric === "Swing") p.attCount += 1;
+          if (s.metric === "Kill") p.attKill += 1;
+          if (
+            s.metric === "Out" ||
+            s.metric === "Net" ||
+            s.metric === "Out/Net"
+          )
+            p.attErr += 1;
+        } else if (s.category === "Block") {
+          if (s.metric === "Attempt") p.blkCount += 1;
+          if (s.metric === "Block") p.blkStuff += 1;
+          if (s.metric === "Late") p.blkLate += 1;
+          if (s.metric === "Net Viol") p.blkNet += 1;
+          if (s.metric === "Used") p.blkUsed += 1;
+        } else if (s.category === "Serve") {
+          if (s.metric === "Attempt") p.srvCount += 1;
+          if (s.metric === "Ace") p.srvAce += 1;
+          if (s.metric.includes("Miss")) p.srvErr += 1;
+        }
+      }
+    });
+    return { uccStats: uccData, opponentStats: oppData };
+  }, [filteredStats, appData.roster]);
+
+  const exportCSV = () => {
+    const teamName = activeTeam
+      ? TEAMS[activeTeam].name.replace(" ", "_")
+      : "Team";
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Kills,Kill %,Att Errors,Blocks,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
+
+    Object.values(uccStats).forEach((p) => {
+      const passAvg =
+        p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
+      const blkTot = p.blkCount + p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
+      const srvTot = p.srvCount + p.srvAce + p.srvErr;
+      const killPct =
+        p.attCount > 0
+          ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+          : "0.0%";
+      const srvPlusMinus = p.srvAce - p.srvErr;
+      csv += `"${p.number}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attKill},${killPct},${p.attErr},${blkTot},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+    });
+
+    csv +=
+      "\nOPPONENT STATS\nID,Pass Avg,Passes,Swings,Kills,Kill %,Aces,Serve Errors,Serve +/-\n";
+    Object.entries(opponentStats).forEach(([id, p]) => {
+      const passAvg =
+        p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
+      const killPct =
+        p.attCount > 0
+          ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+          : "0.0%";
+      const srvPlusMinus = p.srvAce - p.srvErr;
+      csv += `"${id}",${passAvg},${p.passCount},${p.attCount},${p.attKill},${killPct},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+    });
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Lancers_${teamName}_${currentNav.name.replace(
+      /[^a-z0-9]/gi,
+      "_"
+    )}_${new Date().toLocaleDateString().replace(/\//g, "-")}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const benchPlayers = appData.roster.filter(p => !lineup.includes(p.id));
+  const selectedPlayerObj = appData.roster.find((r) => r.id === selectedPlayerId);
