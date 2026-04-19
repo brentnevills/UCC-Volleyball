@@ -59,12 +59,17 @@ import firebaseConfig from "../firebase-applet-config.json";
 // -------------------------------------------------------------
 const isFirebaseAvailable = true;
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+let app, auth, db;
+try {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+} catch (e) {
+  console.error("Firebase Initialization Failed:", e);
+}
 
 // Enable Persistence for "Offline Changes"
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && db) {
   enableIndexedDbPersistence(db).catch((err) => {
     if (err.code === "failed-precondition") {
       console.warn("Persistence failed: Multiple tabs open.");

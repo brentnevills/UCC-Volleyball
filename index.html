@@ -12,7 +12,26 @@
         <div style="margin-top: 10px; opacity: 0.5; font-size: 14px;">Loading Dashboard...</div>
       </div>
     </div>
-    <script type="module" src="src/main.tsx"></script>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Failsafe: if the dashboard hasn't loaded in 5 seconds, show a troubleshooting tip
+      setTimeout(() => {
+        const root = document.getElementById('root');
+        if (root && root.innerText.includes('Loading Dashboard...')) {
+          const tip = document.createElement('div');
+          tip.style.marginTop = '20px';
+          tip.style.padding = '15px';
+          tip.style.background = '#1e293b';
+          tip.style.borderRadius = '12px';
+          tip.style.fontSize = '12px';
+          tip.style.maxWidth = '300px';
+          tip.style.textAlign = 'center';
+          tip.style.color = '#94a3b8';
+          tip.innerHTML = '<b>Stuck?</b> Try opening in a <b>New Tab</b> or check your browser Console for errors. This usually happens if popups are blocked or the script fails to load.';
+          root.firstChild.appendChild(tip);
+        }
+      }, 5000);
+    </script>
   </body>
 </html>
 
