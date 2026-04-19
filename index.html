@@ -7,17 +7,19 @@
   </head>
   <body>
     <div id="root">
-      <div style="background: #0f172a; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-family: sans-serif;">
+      <div id="loading-indicator" style="background: #0f172a; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-family: sans-serif;">
         <div style="font-size: 24px; font-weight: 800; letter-spacing: 0.1em; color: #6366f1;">UCC LANCERS</div>
         <div style="margin-top: 10px; opacity: 0.5; font-size: 14px;">Loading Dashboard...</div>
       </div>
     </div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./src/main.tsx"></script>
     <script>
       // Failsafe: if the dashboard hasn't loaded in 5 seconds, show a troubleshooting tip
       setTimeout(() => {
         const root = document.getElementById('root');
-        if (root && root.innerText.includes('Loading Dashboard...')) {
+        // Check if the loading div is still present
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
           const tip = document.createElement('div');
           tip.style.marginTop = '20px';
           tip.style.padding = '15px';
@@ -27,8 +29,9 @@
           tip.style.maxWidth = '300px';
           tip.style.textAlign = 'center';
           tip.style.color = '#94a3b8';
-          tip.innerHTML = '<b>Stuck?</b> Try opening in a <b>New Tab</b> or check your browser Console for errors. This usually happens if popups are blocked or the script fails to load.';
-          root.firstChild.appendChild(tip);
+          tip.style.border = '1px solid #334155';
+          tip.innerHTML = '<b>Setup Required?</b> This usually happens if the site hasn\'t been <b>Built</b> yet. Ensure you run <code>npm run build</code> and deploy the contents of the <code>dist</code> folder, not the source files.';
+          loadingIndicator.appendChild(tip);
         }
       }, 5000);
     </script>
