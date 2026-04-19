@@ -49,7 +49,8 @@ import {
   serverTimestamp,
   query,
   where,
-  getDocFromServer
+  getDocFromServer,
+  enableIndexedDbPersistence
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 
@@ -62,16 +63,16 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if(error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+// Enable Persistence for "Offline Changes"
+if (typeof window !== "undefined") {
+  enableIndexedDbPersistence(db).catch((err) => {
+    if (err.code === "failed-precondition") {
+      console.warn("Persistence failed: Multiple tabs open.");
+    } else if (err.code === "unimplemented") {
+      console.warn("Persistence failed: Browser doesn't support it.");
     }
-  }
+  });
 }
-testConnection();
 
 const publicPath = `teams`;
 
@@ -315,6 +316,7 @@ export default function App() {
   );
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
+  const [authTimeoutReached, setAuthTimeoutReached] = useState(false);
   const [myTeams, setMyTeams] = useState([]);
   const [activeTeam, setActiveTeam] = useState(
     () => localStorage.getItem("ucc_vball_active_team") || null
@@ -426,14 +428,32 @@ export default function App() {
       setLoadingAuth(false);
       return;
     }
+    
+    // Safety timeout for the loading screen
+    const timeout = setTimeout(() => {
+      setAuthTimeoutReached(true);
+    }, 8000);
+
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      clearTimeout(timeout);
       setUser(u);
       setLoadingAuth(false);
       if (!u && view !== "team_select") {
         setView("team_select");
       }
     });
-    return () => unsubscribe();
+
+    // Also verify connection in background
+    getDocFromServer(doc(db, 'test', 'connection')).catch(e => {
+        if (e.message?.includes('insufficient permissions')) {
+            console.log("Firebase connection verified (received expected permission error).");
+        }
+    });
+
+    return () => {
+      unsubscribe();
+      clearTimeout(timeout);
+    };
   }, [view]);
 
   useEffect(() => {
@@ -1505,10 +1525,34 @@ export default function App() {
   
   if (loadingAuth) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans">
-        <div className="flex flex-col items-center">
-           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mb-4"></div>
-           <p className="text-white font-bold tracking-widest uppercase opacity-50">Authenticating...</p>
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-6 text-center">
+        <div className="flex flex-col items-center max-w-sm">
+           {!authTimeoutReached ? (
+             <>
+               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mb-4"></div>
+               <p className="text-white font-bold tracking-widest uppercase opacity-50">Authenticating...</p>
+             </>
+           ) : (
+             <div className="bg-slate-800 p-8 rounded-3xl border border-white/10 shadow-2xl animate-in fade-in zoom-in duration-500">
+               <Shield className="text-amber-400 mb-4 mx-auto" size={48} />
+               <h3 className="text-xl font-black text-white mb-2 uppercase tracking-tight">Syncing taking a while?</h3>
+               <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+                 We're having trouble connecting to the cloud. You can continue in offline mode, but changes might not sync until you reconnect.
+               </p>
+               <button 
+                 onClick={() => setLoadingAuth(false)}
+                 className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-2xl uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-indigo-500/20"
+               >
+                 Continue Anyway
+               </button>
+               <button 
+                 onClick={() => window.location.reload()}
+                 className="mt-4 text-slate-500 hover:text-white text-xs uppercase tracking-widest font-bold underline transition-colors"
+               >
+                 Retry Connection
+               </button>
+             </div>
+           )}
         </div>
       </div>
     );
