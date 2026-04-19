@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "UCC Lancers Volleyball Stats",
+  "description": "Comprehensive volleyball statistics tracking app for UCC Lancers, featuring multi-team management, player career stats aggregation, and role-based access control for coaches and players.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

@@ -1359,8 +1359,9 @@ export default function App() {
   }, [filteredStats, appData.roster]);
 
   const exportCSV = () => {
-    const teamName = activeTeam
-      ? TEAMS[activeTeam].name.replace(" ", "_")
+    const currentTeam = myTeams.find(t => t.id === activeTeam);
+    const teamName = currentTeam
+      ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
     let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Kills,Kill %,Att Errors,Blocks,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
