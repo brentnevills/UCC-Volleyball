@@ -57,13 +57,18 @@ import firebaseConfig from "../firebase-applet-config.json";
 // -------------------------------------------------------------
 // ENVIRONMENT & CLOUD CONFIGURATION
 // -------------------------------------------------------------
-const isFirebaseAvailable = true;
+const isFirebaseAvailable = !!firebaseConfig.apiKey;
 
 let app, auth, db;
 try {
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  if (isFirebaseAvailable) {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    console.log("Firebase initialized successfully");
+  } else {
+    console.warn("Firebase configuration missing - running in LOCAL mode");
+  }
 } catch (e) {
   console.error("Firebase Initialization Failed:", e);
 }
@@ -429,7 +434,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isFirebaseAvailable) {
+    if (!auth || !isFirebaseAvailable) {
+      console.warn("Auth service unavailable - skipping login listener");
       setLoadingAuth(false);
       return;
     }
@@ -439,21 +445,29 @@ export default function App() {
       setAuthTimeoutReached(true);
     }, 8000);
 
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      clearTimeout(timeout);
-      setUser(u);
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = onAuthStateChanged(auth, async (u) => {
+        clearTimeout(timeout);
+        setUser(u);
+        setLoadingAuth(false);
+        if (!u && view !== "team_select") {
+          setView("team_select");
+        }
+      });
+    } catch (err) {
+      console.error("Auth Listener Error:", err);
       setLoadingAuth(false);
-      if (!u && view !== "team_select") {
-        setView("team_select");
-      }
-    });
+    }
 
     // Also verify connection in background
-    getDocFromServer(doc(db, 'test', 'connection')).catch(e => {
-        if (e.message?.includes('insufficient permissions')) {
-            console.log("Firebase connection verified (received expected permission error).");
-        }
-    });
+    if (db) {
+      getDocFromServer(doc(db, 'test', 'connection')).catch(e => {
+          if (e.message?.includes('insufficient permissions')) {
+              console.log("Firebase connection verified.");
+          }
+      });
+    }
 
     return () => {
       unsubscribe();
@@ -462,17 +476,24 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
-    if (!user || !isFirebaseAvailable) {
+    if (!user || !db || !isFirebaseAvailable) {
       setMyTeams([]);
       return;
     }
-    const unsub = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
-      if (docSnap.exists() && docSnap.data().teams) {
-        setMyTeams(docSnap.data().teams);
-      } else {
-        setMyTeams([]);
-      }
-    });
+    let unsub = () => {};
+    try {
+      unsub = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
+        if (docSnap.exists() && docSnap.data().teams) {
+          setMyTeams(docSnap.data().teams);
+        } else {
+          setMyTeams([]);
+        }
+      }, (err) => {
+        console.error("Teams Sync Error:", err);
+      });
+    } catch (err) {
+      console.error("Teams Listener Setup Error:", err);
+    }
     return () => unsub();
   }, [user]);
 

@@ -12,8 +12,14 @@
         <div style="margin-top: 10px; opacity: 0.5; font-size: 14px;">Loading Dashboard...</div>
       </div>
     </div>
-    <script type="module" src="./src/main.tsx"></script>
+    <script type="module" src="/src/main.tsx" onerror="handleScriptError()"></script>
     <script>
+      function handleScriptError() {
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+          loadingIndicator.innerHTML += '<div style="color: #ef4444; margin-top: 20px; font-weight: 700;">ERROR: Script failed to load.</div>';
+        }
+      }
       // Failsafe: if the dashboard hasn't loaded in 5 seconds, show a troubleshooting tip
       setTimeout(() => {
         const root = document.getElementById('root');
