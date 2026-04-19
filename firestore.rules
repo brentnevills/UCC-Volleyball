@@ -95,6 +95,7 @@ service cloud.firestore {
     }
 
     match /teams/{teamId} {
+      allow create: if isSignedIn() && isValidId(teamId) && isTeamMember(teamId);
       allow get: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId);
 
       match /members/{userId} {

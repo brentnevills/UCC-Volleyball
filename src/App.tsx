@@ -1475,19 +1475,48 @@ export default function App() {
 
   const handleCreateTeam = async () => {
     if (!user) return;
+    
+    // Safety check for verified email (Required by Security Rules)
+    if (!user.emailVerified) {
+      alert("❌ Email Verification Required\n\nTo prevent unauthorized access, your Google account email must be verified. Please verify your email in your Google Account settings and refresh the page.");
+      return;
+    }
+
     const name = prompt("Enter new team name (e.g. 'Varsity Boys 2026'):");
     if (!name) return;
+    
     const tId = generateTeamId();
-    const coachCode = tId; // Backward compatible coach code
+    const coachCode = tId; 
     const playerCode = generateTeamId();
     const color = TEAM_COLORS[Math.floor(Math.random() * TEAM_COLORS.length)];
     
     try {
+      console.log("Starting team creation batch...", { tId, userId: user.uid });
       const batch = writeBatch(db);
+      
+      // Initialize team root document
+      batch.set(doc(db, `${publicPath}/${tId}`), { 
+        createdAt: serverTimestamp(),
+        createdBy: user.uid,
+        name: name
+      });
+
       // Give access to coach
-      batch.set(doc(db, `${publicPath}/${tId}/members/${user.uid}`), { uid: user.uid, role: 'coach', joinedAt: serverTimestamp() });
-      // Core settings with teamName and share codes
-      batch.set(doc(db, `${publicPath}/${tId}/settings/core`), { roster: DEFAULT_ROSTER, savedRosters: {}, savedLineups: {}, teamName: name, coachCode, playerCode });
+      batch.set(doc(db, `${publicPath}/${tId}/members/${user.uid}`), { 
+        uid: user.uid, 
+        role: 'coach', 
+        joinedAt: serverTimestamp() 
+      });
+      
+      // Core settings
+      batch.set(doc(db, `${publicPath}/${tId}/settings/core`), { 
+        roster: DEFAULT_ROSTER, 
+        savedRosters: {}, 
+        savedLineups: {}, 
+        teamName: name, 
+        coachCode, 
+        playerCode 
+      });
       
       // Store codes mapping
       batch.set(doc(db, "share_codes", coachCode), { teamId: tId, role: 'coach' });
@@ -1498,10 +1527,15 @@ export default function App() {
       batch.set(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
       
       await batch.commit();
-      alert(`Team created successfully!\n\nCoach Code: ${coachCode}\nPlayer Code: ${playerCode}`);
+      console.log("Team creation successful");
+      alert(`✅ Team created successfully!\n\nCoach Code: ${coachCode}\nPlayer Code: ${playerCode}`);
     } catch(e) {
-      console.error("Team Creation Error Details:", e);
-      alert(`Failed to create team.\n\nError: ${e.message || "Unknown error"}\n\nTIP: Check if your email is verified in Google Settings.`);
+      console.error("DEBUG - Team Creation Error:", e);
+      let errorMsg = e.message || "Unknown error";
+      if (errorMsg.includes("permissions")) {
+        errorMsg = "Forbidden: Your account does not have permission to create teams. This usually happens if your email is not verified or your session has expired.";
+      }
+      alert(`❌ Failed to create team.\n\nDetails: ${errorMsg}`);
     }
   };
 
