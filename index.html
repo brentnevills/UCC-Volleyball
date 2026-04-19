@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>
-    <script type="module" crossorigin src="./assets/index-C0rYFeiU.js"></script>
+    <script type="module" crossorigin src="./assets/index-DVRwnCow.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-DPTE6y96.css">
   </head>
   <body>
@@ -18,29 +18,30 @@
       function handleScriptError() {
         const loadingIndicator = document.getElementById('loading-indicator');
         if (loadingIndicator) {
-          loadingIndicator.innerHTML += '<div style="color: #ef4444; margin-top: 20px; font-weight: 700;">ERROR: Script failed to load.</div>';
+          loadingIndicator.innerHTML = `
+            <div style="background: #1e1b4b; padding: 30px; border-radius: 24px; border: 1px solid #4338ca; max-width: 400px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
+              <div style="font-size: 40px; margin-bottom: 15px;">🚧</div>
+              <h1 style="color: #fca5a5; font-size: 20px; font-weight: 800; margin-bottom: 10px; text-transform: uppercase;">Build Required</h1>
+              <p style="color: #94a3b8; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+                Your browser is trying to load raw code (<code>.tsx</code>) which it doesn't understand. 
+                This means you are viewing the <b>source code</b> instead of the <b>built app</b>.
+              </p>
+              <div style="background: #0f172a; padding: 15px; border-radius: 12px; font-family: monospace; font-size: 12px; color: #818cf8; text-align: left; margin-bottom: 20px;">
+                1. Go to <b>Repo Settings > Pages</b><br>
+                2. Change Branch to <b>gh-pages</b><br>
+                3. Save and refresh
+              </div>
+              <button onclick="window.location.reload()" style="background: #4f46e5; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: 700; cursor: pointer;">Try Again</button>
+            </div>
+          `;
         }
       }
-      // Failsafe: if the dashboard hasn't loaded in 5 seconds, show a troubleshooting tip
       setTimeout(() => {
-        const root = document.getElementById('root');
-        // Check if the loading div is still present
         const loadingIndicator = document.getElementById('loading-indicator');
-        if (loadingIndicator) {
-          const tip = document.createElement('div');
-          tip.style.marginTop = '20px';
-          tip.style.padding = '15px';
-          tip.style.background = '#1e293b';
-          tip.style.borderRadius = '12px';
-          tip.style.fontSize = '12px';
-          tip.style.maxWidth = '300px';
-          tip.style.textAlign = 'center';
-          tip.style.color = '#94a3b8';
-          tip.style.border = '1px solid #334155';
-          tip.innerHTML = '<b>Setup Required?</b> This usually happens if the site hasn\'t been <b>Built</b> yet. Ensure you run <code>npm run build</code> and deploy the contents of the <code>dist</code> folder, not the source files.';
-          loadingIndicator.appendChild(tip);
+        if (loadingIndicator && !window.React) {
+          handleScriptError();
         }
-      }, 5000);
+      }, 6000);
     </script>
   </body>
 </html>
