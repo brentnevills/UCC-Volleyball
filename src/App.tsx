@@ -48,7 +48,8 @@ import {
   writeBatch,
   serverTimestamp,
   query,
-  where
+  where,
+  getDocFromServer
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 
@@ -60,6 +61,17 @@ const isFirebaseAvailable = true;
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if(error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
+    }
+  }
+}
+testConnection();
 
 const publicPath = `teams`;
 
@@ -302,6 +314,7 @@ export default function App() {
     localStorage.getItem("ucc_vball_active_team") ? "menu" : "team_select"
   );
   const [user, setUser] = useState(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
   const [myTeams, setMyTeams] = useState([]);
   const [activeTeam, setActiveTeam] = useState(
     () => localStorage.getItem("ucc_vball_active_team") || null
@@ -409,12 +422,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isFirebaseAvailable) return;
+    if (!isFirebaseAvailable) {
+      setLoadingAuth(false);
+      return;
+    }
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
+      setLoadingAuth(false);
+      if (!u && view !== "team_select") {
+        setView("team_select");
+      }
     });
     return () => unsubscribe();
-  }, []);
+  }, [view]);
 
   useEffect(() => {
     if (!user || !isFirebaseAvailable) {
@@ -1482,6 +1502,17 @@ export default function App() {
   // -------------------------------------------------------------
   // RENDERERS
   // -------------------------------------------------------------
+  
+  if (loadingAuth) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans">
+        <div className="flex flex-col items-center">
+           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mb-4"></div>
+           <p className="text-white font-bold tracking-widest uppercase opacity-50">Authenticating...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (view === "team_select") {
     return (
