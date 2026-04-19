@@ -18,14 +18,19 @@ service cloud.firestore {
     }
     
     // The "Master Gate" (Relational Sync)
-    function getMember(teamId) {
+    function getMemberData(teamId) {
       return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data;
     }
+    function getMemberDataAfter(teamId) {
+      return getAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data;
+    }
     function isTeamMember(teamId) {
-      return exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+      return exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
+        || existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
     }
     function isCoach(teamId) {
-      return isTeamMember(teamId) && getMember(teamId).role == 'coach';
+      return (exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)) && getMemberData(teamId).role == 'coach')
+        || (existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)) && getMemberDataAfter(teamId).role == 'coach');
     }
 
     // Phase 2: Validation Blueprints (The "Anti-Update-Gap")

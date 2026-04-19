@@ -1498,10 +1498,10 @@ export default function App() {
       batch.set(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
       
       await batch.commit();
-      alert(`Team created!\n\nCoach Access Code (Can Edit): ${coachCode}\nPlayer Access Code (View Only): ${playerCode}\n\nYou can always find these in the Menu.`);
+      alert(`Team created successfully!\n\nCoach Code: ${coachCode}\nPlayer Code: ${playerCode}`);
     } catch(e) {
-      console.error(e);
-      alert("Failed to create team.");
+      console.error("Team Creation Error Details:", e);
+      alert(`Failed to create team.\n\nError: ${e.message || "Unknown error"}\n\nTIP: Check if your email is verified in Google Settings.`);
     }
   };
 
