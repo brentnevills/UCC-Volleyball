@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>
-    <script type="module" crossorigin src="./assets/index-CxurRDIV.js"></script>
+    <script type="module" crossorigin src="./assets/index-C0rYFeiU.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-DPTE6y96.css">
   </head>
   <body>
@@ -15,6 +15,12 @@
       </div>
     </div>
     <script>
+      function handleScriptError() {
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+          loadingIndicator.innerHTML += '<div style="color: #ef4444; margin-top: 20px; font-weight: 700;">ERROR: Script failed to load.</div>';
+        }
+      }
       // Failsafe: if the dashboard hasn't loaded in 5 seconds, show a troubleshooting tip
       setTimeout(() => {
         const root = document.getElementById('root');
