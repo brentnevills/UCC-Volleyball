@@ -100,7 +100,7 @@ const getEventDetails = (match) => {
   };
 };
 
-const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
+const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [careerList, setCareerList] = useState([]);
 
@@ -123,7 +123,15 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
           const setSnap = await getDoc(doc(db, `teams/${team.id}/settings/core`));
           if (!setSnap.exists()) continue;
           const r = setSnap.data().roster || [];
-          const playerMatch = r.find(p => p.name.toLowerCase() === playerName.toLowerCase());
+          
+          // Match by name AND birthYear (if both have birthYear)
+          const playerMatch = r.find(p => {
+             const nameMatch = p.name.toLowerCase() === playerName.toLowerCase();
+             // Only enforce birthYear match if both the incoming player and the roster player have it defined
+             const birthMatch = (!playerBirthYear || !p.birthYear) ? true : p.birthYear === playerBirthYear;
+             return nameMatch && birthMatch;
+          });
+          
           if (!playerMatch) continue;
 
           let pTeam = {
@@ -207,7 +215,7 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
         <div className="bg-gradient-to-r from-indigo-700 to-indigo-900 p-6 sm:p-10 rounded-t-3xl sm:rounded-t-[3rem] text-white flex justify-between items-center shrink-0">
           <div>
             <h2 className="text-3xl sm:text-5xl font-black tracking-widest uppercase flex items-center">
-               PROFILE: {playerName}
+               PROFILE: {playerName} {playerBirthYear ? `(${playerBirthYear})` : ''}
             </h2>
             <p className="text-indigo-200 mt-2 font-bold tracking-widest text-sm uppercase">Global Career Stats</p>
           </div>
@@ -322,6 +330,7 @@ export default function App() {
   // Setup State
   const [newPlayerName, setNewPlayerName] = useState("");
   const [newPlayerNum, setNewPlayerNum] = useState("");
+  const [newPlayerBirthYear, setNewPlayerBirthYear] = useState("");
   const [opponentName, setOpponentName] = useState("");
   const [rosterPresetName, setRosterPresetName] = useState("");
   const [isRosterModalOpen, setIsRosterModalOpen] = useState(false);
@@ -370,6 +379,7 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [setWinnerModal, setSetWinnerModal] = useState(null);
   const [careerPlayerName, setCareerPlayerName] = useState(null);
+  const [careerPlayerBirthYear, setCareerPlayerBirthYear] = useState(null);
   const [statFilter, setStatFilter] = useState("all");
 
   // Hierarchical Stats Navigation State
@@ -552,11 +562,16 @@ export default function App() {
   const rotateOpp = () => setOppLineup((prev) => [...prev.slice(1), prev[0]]);
 
   const addPlayer = async () => {
-    if (newPlayerName && newPlayerNum) {
+    if (newPlayerName && newPlayerNum && newPlayerBirthYear) {
+      if (!/^\d{4}$/.test(newPlayerBirthYear)) {
+          alert("Please enter a valid 4-digit birth year.");
+          return;
+      }
       const newPlayer = {
         id: Date.now().toString(),
         name: newPlayerName,
         number: newPlayerNum,
+        birthYear: newPlayerBirthYear,
       };
       if (isFirebaseAvailable && user) {
         const newRoster = [...appData.roster, newPlayer];
@@ -570,6 +585,9 @@ export default function App() {
       }
       setNewPlayerName("");
       setNewPlayerNum("");
+      setNewPlayerBirthYear("");
+    } else {
+        alert("Please fill in Name, Number, and Birth Year (YYYY).");
     }
   };
 
@@ -1392,20 +1410,27 @@ export default function App() {
     const name = prompt("Enter new team name (e.g. 'Varsity Boys 2026'):");
     if (!name) return;
     const tId = generateTeamId();
+    const coachCode = tId; // Backward compatible coach code
+    const playerCode = generateTeamId();
     const color = TEAM_COLORS[Math.floor(Math.random() * TEAM_COLORS.length)];
     
     try {
       const batch = writeBatch(db);
-      // Give access
-      batch.set(doc(db, `${publicPath}/${tId}/members/${user.uid}`), { uid: user.uid, joinedAt: serverTimestamp() });
-      // Core settings with teamName
-      batch.set(doc(db, `${publicPath}/${tId}/settings/core`), { roster: DEFAULT_ROSTER, savedRosters: {}, savedLineups: {}, teamName: name });
+      // Give access to coach
+      batch.set(doc(db, `${publicPath}/${tId}/members/${user.uid}`), { uid: user.uid, role: 'coach', joinedAt: serverTimestamp() });
+      // Core settings with teamName and share codes
+      batch.set(doc(db, `${publicPath}/${tId}/settings/core`), { roster: DEFAULT_ROSTER, savedRosters: {}, savedLineups: {}, teamName: name, coachCode, playerCode });
+      
+      // Store codes mapping
+      batch.set(doc(db, "share_codes", coachCode), { teamId: tId, role: 'coach' });
+      batch.set(doc(db, "share_codes", playerCode), { teamId: tId, role: 'player' });
+
       // Save visually to user profile
-      const newTeams = [...myTeams, { id: tId, name, color }];
+      const newTeams = [...myTeams, { id: tId, name, color, role: 'coach' }];
       batch.set(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
       
       await batch.commit();
-      alert(`Team created!\n\nYour Team Share Code is:\n${tId}\n\nGive this to other coaches so they can join.`);
+      alert(`Team created!\n\nCoach Access Code (Can Edit): ${coachCode}\nPlayer Access Code (View Only): ${playerCode}\n\nYou can always find these in the Menu.`);
     } catch(e) {
       console.error(e);
       alert("Failed to create team.");
@@ -1414,28 +1439,38 @@ export default function App() {
 
   const handleJoinTeam = async () => {
     if (!user) return;
-    const tIdRaw = prompt("Enter the Team Share Code:");
+    const tIdRaw = prompt("Enter a Coach or Player Share Code:");
     if (!tIdRaw) return;
-    const tId = tIdRaw.toUpperCase().trim();
-    
-    if (myTeams.find(t => t.id === tId)) {
-       alert("You are already in this team.");
-       return;
-    }
+    const code = tIdRaw.toUpperCase().trim();
     
     try {
+      let teamId = code;
+      let role = 'coach';
+      
+      // Try resolving via share_codes
+      const codeSnap = await getDoc(doc(db, "share_codes", code));
+      if (codeSnap.exists()) {
+        teamId = codeSnap.data().teamId;
+        role = codeSnap.data().role;
+      }
+
+      if (myTeams.find(t => t.id === teamId)) {
+        alert("You are already in this team.");
+        return;
+      }
+      
       // 1. Give Access (via permissive member creation rule)
-      await setDoc(doc(db, `${publicPath}/${tId}/members/${user.uid}`), { uid: user.uid, joinedAt: serverTimestamp() });
+      await setDoc(doc(db, `${publicPath}/${teamId}/members/${user.uid}`), { uid: user.uid, role, joinedAt: serverTimestamp() });
       
       // 2. Fetch metadata that we now have access to read
-      const snap = await getDoc(doc(db, `${publicPath}/${tId}/settings/core`));
+      const snap = await getDoc(doc(db, `${publicPath}/${teamId}/settings/core`));
       const tName = snap.exists() && snap.data().teamName ? snap.data().teamName : "Joined Team";
       const color = TEAM_COLORS[Math.floor(Math.random() * TEAM_COLORS.length)];
       
       // 3. Update user profile
-      const newTeams = [...myTeams, { id: tId, name: tName, color }];
+      const newTeams = [...myTeams, { id: teamId, name: tName, color, role }];
       await setDoc(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
-      alert(`Successfully joined ${tName}!`);
+      alert(`Successfully joined ${tName} as a ${role === 'coach' ? "Coach" : "Player"}!`);
     } catch (e) {
       console.error(e);
       alert("Failed to join. Verify the share code is correct.");
@@ -1501,15 +1536,30 @@ export default function App() {
 
           <div className="w-full px-4 flex flex-col items-center mb-8 gap-4">
             {!user ? (
-              <button
-                onClick={() => {
-                  const provider = new GoogleAuthProvider();
-                  signInWithPopup(auth, provider).catch(console.error);
-                }}
-                className="bg-white text-slate-800 px-6 py-3 rounded-full font-bold flex items-center shadow-lg hover:bg-slate-100 transition-colors"
-              >
-                Sign in with Google to Sync
-              </button>
+              <div className="flex flex-col items-center gap-2">
+                <button
+                  onClick={async () => {
+                    const provider = new GoogleAuthProvider();
+                    try {
+                      await signInWithPopup(auth, provider);
+                    } catch (err) {
+                      console.error(err);
+                      if (err.code === 'auth/popup-blocked') {
+                        alert("Your browser blocked the sign-in popup. Please allow popups for this site, or open it in a new tab.");
+                      } else {
+                        alert(`Sign-in error: ${err.message}`);
+                      }
+                    }
+                  }}
+                  className="bg-white text-slate-800 px-6 py-3 rounded-full font-bold flex items-center shadow-lg hover:bg-slate-100 transition-colors"
+                >
+                  <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G" className="w-5 h-5 mr-3" />
+                  Sign in with Google to Sync
+                </button>
+                <p className="text-slate-400 text-xs max-w-sm text-center mt-2">
+                  If the popup doesn't open, ensure your browser doesn't block popups or Try opening the app in a new tab.
+                </p>
+              </div>
             ) : (
               <>
                 <div className="flex gap-4 w-full justify-center">
@@ -1599,35 +1649,39 @@ export default function App() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
-            <button
-              onClick={() => startSetup("League")}
-              className="bg-gradient-to-b from-[#0044cc] to-[#002b80] text-white p-6 sm:p-8 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-wider hover:from-[#0055ff] hover:to-[#003399] transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-blue-400/30"
-            >
-              <Play className="mb-2 sm:mb-3" size={32} />
-              <span>LEAGUE MATCH</span>
-            </button>
-            <button
-              onClick={() => startSetup("Tournament")}
-              className="bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 p-6 sm:p-8 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-wider hover:from-amber-300 hover:to-amber-500 transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-amber-200/50"
-            >
-              <Trophy className="mb-2 sm:mb-3" size={32} />
-              <span>TOURNAMENT</span>
-            </button>
-            <button
-              onClick={() => startSetup("Scrimmage")}
-              className="md:col-span-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-bold text-sm sm:text-lg tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center"
-            >
-              <Users className="mr-3 text-blue-300" size={20} /> SCRIMMAGE /
-              CUSTOM
-            </button>
-            {appData.matches.length > 0 && (
-              <button
-                onClick={joinLiveMatch}
-                className="md:col-span-2 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 border border-green-400 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-xl tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center uppercase shadow-lg"
-              >
-                <Activity className="mr-2 sm:mr-3 text-green-100" size={20} />{" "}
-                Join Live Match
-              </button>
+            {teamInfo.role !== 'player' && (
+              <>
+                <button
+                  onClick={() => startSetup("League")}
+                  className="bg-gradient-to-b from-[#0044cc] to-[#002b80] text-white p-6 sm:p-8 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-wider hover:from-[#0055ff] hover:to-[#003399] transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-blue-400/30"
+                >
+                  <Play className="mb-2 sm:mb-3" size={32} />
+                  <span>LEAGUE MATCH</span>
+                </button>
+                <button
+                  onClick={() => startSetup("Tournament")}
+                  className="bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 p-6 sm:p-8 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-wider hover:from-amber-300 hover:to-amber-500 transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-amber-200/50"
+                >
+                  <Trophy className="mb-2 sm:mb-3" size={32} />
+                  <span>TOURNAMENT</span>
+                </button>
+                <button
+                  onClick={() => startSetup("Scrimmage")}
+                  className="md:col-span-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-bold text-sm sm:text-lg tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center"
+                >
+                  <Users className="mr-3 text-blue-300" size={20} /> SCRIMMAGE /
+                  CUSTOM
+                </button>
+                {appData.matches.length > 0 && (
+                  <button
+                    onClick={joinLiveMatch}
+                    className="md:col-span-2 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 border border-green-400 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-xl tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center uppercase shadow-lg"
+                  >
+                    <Activity className="mr-2 sm:mr-3 text-green-100" size={20} />{" "}
+                    Join Live Match
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -1986,26 +2040,44 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="flex gap-2 pt-2 border-t border-slate-200">
-                  <input
-                    placeholder="#"
-                    className="w-12 sm:w-16 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-black text-center text-[#0033A0] text-sm sm:text-base"
-                    value={newPlayerNum}
-                    onChange={(e) => setNewPlayerNum(e.target.value)}
-                    type="number"
-                  />
-                  <input
-                    placeholder="Player Name"
-                    className="flex-1 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base"
-                    value={newPlayerName}
-                    onChange={(e) => setNewPlayerName(e.target.value)}
-                  />
-                  <button
-                    onClick={addPlayer}
-                    className="bg-green-500 text-white px-3 sm:px-4 rounded-lg sm:rounded-xl font-black hover:bg-green-600 transition-colors shadow-sm flex items-center justify-center"
-                  >
-                    <PlusCircle size={18} className="sm:w-5 sm:h-5" />
-                  </button>
+                <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-slate-200">
+                  <div className="flex gap-2">
+                    <input
+                      placeholder="#"
+                      className="w-12 sm:w-16 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-black text-center text-[#0033A0] text-sm sm:text-base"
+                      value={newPlayerNum}
+                      onChange={(e) => setNewPlayerNum(e.target.value)}
+                      type="number"
+                    />
+                    <input
+                      placeholder="Birth Year (YYYY)"
+                      className="w-24 sm:w-32 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base text-center hidden sm:block"
+                      value={newPlayerBirthYear}
+                      onChange={(e) => setNewPlayerBirthYear(e.target.value)}
+                      maxLength={4}
+                    />
+                  </div>
+                  <div className="flex flex-1 gap-2">
+                    <input
+                      placeholder="Birth YYYY"
+                      className="w-24 p-2 rounded-lg border border-slate-200 outline-none font-bold text-slate-700 text-sm text-center sm:hidden"
+                      value={newPlayerBirthYear}
+                      onChange={(e) => setNewPlayerBirthYear(e.target.value)}
+                      maxLength={4}
+                    />
+                    <input
+                      placeholder="Player Name"
+                      className="flex-1 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base"
+                      value={newPlayerName}
+                      onChange={(e) => setNewPlayerName(e.target.value)}
+                    />
+                    <button
+                      onClick={addPlayer}
+                      className="bg-green-500 text-white px-3 sm:px-4 rounded-lg sm:rounded-xl font-black hover:bg-green-600 transition-colors shadow-sm flex items-center justify-center min-w-[3rem]"
+                    >
+                      <PlusCircle size={18} className="sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -2019,9 +2091,14 @@ export default function App() {
                       <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base">
                         {p.number}
                       </div>
-                      <span className="font-bold text-slate-700 text-sm sm:text-base">
-                        {p.name}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className="font-bold text-slate-700 text-sm sm:text-base">
+                          {p.name}
+                        </span>
+                        {p.birthYear && (
+                          <span className="text-[10px] text-slate-400 font-bold tracking-widest">{p.birthYear}</span>
+                        )}
+                      </div>
                     </div>
                     <button
                       onClick={() => removePlayer(p.id)}
@@ -3183,7 +3260,10 @@ export default function App() {
                       return (
                         <tr
                           key={p.number}
-                          onClick={() => setCareerPlayerName(p.name)}
+                          onClick={() => {
+                            setCareerPlayerName(p.name);
+                            setCareerPlayerBirthYear(p.birthYear || null);
+                          }}
                           className="hover:bg-blue-50/50 text-[10px] sm:text-xs cursor-pointer transition-colors"
                           title="Click to view full Career Stats across all teams"
                         >
@@ -3385,8 +3465,12 @@ export default function App() {
         {careerPlayerName && (
           <CareerStatsModal 
              playerName={careerPlayerName} 
+             playerBirthYear={careerPlayerBirthYear}
              myTeams={myTeams} 
-             onClose={() => setCareerPlayerName(null)} 
+             onClose={() => {
+                 setCareerPlayerName(null);
+                 setCareerPlayerBirthYear(null);
+             }} 
           />
         )}
       </div>
