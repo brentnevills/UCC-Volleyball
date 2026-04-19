@@ -207,7 +207,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
     if (playerName && myTeams.length > 0) {
       load();
     }
-  }, [playerName, myTeams]);
+  }, [playerName, playerBirthYear, myTeams]);
 
   return (
     <div className="absolute inset-0 z-[100] bg-slate-900/90 backdrop-blur-md flex flex-col p-4 sm:p-12 overflow-hidden items-center justify-center">
@@ -1284,6 +1284,7 @@ export default function App() {
       uccData[p.id] = {
         name: p.name,
         number: p.number,
+        birthYear: p.birthYear || null,
         passSum: 0,
         passCount: 0,
         attCount: 0,
