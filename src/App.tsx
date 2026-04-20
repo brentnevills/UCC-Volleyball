@@ -986,10 +986,16 @@ export default function App() {
   const recordOppStatAndCheckPoint = (oppId, category, metric, value = 1) => {
     pushToHistory();
     logStat(oppId, category, metric, value, true);
-    if (category === "Attack" && metric === "Kill") {
-      logStat(oppId, "Attack", "Swing", 1, true);
-      handlePoint("opp", true);
-      setSelectedOppId(null);
+    if (category === "Attack") {
+      if (metric === "Kill") {
+        logStat(oppId, "Attack", "Swing", 1, true);
+        handlePoint("opp", true);
+        setSelectedOppId(null);
+      } else if (metric === "Out" || metric === "Net") {
+        logStat(oppId, "Attack", "Swing", 1, true);
+        handlePoint("ucc", true);
+        setSelectedOppId(null);
+      }
     }
     // Transition out of receive phase if a pass is recorded
     if (category === "Pass") setRallyPhase("play");
@@ -2387,13 +2393,22 @@ export default function App() {
             </div>
 
             <div className="flex flex-col items-center justify-center px-1 sm:px-2">
-              <span className="text-[8px] sm:text-[9px] font-black text-amber-400 tracking-[0.1em] sm:tracking-[0.2em] uppercase mb-1 bg-amber-400/10 px-1.5 sm:px-2 py-0.5 rounded-full text-center whitespace-nowrap">
-                {matchFormat === "Best of 3"
-                  ? "BO3"
-                  : matchFormat === "Best of 5"
-                  ? "BO5"
-                  : matchFormat}{" "}
-                • S{currentSetNum}
+              <span className="text-[8px] sm:text-[9px] font-black text-amber-400 tracking-[0.1em] sm:tracking-[0.2em] uppercase mb-1 bg-amber-400/10 px-1.5 sm:px-2 py-0.5 rounded-full text-center whitespace-nowrap flex flex-col items-center">
+                <span>
+                 {matchFormat === "Best of 3"
+                   ? "BO3"
+                   : matchFormat === "Best of 5"
+                   ? "BO5"
+                   : matchFormat}{" "}
+                 • S{currentSetNum}
+                </span>
+                {isFirebaseAvailable && user ? (
+                  <span className="text-[6px] tracking-widest text-emerald-400 mt-0.5 opacity-80">LIVE SYNC</span>
+                ) : (
+                  <span className="text-[6px] tracking-widest text-amber-500 mt-0.5 opacity-80 uppercase">
+                    {isFirebaseAvailable ? "Sync Delayed" : "Local Mode"}
+                  </span>
+                )}
               </span>
               <div className="flex items-center space-x-1.5 sm:space-x-3 bg-white/5 px-2 sm:px-4 py-1 sm:py-1.5 rounded-xl sm:rounded-2xl border border-white/10">
                 <span className="text-xl sm:text-2xl font-black text-blue-400">
@@ -2960,34 +2975,63 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
-                    <button
-                      onClick={() =>
-                        recordOppStatAndCheckPoint(
-                          selectedOppId,
-                          "Attack",
-                          "Kill"
-                        )
-                      }
-                      className="bg-gradient-to-b from-red-500 to-red-600 text-white py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-lg sm:text-2xl shadow-sm active:scale-95 flex flex-col items-center border-t border-white/20"
-                    >
-                      KILL{" "}
-                      <span className="text-[8px] sm:text-[9px] opacity-80 uppercase tracking-widest font-bold mt-0.5">
-                        (Ends Rally)
-                      </span>
-                    </button>
-                    <button
-                      onClick={() =>
-                        recordOppStatAndCheckPoint(
-                          selectedOppId,
-                          "Attack",
-                          "Swing"
-                        )
-                      }
-                      className="bg-gradient-to-b from-slate-600 to-slate-700 text-white py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-lg sm:text-2xl shadow-sm active:scale-95 border-t border-white/20"
-                    >
-                      SWING
-                    </button>
+                  <div className="flex flex-col space-y-3">
+                    <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
+                      <button
+                        onClick={() =>
+                          recordOppStatAndCheckPoint(
+                            selectedOppId,
+                            "Attack",
+                            "Kill"
+                          )
+                        }
+                        className="bg-gradient-to-b from-red-500 to-red-600 text-white py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-lg sm:text-2xl shadow-sm active:scale-95 flex flex-col items-center border-t border-white/20"
+                      >
+                        KILL{" "}
+                        <span className="text-[8px] sm:text-[9px] opacity-80 uppercase tracking-widest font-bold mt-0.5">
+                          (Ends Rally)
+                        </span>
+                      </button>
+                      <button
+                        onClick={() =>
+                          recordOppStatAndCheckPoint(
+                            selectedOppId,
+                            "Attack",
+                            "Swing"
+                          )
+                        }
+                        className="bg-gradient-to-b from-slate-600 to-slate-700 text-white py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-lg sm:text-2xl shadow-sm active:scale-95 border-t border-white/20"
+                      >
+                        SWING
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
+                      <button
+                        onClick={() =>
+                          recordOppStatAndCheckPoint(
+                            selectedOppId,
+                            "Attack",
+                            "Out"
+                          )
+                        }
+                        className="bg-slate-200 text-slate-700 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95 uppercase tracking-widest border border-slate-300"
+                      >
+                        Attack Out
+                      </button>
+                      <button
+                        onClick={() =>
+                          recordOppStatAndCheckPoint(
+                            selectedOppId,
+                            "Attack",
+                            "Net"
+                          )
+                        }
+                        className="bg-slate-200 text-slate-700 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95 uppercase tracking-widest border border-slate-300"
+                      >
+                        Attack Net
+                      </button>
+                    </div>
                   </div>
                 )}
 
