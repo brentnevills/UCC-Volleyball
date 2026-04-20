@@ -401,6 +401,7 @@ export default function App() {
   const [tempOppLineup, setTempOppLineup] = useState(["", "", "", "", "", ""]);
   const [newOppNumber, setNewOppNumber] = useState("");
   const [selectedOppId, setSelectedOppId] = useState(null);
+  const [lateBlockPlayerId, setLateBlockPlayerId] = useState(null);
   const [tempNote, setTempNote] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [setWinnerModal, setSetWinnerModal] = useState(null);
@@ -664,6 +665,11 @@ export default function App() {
       updateSetState({ oppLineup: newLineup });
       return newLineup;
     });
+  };
+
+  const changeRallyPhase = (newPhase) => {
+    setRallyPhase(newPhase);
+    updateSetState({ rallyPhase: newPhase });
   };
 
   const addPlayer = async () => {
@@ -1007,6 +1013,12 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
 
+    // Late block UI feedback
+    if (category === "Block" && metric === "Late") {
+      setLateBlockPlayerId(playerId);
+      setTimeout(() => setLateBlockPlayerId(null), 1000);
+    }
+
     // Optimistic local update for responsiveness
     setAppData(prev => ({
       ...prev,
@@ -1045,11 +1057,16 @@ export default function App() {
         logStat(playerId, "Attack", "Swing", 1);
         handlePoint("opp", true);
       }
-    } else if (category === "Block") {
+    }
+    if (category === "Block") {
       if (metric === "Block") handlePoint("ucc", true);
       else if (metric === "Net Viol") handlePoint("opp", true);
     }
-    if (category === "Pass") setRallyPhase("play");
+    
+    // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
+    if (rallyPhase === "receive" || rallyPhase === "opp_receive" || category === "Pass") {
+      changeRallyPhase("play");
+    }
   };
 
   const recordOppStatAndCheckPoint = (oppId, category, metric, value = 1) => {
@@ -1070,8 +1087,11 @@ export default function App() {
         handlePoint("ucc", true);
       }
     }
-    // Transition out of receive phase if a pass is recorded
-    if (category === "Pass") setRallyPhase("play");
+    
+    // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
+    if (rallyPhase === "receive" || rallyPhase === "opp_receive" || category === "Pass") {
+      changeRallyPhase("play");
+    }
   };
 
   const isTieBreaker = () =>
@@ -1128,7 +1148,7 @@ export default function App() {
     const winner = checkSetWin(newUcc, newOpp);
     if (winner) setSetWinnerModal(winner);
     else {
-      setRallyPhase("serve");
+      changeRallyPhase("serve");
       setTimeout(() => setServePromptVisible(true), 400);
     }
   };
@@ -1187,7 +1207,7 @@ export default function App() {
     setScore({ ucc: 0, opp: 0 });
     setTeamStats({ uccSubs: 0, oppSubs: 0, uccTimeouts: 0, oppTimeouts: 0 });
     setSetWinnerModal(null);
-    setRallyPhase("serve");
+    changeRallyPhase("serve");
     setTimeout(() => setServePromptVisible(true), 500);
   };
 
@@ -1204,7 +1224,7 @@ export default function App() {
     else if (metric === "In Play") {
       logStat(serverId, "Serve", "Attempt", 1, isOpp);
       // New: If we serve, prompt for opponent passing (opp_receive)
-      setRallyPhase(team === "ucc" ? "opp_receive" : "receive");
+      changeRallyPhase(team === "ucc" ? "opp_receive" : "receive");
     }
   };
 
@@ -2515,8 +2535,11 @@ export default function App() {
                 <img
                   src="./LancerVolleyballLogo.png"
                   alt="Logo"
-                  className="h-8 w-8 object-contain rounded-full"
-                  onError={(e) => (e.target.style.display = "none")}
+                  className="h-8 w-8 object-contain rounded-full bg-white/10 p-0.5"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = "https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png";
+                  }}
                 />
               </div>
 
@@ -2630,20 +2653,19 @@ export default function App() {
         </header>
 
         {/* FULL SCREEN COURT */}
-        <div className="flex-1 flex items-center justify-center relative bg-slate-900 shadow-inner p-2 sm:p-6 overflow-hidden">
+        <div className="flex-1 flex items-center justify-center relative bg-slate-900 shadow-inner p-2 sm:p-4 md:p-6 overflow-hidden min-h-0">
 
           {/* Background Logo */}
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
             <img
-              src="./LancerVolleyballLogo.png"
+              src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
               alt="Lancers Logo bg"
               className="h-[300px] w-[300px] sm:h-[500px] sm:w-[500px] object-contain rounded-full"
-              onError={(e) => (e.target.style.display = "none")}
             />
           </div>
 
           {/* COURT CONTAINER */}
-          <div className="w-full max-w-lg sm:max-w-3xl aspect-[9/16] sm:aspect-[1/1.8] bg-[#c28e60] p-2 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-lg flex flex-col border-2 sm:border-4 border-slate-800">
+          <div className="w-full max-w-full h-full sm:max-h-full sm:w-auto aspect-[9/16] sm:aspect-[1/1.8] bg-[#c28e60] p-1.5 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-lg flex flex-col border-2 sm:border-4 border-slate-800 mx-auto">
             <div className="flex-1 bg-gradient-to-b from-[#e3b587] to-[#d6a575] border-2 sm:border-[6px] border-white relative flex flex-col shadow-inner">
               {/* OPPONENT SIDE */}
               <div className="flex-1 relative flex flex-col justify-between p-1 sm:p-4 border-b-2 sm:border-b-4 border-white/80">
@@ -3040,7 +3062,7 @@ export default function App() {
                           "Late"
                         )
                       }
-                      className="bg-slate-100 text-slate-600 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-slate-200 active:scale-95 uppercase tracking-wider"
+                      className={lateBlockPlayerId === selectedPlayerId ? "bg-amber-400 text-amber-950 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-amber-500 active:scale-95 uppercase tracking-wider transition-colors shadow-inner" : "bg-slate-100 text-slate-600 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-slate-200 active:scale-95 uppercase tracking-wider transition-colors"}
                     >
                       Late
                     </button>
