@@ -438,14 +438,14 @@ export default function App() {
       link.rel = "icon";
       document.head.appendChild(link);
     }
-    link.href = "./LancerVolleyballLogo.png";
+    link.href = "https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png";
     let appleLink = document.querySelector("link[rel~='apple-touch-icon']");
     if (!appleLink) {
       appleLink = document.createElement("link");
       appleLink.rel = "apple-touch-icon";
       document.head.appendChild(appleLink);
     }
-    appleLink.href = "./LancerVolleyballLogo.png";
+    appleLink.href = "https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png";
   }, []);
 
   useEffect(() => {
@@ -1868,20 +1868,20 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
           <img
-            src="./LancerVolleyballLogo.png"
+            src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
             alt="bg"
+            referrerPolicy="no-referrer"
             className="h-[800px] w-[800px] object-contain blur-sm rounded-full"
-            onError={(e) => (e.target.style.display = "none")}
           />
         </div>
 
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
           <div className="bg-white p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8">
             <img
-              src="./LancerVolleyballLogo.png"
+              src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
               alt="Lancers Logo"
+              referrerPolicy="no-referrer"
               className="h-24 w-24 sm:h-32 sm:w-32 object-contain rounded-full"
-              onError={(e) => (e.target.style.display = "none")}
             />
           </div>
           <h1 className="text-4xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center mb-2">
@@ -1994,10 +1994,10 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center">
           <img
-            src="./LancerVolleyballLogo.png"
+            src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
             alt="bg"
+            referrerPolicy="no-referrer"
             className="h-[500px] w-[500px] sm:h-[800px] sm:w-[800px] object-contain blur-sm rounded-full"
-            onError={(e) => (e.target.style.display = "none")}
           />
         </div>
 
@@ -2019,10 +2019,10 @@ export default function App() {
           <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
             <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6">
               <img
-                src="./LancerVolleyballLogo.png"
+                src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
                 alt="Lancers Logo"
+                referrerPolicy="no-referrer"
                 className="h-20 w-20 sm:h-32 sm:w-32 object-contain rounded-full"
-                onError={(e) => (e.target.style.display = "none")}
               />
             </div>
             <h1 className="text-3xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center">
@@ -2111,10 +2111,10 @@ export default function App() {
             <div className="flex items-center space-x-3 sm:space-x-4">
               <div className="bg-white p-1 rounded-full shadow-inner hidden sm:block">
                 <img
-                  src="./LancerVolleyballLogo.png"
+                  src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
                   alt="Logo"
+                  referrerPolicy="no-referrer"
                   className="h-8 w-8 sm:h-12 sm:w-12 object-contain rounded-full"
-                  onError={(e) => (e.target.style.display = "none")}
                 />
               </div>
               <div>
@@ -2550,13 +2550,10 @@ export default function App() {
             <div className="flex items-center space-x-2 sm:space-x-4 order-1 sm:order-none">
               <div className="bg-white/10 backdrop-blur-md p-1 rounded-full border border-white/20 shadow-sm hidden md:block">
                 <img
-                  src="./LancerVolleyballLogo.png"
+                  src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
                   alt="Logo"
+                  referrerPolicy="no-referrer"
                   className="h-8 w-8 object-contain rounded-full bg-white/10 p-0.5"
-                  onError={(e) => {
-                    e.target.onerror = null;
-                    e.target.src = "https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png";
-                  }}
                 />
               </div>
 
@@ -2574,7 +2571,7 @@ export default function App() {
                   <div className="flex items-center space-x-1 sm:space-x-2">
                     <button
                       onClick={() => manualScoreAdjust("ucc", -1)}
-                      className="text-white/30 hover:text-white p-0.5 active:scale-90 hidden sm:block"
+                      className="text-white/40 hover:text-white p-1 active:scale-90"
                     >
                       <ChevronDown size={14} />
                     </button>
@@ -2583,7 +2580,7 @@ export default function App() {
                     </p>
                     <button
                       onClick={() => manualScoreAdjust("ucc", 1)}
-                      className="text-white/30 hover:text-white p-0.5 active:scale-90 hidden sm:block"
+                      className="text-white/40 hover:text-white p-1 active:scale-90"
                     >
                       <ChevronUp size={14} />
                     </button>
@@ -2648,7 +2645,7 @@ export default function App() {
                   <div className="flex items-center space-x-1 sm:space-x-2">
                     <button
                       onClick={() => manualScoreAdjust("opp", -1)}
-                      className="text-white/30 hover:text-white p-0.5 active:scale-90 hidden sm:block"
+                      className="text-white/40 hover:text-white p-1 active:scale-90"
                     >
                       <ChevronDown size={14} />
                     </button>
@@ -2657,7 +2654,7 @@ export default function App() {
                     </p>
                     <button
                       onClick={() => manualScoreAdjust("opp", 1)}
-                      className="text-white/30 hover:text-white p-0.5 active:scale-90 hidden sm:block"
+                      className="text-white/40 hover:text-white p-1 active:scale-90"
                     >
                       <ChevronUp size={14} />
                     </button>
@@ -3564,10 +3561,10 @@ export default function App() {
             <div className="flex items-center w-full sm:w-auto">
               <div className="bg-white p-1 sm:p-1.5 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:block">
                 <img
-                  src="./LancerVolleyballLogo.png"
+                  src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
                   alt="Logo"
+                  referrerPolicy="no-referrer"
                   className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-full"
-                  onError={(e) => (e.target.style.display = "none")}
                 />
               </div>
               <div className="flex-1">
