@@ -821,47 +821,55 @@ export default function App() {
     };
     const safeOppName = opponentName.trim();
 
-    if (isFirebaseAvailable && user) {
-      const batch = writeBatch(db);
-      batch.set(
-        doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
-        {
-          defaultLineup: finalOppLineup,
-          notes: oppNotesMem,
-          setterId: oppSetterId,
-          liberoId: oppLiberoId,
-        }
-      );
-      batch.set(
-        doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
-        newMatch
-      );
-      batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
-      await batch.commit();
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        opponents: {
-          ...appData.opponents,
-          [safeOppName]: {
+    try {
+      if (isFirebaseAvailable && user) {
+        const batch = writeBatch(db);
+        batch.set(
+          doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
+          {
+            teamName: opponentName, // Explicitly store team name
             defaultLineup: finalOppLineup,
             notes: oppNotesMem,
             setterId: oppSetterId,
             liberoId: oppLiberoId,
+            updatedAt: serverTimestamp(),
+          }
+        );
+        batch.set(
+          doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
+          newMatch
+        );
+        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
+        await batch.commit();
+      } else if (!isFirebaseAvailable) {
+        writeLocalDb({
+          ...appData,
+          opponents: {
+            ...appData.opponents,
+            [safeOppName]: {
+              teamName: opponentName,
+              defaultLineup: finalOppLineup,
+              notes: oppNotesMem,
+              setterId: oppSetterId,
+              liberoId: oppLiberoId,
+            },
           },
-        },
-        matches: [...appData.matches, newMatch],
-        sets: [...appData.sets, newSet],
-      });
-    }
+          matches: [...appData.matches, newMatch],
+          sets: [...appData.sets, newSet],
+        });
+      }
 
-    setActiveMatch(newMatch);
-    setActiveSetId(setId);
-    setHistory([]);
-    setShowOppLineupPrompt(false);
-    setView("game");
-    setRallyPhase(serving === "ucc" ? "serve" : "receive");
-    setServePromptVisible(true);
+      setActiveMatch(newMatch);
+      setActiveSetId(setId);
+      setHistory([]);
+      setShowOppLineupPrompt(false);
+      setView("game");
+      setRallyPhase(serving === "ucc" ? "serve" : "receive");
+      setServePromptVisible(true);
+    } catch (err) {
+      console.error("Start Game Error:", err);
+      alert("❌ Failed to start game. Check your connection or verified email status. Details: " + err.message);
+    }
   };
 
   const pushToHistory = () => {
@@ -983,6 +991,8 @@ export default function App() {
       handlePoint("opp", true);
       setSelectedOppId(null);
     }
+    // Transition out of receive phase if a pass is recorded
+    if (category === "Pass") setRallyPhase("play");
   };
 
   const isTieBreaker = () =>
@@ -1115,7 +1125,8 @@ export default function App() {
     } else if (metric === "Error") setServeErrorPrompt(team);
     else if (metric === "In Play") {
       logStat(serverId, "Serve", "Attempt", 1, isOpp);
-      setRallyPhase(team === "ucc" ? "play" : "receive");
+      // New: If we serve, prompt for opponent passing (opp_receive)
+      setRallyPhase(team === "ucc" ? "opp_receive" : "receive");
     }
   };
 
@@ -2595,7 +2606,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Awaiting Receive Pulse Indicator */}
+              {/* Awaiting Receive Pulse Indicators */}
               {rallyPhase === "receive" && (
                 <div className="absolute inset-x-2 sm:inset-x-4 bottom-[20%] sm:bottom-1/3 flex justify-center pointer-events-none z-20">
                   <div className="bg-[#0033A0]/80 backdrop-blur-sm text-white px-4 sm:px-6 py-1.5 sm:py-2 rounded-full border border-white/20 shadow-lg animate-pulse flex flex-col items-center">
@@ -2603,7 +2614,20 @@ export default function App() {
                       Awaiting Receive
                     </span>
                     <span className="text-[8px] sm:text-[10px] font-medium opacity-80">
-                      Tap passer
+                      Tap UCC passer
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {rallyPhase === "opp_receive" && (
+                <div className="absolute inset-x-2 sm:inset-x-4 top-[20%] sm:top-1/3 flex justify-center pointer-events-none z-20">
+                  <div className="bg-slate-800/80 backdrop-blur-sm text-white px-4 sm:px-6 py-1.5 sm:py-2 rounded-full border border-white/20 shadow-lg animate-pulse flex flex-col items-center">
+                    <span className="font-black text-[10px] sm:text-sm tracking-widest uppercase text-amber-400">
+                      Opponent Receive
+                    </span>
+                    <span className="text-[8px] sm:text-[10px] font-medium opacity-80 text-white">
+                      Tap opponent passer
                     </span>
                   </div>
                 </div>
@@ -2901,121 +2925,161 @@ export default function App() {
               </div>
 
               <div className="p-3 sm:p-4 space-y-3 sm:space-y-4">
-                <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
-                  <button
-                    onClick={() =>
-                      recordOppStatAndCheckPoint(
-                        selectedOppId,
-                        "Attack",
-                        "Kill"
-                      )
-                    }
-                    className="bg-gradient-to-b from-red-500 to-red-600 text-white py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-lg sm:text-2xl shadow-sm active:scale-95 flex flex-col items-center border-t border-white/20"
-                  >
-                    KILL{" "}
-                    <span className="text-[8px] sm:text-[9px] opacity-80 uppercase tracking-widest font-bold mt-0.5">
-                      (Ends Rally)
+                {rallyPhase === "opp_receive" ? (
+                  <div className="bg-amber-50 p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-amber-200 relative mb-4">
+                    <span className="absolute -top-2.5 right-4 bg-amber-500 text-white text-[8px] sm:text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest shadow-sm">
+                      Opp. First Touch
                     </span>
-                  </button>
-                  <button
-                    onClick={() =>
-                      recordOppStatAndCheckPoint(
-                        selectedOppId,
-                        "Attack",
-                        "Swing"
-                      )
-                    }
-                    className="bg-gradient-to-b from-slate-600 to-slate-700 text-white py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-lg sm:text-2xl shadow-sm active:scale-95 border-t border-white/20"
-                  >
-                    SWING
-                  </button>
-                </div>
-
-                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                  <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
-                    <Activity size={12} className="mr-1 text-blue-500" />{" "}
-                    Passing
-                  </h4>
-                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
-                    {[3, 2, 1, 0].map((val) => (
-                      <button
-                        key={val}
-                        onClick={() => {
-                          recordOppStatAndCheckPoint(
-                            selectedOppId,
-                            "Pass",
-                            "Rating",
-                            val
-                          );
-                          setSelectedOppId(null);
-                        }}
-                        className={`p-2 sm:p-3 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 transition-all ${
-                          val === 3
-                            ? "bg-green-100 text-green-700 border border-green-200"
-                            : val === 0
-                            ? "bg-red-100 text-red-700 border border-red-200"
-                            : "bg-slate-100 text-slate-700 border border-slate-200"
-                        }`}
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                  <textarea
-                    className="w-full h-12 sm:h-16 p-2 sm:p-3 bg-slate-50 border border-slate-200 rounded-lg sm:rounded-xl outline-none resize-none font-bold text-xs sm:text-sm text-slate-700 placeholder-slate-400 mb-1.5 sm:mb-2 transition-all focus:ring-2 focus:ring-blue-400"
-                    placeholder="Scouting notes..."
-                    value={tempNote || oppNotesMem[selectedOppId] || ""}
-                    onChange={(e) => setTempNote(e.target.value)}
-                    onBlur={() => {
-                      if (tempNote) saveOppNote();
-                    }}
-                  />
-                  <div className="flex gap-1.5 sm:gap-2">
-                    <button
-                      onClick={handleOppSetterSwap}
-                      className={`flex-1 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm uppercase ${
-                        oppSetterId === selectedOppId
-                          ? "bg-gradient-to-b from-green-500 to-green-600 text-white"
-                          : "bg-slate-100 text-slate-600 border border-slate-200"
-                      }`}
-                    >
-                      {oppSetterId === selectedOppId
-                        ? "✓ Setter"
-                        : "Mark Setter"}
-                    </button>
-                    {oppLiberoId &&
-                      (oppLineup.indexOf(selectedOppId) === 0 ||
-                        oppLineup.indexOf(selectedOppId) === 4 ||
-                        oppLineup.indexOf(selectedOppId) === 5) && (
+                    <h4 className="text-[10px] sm:text-xs font-black text-amber-700 uppercase tracking-widest mb-2 flex items-center">
+                      <Activity size={12} className="mr-1" /> Opp. Serve Receive
+                    </h4>
+                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                      {[3, 2, 1, 0].map((val) => (
                         <button
-                          onClick={handleOppLiberoToggle}
-                          className="flex-1 bg-gradient-to-b from-amber-100 to-amber-200 text-amber-800 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl border border-amber-300 uppercase shadow-sm"
+                          key={val}
+                          onClick={() => {
+                            recordOppStatAndCheckPoint(
+                              selectedOppId,
+                              "Pass",
+                              "Rating",
+                              val
+                            );
+                            setSelectedOppId(null);
+                          }}
+                          className={`p-3 sm:p-4 rounded-lg sm:rounded-xl font-black text-xl sm:text-2xl shadow-sm active:scale-95 transition-all ${
+                            val === 3
+                              ? "bg-gradient-to-b from-green-400 to-green-500 text-white border border-green-500"
+                              : val === 0
+                              ? "bg-gradient-to-b from-red-400 to-red-500 text-white border border-red-500"
+                              : "bg-white text-slate-700 border border-slate-200"
+                          }`}
                         >
-                          {selectedOppId === oppLiberoId
-                            ? "Swap L Out"
-                            : "Swap L In"}
+                          {val}
                         </button>
-                      )}
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
+                    <button
+                      onClick={() =>
+                        recordOppStatAndCheckPoint(
+                          selectedOppId,
+                          "Attack",
+                          "Kill"
+                        )
+                      }
+                      className="bg-gradient-to-b from-red-500 to-red-600 text-white py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-lg sm:text-2xl shadow-sm active:scale-95 flex flex-col items-center border-t border-white/20"
+                    >
+                      KILL{" "}
+                      <span className="text-[8px] sm:text-[9px] opacity-80 uppercase tracking-widest font-bold mt-0.5">
+                        (Ends Rally)
+                      </span>
+                    </button>
+                    <button
+                      onClick={() =>
+                        recordOppStatAndCheckPoint(
+                          selectedOppId,
+                          "Attack",
+                          "Swing"
+                        )
+                      }
+                      className="bg-gradient-to-b from-slate-600 to-slate-700 text-white py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-lg sm:text-2xl shadow-sm active:scale-95 border-t border-white/20"
+                    >
+                      SWING
+                    </button>
+                  </div>
+                )}
 
-                <div className="flex gap-1.5 sm:gap-2 items-center bg-slate-200 p-1.5 sm:p-2 rounded-xl sm:rounded-2xl">
-                  <input
-                    placeholder="New#"
-                    value={newOppNumber}
-                    onChange={(e) => setNewOppNumber(e.target.value)}
-                    className="w-12 sm:w-16 p-2 sm:p-3 bg-white border border-slate-300 rounded-lg sm:rounded-xl outline-none text-center font-black text-slate-800 uppercase text-xs sm:text-base"
-                  />
-                  <button
-                    onClick={handleOppSub}
-                    className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
-                  >
-                    Sub In
-                  </button>
-                </div>
+                {!rallyPhase.includes("receive") && (
+                  <>
+                    <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
+                        <Activity size={12} className="mr-1 text-blue-500" />{" "}
+                        Passing
+                      </h4>
+                      <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                        {[3, 2, 1, 0].map((val) => (
+                          <button
+                            key={val}
+                            onClick={() => {
+                              recordOppStatAndCheckPoint(
+                                selectedOppId,
+                                "Pass",
+                                "Rating",
+                                val
+                              );
+                              setSelectedOppId(null);
+                            }}
+                            className={`p-2 sm:p-3 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 transition-all ${
+                              val === 3
+                                ? "bg-green-100 text-green-700 border border-green-200"
+                                : val === 0
+                                ? "bg-red-100 text-red-700 border border-red-200"
+                                : "bg-slate-100 text-slate-700 border border-slate-200"
+                            }`}
+                          >
+                            {val}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                      <textarea
+                        className="w-full h-12 sm:h-16 p-2 sm:p-3 bg-slate-50 border border-slate-200 rounded-lg sm:rounded-xl outline-none resize-none font-bold text-xs sm:text-sm text-slate-700 placeholder-slate-400 mb-1.5 sm:mb-2 transition-all focus:ring-2 focus:ring-blue-400"
+                        placeholder="Scouting notes..."
+                        value={tempNote || oppNotesMem[selectedOppId] || ""}
+                        onChange={(e) => setTempNote(e.target.value)}
+                        onBlur={() => {
+                          if (tempNote) saveOppNote();
+                        }}
+                      />
+                      <div className="flex gap-1.5 sm:gap-2">
+                        <button
+                          onClick={handleOppSetterSwap}
+                          className={`flex-1 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm uppercase ${
+                            oppSetterId === selectedOppId
+                              ? "bg-gradient-to-b from-green-500 to-green-600 text-white"
+                              : "bg-slate-100 text-slate-600 border border-slate-200"
+                          }`}
+                        >
+                          {oppSetterId === selectedOppId
+                            ? "✓ Setter"
+                            : "Mark Setter"}
+                        </button>
+                        {oppLiberoId &&
+                          (oppLineup.indexOf(selectedOppId) === 0 ||
+                            oppLineup.indexOf(selectedOppId) === 4 ||
+                            oppLineup.indexOf(selectedOppId) === 5) && (
+                            <button
+                              onClick={handleOppLiberoToggle}
+                              className="flex-1 bg-gradient-to-b from-amber-100 to-amber-200 text-amber-800 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl border border-amber-300 uppercase shadow-sm"
+                            >
+                              {selectedOppId === oppLiberoId
+                                ? "Swap L Out"
+                                : "Swap L In"}
+                            </button>
+                          )}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-1.5 sm:gap-2 items-center bg-slate-200 p-1.5 sm:p-2 rounded-xl sm:rounded-2xl">
+                      <input
+                        placeholder="New#"
+                        value={newOppNumber}
+                        onChange={(e) => setNewOppNumber(e.target.value)}
+                        className="w-12 sm:w-16 p-2 sm:p-3 bg-white border border-slate-300 rounded-lg sm:rounded-xl outline-none text-center font-black text-slate-800 uppercase text-xs sm:text-base"
+                      />
+                      <button
+                        onClick={handleOppSub}
+                        className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
+                      >
+                        Sub In
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
