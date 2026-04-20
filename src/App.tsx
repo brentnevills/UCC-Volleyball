@@ -322,6 +322,19 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
 };
 
 export default function App() {
+  const enforceFullscreen = () => {
+    try {
+      const docElm = document.documentElement as any;
+      if (!document.fullscreenElement && !docElm.webkitFullscreenElement) {
+        if (docElm.requestFullscreen) {
+          docElm.requestFullscreen().catch(() => {});
+        } else if (docElm.webkitRequestFullscreen) {
+          docElm.webkitRequestFullscreen();
+        }
+      }
+    } catch(e) {}
+  };
+
   const [view, setView] = useState(() =>
     localStorage.getItem("ucc_vball_active_team") ? "menu" : "team_select"
   );
@@ -782,6 +795,7 @@ export default function App() {
   };
 
   const startSetup = (type) => {
+    enforceFullscreen();
     setMatchType(type);
     setView("setup");
     if (activeMatch) {
@@ -801,8 +815,9 @@ export default function App() {
   };
 
   const joinLiveMatch = () => {
+    enforceFullscreen();
     const sortedMatches = [...appData.matches].sort(
-      (a, b) => new Date(a.date) - new Date(b.date)
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
     const latestMatch =
       sortedMatches.length > 0 ? sortedMatches[sortedMatches.length - 1] : null;
@@ -830,6 +845,7 @@ export default function App() {
   };
 
   const startGame = () => {
+    enforceFullscreen();
     if (lineup.some((p) => p === null)) {
       setErrorMsg("Assign a player to all 6 starting positions.");
       return;
@@ -1880,6 +1896,7 @@ export default function App() {
               <div key={team.id} className="relative group">
                 <button
                   onClick={() => {
+                    enforceFullscreen();
                     setActiveTeam(team.id);
                     localStorage.setItem("ucc_vball_active_team", team.id);
                     setView("menu");
@@ -2842,31 +2859,45 @@ export default function App() {
         </div>
 
         {/* STICKY BOTTOM BAR (Controls) */}
-        <div className="bg-slate-900 border-t border-white/10 px-2 sm:px-4 py-2 sm:py-3 flex gap-2 sm:gap-3 z-30 shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
-          <button
-            onClick={handleUndo}
-            disabled={history.length === 0}
-            className={`px-3 sm:px-4 rounded-xl sm:rounded-2xl font-black flex items-center justify-center shadow-md transition-all active:scale-95 text-xs sm:text-sm ${
-              history.length === 0
-                ? "bg-white/5 text-white/20"
-                : "bg-slate-700 text-white hover:bg-slate-600"
-            }`}
-          >
-            <Undo className="sm:mr-1.5" size={16} />{" "}
-            <span className="hidden sm:inline">UNDO</span>
-          </button>
-          <button
-            onClick={() => setEndRallyVisible(true)}
-            className="flex-1 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-widest uppercase"
-          >
-            End Rally
-          </button>
-          <button
-            onClick={viewStatsWithCurrentMatch}
-            className="px-3 sm:px-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase"
-          >
-            <Activity size={18} />
-          </button>
+        <div className="bg-slate-900 border-t border-white/10 px-2 sm:px-4 py-2 sm:py-3 z-30 shadow-[0_-10px_30px_rgba(0,0,0,0.5)] shrink-0">
+          <div className="max-w-5xl mx-auto flex gap-2 sm:gap-3 w-full justify-center">
+            <button
+              onClick={handleUndo}
+              disabled={history.length === 0}
+              className={`px-3 sm:px-4 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black flex items-center justify-center shadow-md transition-all active:scale-95 text-xs sm:text-sm ${
+                history.length === 0
+                  ? "bg-white/5 text-white/20"
+                  : "bg-slate-700 text-white hover:bg-slate-600"
+              }`}
+            >
+              <Undo className="sm:mr-1.5" size={16} />{" "}
+              <span className="hidden sm:inline">UNDO</span>
+            </button>
+            <button
+              onClick={() => setEndRallyVisible(true)}
+              className="flex-1 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-widest uppercase"
+            >
+              End Rally
+            </button>
+            <button
+              onClick={viewStatsWithCurrentMatch}
+              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase"
+            >
+              <Activity size={18} />
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm("Are you sure you want to end this game and leave?")) {
+                  setActiveMatch(null);
+                  setActiveSetId(null);
+                  setView("menu");
+                }
+              }}
+              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-red-600 to-red-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-red-500 hover:to-red-700 shadow-md border-t border-red-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap"
+            >
+              End Game
+            </button>
+          </div>
         </div>
 
         {/* --------------------------------------------------------- */}

@@ -1,0 +1,16 @@
+{
+  "name": "Live Match Viewer",
+  "short_name": "MatchStats",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "description": "Live Match Stats App",
+  "icons": [
+    {
+      "src": "https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png"
+    }
+  ]
+}
