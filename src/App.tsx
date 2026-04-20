@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Home,
   LogOut,
+  Trash2,
 } from "lucide-react";
 
 // Firebase Imports
@@ -237,7 +238,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
       <div className="bg-white max-w-5xl w-full rounded-3xl sm:rounded-[3rem] shadow-2xl flex flex-col max-h-[90vh] border border-white/20">
         <div className="bg-gradient-to-r from-indigo-700 to-indigo-900 p-6 sm:p-10 rounded-t-3xl sm:rounded-t-[3rem] text-white flex justify-between items-center shrink-0">
           <div>
-            <h2 className="text-3xl sm:text-5xl font-black tracking-widest uppercase flex items-center">
+            <h2 className="text-2xl sm:text-4xl font-black tracking-widest uppercase flex items-center">
                PROFILE: {playerName} {playerBirthYear ? `(${playerBirthYear})` : ''}
             </h2>
             <p className="text-indigo-200 mt-2 font-bold tracking-widest text-sm uppercase">Global Career Stats</p>
@@ -526,12 +527,20 @@ export default function App() {
 
     if (!user) return;
 
-    // Join the team for Auth access
+    // Join the team for Auth access (Ensure role is set for Security Rules)
+    const existingTeam = myTeams.find(t => t.id === activeTeam);
+    const roleToSet = existingTeam?.role || 'player';
+    
     setDoc(
       doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
-      { uid: user.uid, joinedAt: serverTimestamp() },
+      { uid: user.uid, joinedAt: serverTimestamp(), role: roleToSet },
       { merge: true }
-    ).catch(console.error);
+    ).catch(err => {
+      // If we get a permission error here, it's likely fine as we might already be a member
+      if (!err.message?.includes('insufficient permissions')) {
+        console.error("Background join failed:", err);
+      }
+    });
 
     // Scoped Firebase Listeners
     const unsubSettings = onSnapshot(
@@ -658,6 +667,9 @@ export default function App() {
   };
 
   const removePlayer = async (id) => {
+    const p = appData.roster.find(player => player.id === id);
+    if (p && !confirm(`Are you sure you want to remove ${p.name} from the roster?`)) return;
+
     const newRoster = appData.roster.filter((p) => p.id !== id);
     if (isFirebaseAvailable && user) {
       await setDoc(
@@ -942,7 +954,11 @@ export default function App() {
     value = 1,
     isOpponent = false
   ) => {
-    if (!activeMatch || !activeSetId) return;
+    if (!activeMatch || !activeSetId) {
+      console.error("Attempted to log stat without active match/set context.");
+      alert("⚠️ Error: Game context lost. Please restart the match from the menu.");
+      return;
+    }
     const statId =
       Date.now().toString() + Math.random().toString(36).substring(7);
     const newStat = {
@@ -957,11 +973,22 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
 
+    // Optimistic local update for responsiveness
+    setAppData(prev => ({
+      ...prev,
+      stats: [...prev.stats, newStat]
+    }));
+
     if (isFirebaseAvailable && user) {
-      await setDoc(
-        doc(db, `${publicPath}/${activeTeam}/stats/${statId}`),
-        newStat
-      );
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/stats/${statId}`),
+          newStat
+        );
+      } catch (err) {
+        console.error("Failed to save stat to cloud:", err);
+        alert(`❌ Cloud Save Failed: ${err.message}. The stat was recorded locally but may not sync until connection is restored.`);
+      }
     } else if (!isFirebaseAvailable) {
       writeLocalDb({ ...appData, stats: [...appData.stats, newStat] });
     }
@@ -970,12 +997,20 @@ export default function App() {
   const recordStatAndCheckPoint = (playerId, category, metric, value = 1) => {
     pushToHistory();
     logStat(playerId, category, metric, value);
-    setSelectedPlayerId(null);
+    
+    // Only close modal if it's NOT a 'Late' block
+    if (!(category === "Block" && metric === "Late")) {
+      setSelectedPlayerId(null);
+    }
+
     if (category === "Attack") {
       if (metric === "Kill") {
         logStat(playerId, "Attack", "Swing", 1);
         handlePoint("ucc", true);
-      } else if (metric === "Out" || metric === "Net") handlePoint("opp", true);
+      } else if (metric === "Out" || metric === "Net") {
+        logStat(playerId, "Attack", "Swing", 1);
+        handlePoint("opp", true);
+      }
     } else if (category === "Block") {
       if (metric === "Block") handlePoint("ucc", true);
       else if (metric === "Net Viol") handlePoint("opp", true);
@@ -986,15 +1021,19 @@ export default function App() {
   const recordOppStatAndCheckPoint = (oppId, category, metric, value = 1) => {
     pushToHistory();
     logStat(oppId, category, metric, value, true);
+    
+    // Only close modal if it's NOT a 'Late' block (for symmetry)
+    if (!(category === "Block" && metric === "Late")) {
+      setSelectedOppId(null);
+    }
+
     if (category === "Attack") {
       if (metric === "Kill") {
         logStat(oppId, "Attack", "Swing", 1, true);
         handlePoint("opp", true);
-        setSelectedOppId(null);
       } else if (metric === "Out" || metric === "Net") {
         logStat(oppId, "Attack", "Swing", 1, true);
         handlePoint("ucc", true);
-        setSelectedOppId(null);
       }
     }
     // Transition out of receive phase if a pass is recorded
@@ -1596,6 +1635,127 @@ export default function App() {
     }
   };
 
+  const handleDeleteTeam = async (teamId) => {
+    const team = myTeams.find(t => t.id === teamId);
+    if (!team) return;
+    
+    const confirmMsg = team.role === 'coach' 
+      ? `⚠️ DISBAND TEAM: Are you sure you want to delete "${team.name}"?\n\nThis will remove the team for you and potentially disband it for everyone else. This action cannot be undone.`
+      : `LEAVE TEAM: Are you sure you want to remove "${team.name}" from your list?`;
+      
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const batch = writeBatch(db);
+      
+      // 1. Remove from user profile
+      const newTeams = myTeams.filter(t => t.id !== teamId);
+      batch.set(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
+
+      // 2. If coach, try to delete the root team doc (this will help flag it if we ever do a cleanup)
+      // Note: We don't delete all subcollections client-side as it's too many writes, 
+      // but deleting the root doc prevents some queries if rules are tight.
+      if (team.role === 'coach') {
+        const teamDoc = doc(db, `${publicPath}/${teamId}`);
+        batch.delete(teamDoc);
+        
+        // Also remove from members
+        const memberDoc = doc(db, `${publicPath}/${teamId}/members/${user.uid}`);
+        batch.delete(memberDoc);
+      } else {
+        // If just a player, just remove our membership
+        const memberDoc = doc(db, `${publicPath}/${teamId}/members/${user.uid}`);
+        batch.delete(memberDoc);
+      }
+
+      await batch.commit();
+      
+      // If we were viewing this team, go back to select
+      if (activeTeam === teamId) {
+        setActiveTeam(null);
+        localStorage.removeItem("ucc_vball_active_team");
+        setView("team_select");
+      }
+      
+      alert("Team successfully removed.");
+    } catch (e) {
+      console.error("Delete Team Error:", e);
+      alert("Failed to remove team. You might not have permission to disband the team root doc.");
+    }
+  };
+
+  const handleDeleteMatch = async (matchId) => {
+    const match = appData.matches.find(m => m.id === matchId);
+    if (!match) return;
+
+    if (!window.confirm(`⚠️ DELETE GAME: Are you sure you want to delete the match vs ${match.opponent}?\n\nThis will permanently erase all stats and sets for this game. This cannot be undone.`)) return;
+
+    try {
+      const teamId = activeTeam;
+      
+      // 1. Delete associated stats (filter locally then request deletes)
+      const statsToDelete = appData.stats.filter(s => s.matchId === matchId);
+      if (statsToDelete.length > 0) {
+        // Break into batches of 500 (Firestore limit)
+        for (let i = 0; i < statsToDelete.length; i += 500) {
+          const batch = writeBatch(db);
+          statsToDelete.slice(i, i + 500).forEach(s => {
+            batch.delete(doc(db, `${publicPath}/${teamId}/stats/${s.id}`));
+          });
+          await batch.commit();
+        }
+      }
+
+      // 2. Delete associated sets
+      const setsToDelete = appData.sets.filter(s => s.matchId === matchId);
+      if (setsToDelete.length > 0) {
+        const setBatch = writeBatch(db);
+        setsToDelete.forEach(s => {
+          setBatch.delete(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
+        });
+        await setBatch.commit();
+      }
+
+      // 3. Finally delete the match record itself
+      await deleteDoc(doc(db, `${publicPath}/${teamId}/matches/${matchId}`));
+      
+      // If we were in this game, reset view
+      if (activeMatch?.id === matchId) {
+        setActiveMatch(null);
+        setView("menu");
+      }
+      
+      alert("Game and all associated stats deleted successfully.");
+    } catch (e) {
+      console.error("Delete Match Error:", e);
+      alert("Failed to delete game completely. " + e.message);
+    }
+  };
+
+  const handleDeleteSet = async (setId) => {
+    const s = appData.sets.find(set => set.id === setId);
+    if (!s) return;
+    if (!window.confirm(`⚠️ DELETE SET: Are you sure you want to delete Set ${s.setNum}?\n\nAll stats recorded during this set will be permanently erased.`)) return;
+    
+    try {
+       const teamId = activeTeam;
+       const statsToDelete = appData.stats.filter(stat => stat.setId === setId);
+       if (statsToDelete.length > 0) {
+         const batch = writeBatch(db);
+         statsToDelete.forEach(stat => {
+           batch.delete(doc(db, `${publicPath}/${teamId}/stats/${stat.id}`));
+         });
+         await batch.commit();
+       }
+       
+       await deleteDoc(doc(db, `${publicPath}/${teamId}/sets/${setId}`));
+       alert("Set and associated stats deleted.");
+    } catch (e) {
+       console.error("Delete Set Error:", e);
+       alert("Failed to delete set.");
+    }
+  };
+
   // -------------------------------------------------------------
   // RENDERERS
   // -------------------------------------------------------------
@@ -1665,21 +1825,33 @@ export default function App() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full px-4 mb-6">
             {user && myTeams.map((team) => (
-              <button
-                key={team.id}
-                onClick={() => {
-                  setActiveTeam(team.id);
-                  localStorage.setItem("ucc_vball_active_team", team.id);
-                  setView("menu");
-                }}
-                className={`bg-gradient-to-br ${team.color} text-white p-8 rounded-3xl font-black text-2xl tracking-widest shadow-xl border border-white/20 transition-all active:scale-95 flex flex-col items-center justify-center group`}
-              >
-                <Users
-                  className="mb-3 opacity-50 group-hover:scale-110 transition-transform"
-                  size={32}
-                />
-                {team.name}
-              </button>
+              <div key={team.id} className="relative group">
+                <button
+                  onClick={() => {
+                    setActiveTeam(team.id);
+                    localStorage.setItem("ucc_vball_active_team", team.id);
+                    setView("menu");
+                  }}
+                  className={`w-full bg-gradient-to-br ${team.color} text-white p-8 rounded-3xl font-black text-2xl tracking-widest shadow-xl border border-white/20 transition-all active:scale-95 flex flex-col items-center justify-center`}
+                >
+                  <Users
+                    className="mb-3 opacity-50 group-hover:scale-110 transition-transform"
+                    size={32}
+                  />
+                  {team.name}
+                  <span className="text-[10px] opacity-60 mt-2 tracking-widest font-bold uppercase font-sans">{team.role}</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteTeam(team.id);
+                  }}
+                  className="absolute top-4 right-4 p-2 text-white/40 hover:text-red-400 bg-black/10 hover:bg-black/30 rounded-full transition-all group-hover:opacity-100 sm:opacity-0"
+                  title="Delete/Leave Team"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
             ))}
             {user && myTeams.length === 0 && (
               <div className="col-span-1 sm:col-span-2 text-center text-slate-500 py-8">
@@ -1802,7 +1974,7 @@ export default function App() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
             {teamInfo.role !== 'player' && (
               <>
                 <button
@@ -1974,84 +2146,42 @@ export default function App() {
                     <option>Custom / Scrimmage</option>
                   </select>
                 </div>
-                <div className="grid grid-cols-2 gap-3 sm:hidden">
-                  <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
-                      Score Cap
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="No Cap"
-                      className="w-full p-3 bg-white rounded-xl border border-slate-200 font-bold text-base text-slate-700 focus:ring-2 focus:ring-[#0033A0] outline-none"
-                      value={scoreCap}
-                      onChange={(e) => setScoreCap(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
-                      First Serve
-                    </label>
-                    <div className="flex gap-1 h-full">
-                      <button
-                        onClick={() => setServing("ucc")}
-                        className={`flex-1 rounded-xl font-bold transition-all border text-xs ${
-                          serving === "ucc"
-                            ? "bg-[#0033A0] text-white border-[#0033A0] shadow-md"
-                            : "bg-white text-slate-500 border-slate-200"
-                        }`}
-                      >
-                        UCC
-                      </button>
-                      <button
-                        onClick={() => setServing("opp")}
-                        className={`flex-1 rounded-xl font-bold transition-all border text-xs ${
-                          serving === "opp"
-                            ? "bg-[#0033A0] text-white border-[#0033A0] shadow-md"
-                            : "bg-white text-slate-500 border-slate-200"
-                        }`}
-                      >
-                        OPP
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="hidden sm:block">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
+                <div>
+                  <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
                     Score Cap
                   </label>
                   <input
                     type="number"
                     placeholder="No Cap"
-                    className="w-full p-4 bg-white rounded-2xl border border-slate-200 font-bold text-lg text-slate-700 focus:ring-2 focus:ring-[#0033A0] outline-none"
+                    className="w-full p-3 sm:p-4 bg-white rounded-xl sm:rounded-2xl border border-slate-200 font-bold text-base sm:text-lg text-slate-700 focus:ring-2 focus:ring-[#0033A0] outline-none"
                     value={scoreCap}
                     onChange={(e) => setScoreCap(e.target.value)}
                   />
                 </div>
-                <div className="hidden sm:block">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
+                <div>
+                  <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
                     First Serve
                   </label>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 min-h-[46px] sm:min-h-[56px]">
                     <button
                       onClick={() => setServing("ucc")}
-                      className={`flex-1 py-3 rounded-2xl font-bold transition-all border ${
+                      className={`flex-1 rounded-xl sm:rounded-2xl font-black transition-all border text-[10px] sm:text-xs tracking-widest uppercase ${
                         serving === "ucc"
                           ? "bg-[#0033A0] text-white border-[#0033A0] shadow-md"
-                          : "bg-white text-slate-500 border-slate-200 hover:bg-slate-100"
+                          : "bg-white text-slate-400 border-slate-200"
                       }`}
                     >
-                      Lancers
+                      UCC
                     </button>
                     <button
                       onClick={() => setServing("opp")}
-                      className={`flex-1 py-3 rounded-2xl font-bold transition-all border ${
+                      className={`flex-1 rounded-xl sm:rounded-2xl font-black transition-all border text-[10px] sm:text-xs tracking-widest uppercase ${
                         serving === "opp"
                           ? "bg-[#0033A0] text-white border-[#0033A0] shadow-md"
-                          : "bg-white text-slate-500 border-slate-200 hover:bg-slate-100"
+                          : "bg-white text-slate-400 border-slate-200"
                       }`}
                     >
-                      Opponent
+                      OPP
                     </button>
                   </div>
                 </div>
@@ -2245,8 +2375,8 @@ export default function App() {
                       <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base">
                         {p.number}
                       </div>
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-700 text-sm sm:text-base">
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-bold text-slate-700 text-sm sm:text-base truncate">
                           {p.name}
                         </span>
                         {p.birthYear && (
@@ -2345,56 +2475,59 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col font-sans select-none relative overflow-hidden">
         {/* HEADER / SCOREBOARD */}
-        <header className="bg-gradient-to-r from-slate-900 via-[#001b5e] to-slate-900 text-white px-2 sm:px-4 py-2 sm:py-3 shadow-md flex justify-between items-center z-10 border-b border-white/10">
-          <div className="flex items-center space-x-2 sm:space-x-4 w-full">
-            <div className="bg-white/10 backdrop-blur-md p-1 sm:p-1.5 rounded-full border border-white/20 shadow-sm hidden sm:block">
-              <img
-                src="./LancerVolleyballLogo.png"
-                alt="Logo"
-                className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-full"
-                onError={(e) => (e.target.style.display = "none")}
-              />
-            </div>
-
-            <div
-              className={`flex-1 py-1.5 sm:py-2 px-3 sm:px-4 rounded-2xl sm:rounded-3xl flex items-center justify-between transition-all duration-300 ${
-                serving === "ucc"
-                  ? "bg-white/15 border border-yellow-400/50 shadow-[0_0_15px_rgba(250,204,21,0.15)]"
-                  : "bg-transparent border border-transparent"
-              }`}
-            >
-              <div className="flex flex-col">
-                <h2 className="text-[10px] sm:text-sm font-black leading-tight tracking-[0.1em] uppercase text-blue-200">
-                  Lancers
-                </h2>
-                <div className="flex items-center space-x-1 sm:space-x-2">
-                  <button
-                    onClick={() => manualScoreAdjust("ucc", -1)}
-                    className="text-white/30 hover:text-white p-1 active:scale-90 hidden sm:block"
-                  >
-                    <ChevronDown size={16} />
-                  </button>
-                  <p className="text-4xl sm:text-5xl font-black tabular-nums tracking-tighter drop-shadow-md">
-                    {score.ucc}
-                  </p>
-                  <button
-                    onClick={() => manualScoreAdjust("ucc", 1)}
-                    className="text-white/30 hover:text-white p-1 active:scale-90 hidden sm:block"
-                  >
-                    <ChevronUp size={16} />
-                  </button>
-                </div>
+        <header className="bg-gradient-to-r from-slate-900 via-[#001b5e] to-slate-900 text-white shadow-md z-10 border-b border-white/10 shrink-0">
+          <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1 sm:gap-4">
+            
+            <div className="flex items-center space-x-2 sm:space-x-4 order-1 sm:order-none">
+              <div className="bg-white/10 backdrop-blur-md p-1 rounded-full border border-white/20 shadow-sm hidden md:block">
+                <img
+                  src="./LancerVolleyballLogo.png"
+                  alt="Logo"
+                  className="h-8 w-8 object-contain rounded-full"
+                  onError={(e) => (e.target.style.display = "none")}
+                />
               </div>
-              {serving === "ucc" && (
-                <div className="text-2xl sm:text-3xl animate-bounce drop-shadow-md">
-                  🏐
+
+              <div
+                className={`py-1 sm:py-2 px-2 sm:px-4 rounded-xl sm:rounded-3xl flex items-center gap-2 transition-all duration-300 ${
+                  serving === "ucc"
+                    ? "bg-white/15 border border-yellow-400/50 shadow-[0_0_10px_rgba(250,204,21,0.1)]"
+                    : "bg-transparent border border-transparent"
+                }`}
+              >
+                <div className="flex flex-col">
+                  <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-blue-200 opacity-70">
+                    Lancers
+                  </h2>
+                  <div className="flex items-center space-x-1 sm:space-x-2">
+                    <button
+                      onClick={() => manualScoreAdjust("ucc", -1)}
+                      className="text-white/30 hover:text-white p-0.5 active:scale-90 hidden sm:block"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                      {score.ucc}
+                    </p>
+                    <button
+                      onClick={() => manualScoreAdjust("ucc", 1)}
+                      className="text-white/30 hover:text-white p-0.5 active:scale-90 hidden sm:block"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                  </div>
                 </div>
-              )}
+                {serving === "ucc" && (
+                  <div className="text-xl sm:text-2xl animate-bounce drop-shadow-md">
+                    🏐
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="flex flex-col items-center justify-center px-1 sm:px-2">
-              <span className="text-[8px] sm:text-[9px] font-black text-amber-400 tracking-[0.1em] sm:tracking-[0.2em] uppercase mb-1 bg-amber-400/10 px-1.5 sm:px-2 py-0.5 rounded-full text-center whitespace-nowrap flex flex-col items-center">
-                <span>
+            <div className="flex flex-row sm:flex-col items-center justify-center px-1 sm:px-2 order-3 sm:order-none w-full sm:w-auto mt-1 sm:mt-0 pt-1 sm:pt-0 border-t border-white/5 sm:border-none">
+              <span className="text-[7px] sm:text-[9px] font-black text-amber-400 tracking-[0.1em] sm:tracking-[0.2em] uppercase bg-amber-400/10 px-1.5 sm:px-2 py-0.5 rounded-full text-center flex items-center sm:flex-col whitespace-nowrap">
+                <span className="mr-2 sm:mr-0">
                  {matchFormat === "Best of 3"
                    ? "BO3"
                    : matchFormat === "Best of 5"
@@ -2403,61 +2536,64 @@ export default function App() {
                  • S{currentSetNum}
                 </span>
                 {isFirebaseAvailable && user ? (
-                  <span className="text-[6px] tracking-widest text-emerald-400 mt-0.5 opacity-80">LIVE SYNC</span>
+                  <span className="text-[5px] sm:text-[6px] tracking-widest text-emerald-400 opacity-80 border-l sm:border-none border-white/20 pl-2 sm:pl-0">LIVE SYNC</span>
                 ) : (
-                  <span className="text-[6px] tracking-widest text-amber-500 mt-0.5 opacity-80 uppercase">
+                  <span className="text-[5px] sm:text-[6px] tracking-widest text-amber-500 opacity-80 uppercase border-l sm:border-none border-white/20 pl-2 sm:pl-0">
                     {isFirebaseAvailable ? "Sync Delayed" : "Local Mode"}
                   </span>
                 )}
               </span>
-              <div className="flex items-center space-x-1.5 sm:space-x-3 bg-white/5 px-2 sm:px-4 py-1 sm:py-1.5 rounded-xl sm:rounded-2xl border border-white/10">
-                <span className="text-xl sm:text-2xl font-black text-blue-400">
+              <div className="flex items-center space-x-1.5 sm:space-x-3 bg-white/5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-lg sm:rounded-2xl border border-white/10 ml-2 sm:ml-0 sm:mt-1">
+                <span className="text-lg sm:text-xl font-black text-blue-400">
                   {setsWon.ucc}
                 </span>
-                <span className="text-[8px] sm:text-[10px] font-black text-white/30 uppercase">
+                <span className="text-[7px] sm:text-[9px] font-black text-white/30 uppercase">
                   Sets
                 </span>
-                <span className="text-xl sm:text-2xl font-black text-white">
+                <span className="text-lg sm:text-xl font-black text-white">
                   {setsWon.opp}
                 </span>
               </div>
             </div>
 
-            <div
-              className={`flex-1 py-1.5 sm:py-2 px-3 sm:px-4 rounded-2xl sm:rounded-3xl flex items-center justify-between transition-all duration-300 ${
-                serving === "opp"
-                  ? "bg-white/15 border border-yellow-400/50 shadow-[0_0_15px_rgba(250,204,21,0.15)]"
-                  : "bg-transparent border border-transparent"
-              }`}
-            >
-              {serving === "opp" && (
-                <div className="text-2xl sm:text-3xl animate-bounce drop-shadow-md">
-                  🏐
-                </div>
-              )}
-              <div className="flex flex-col items-end w-full">
-                <h2 className="text-[10px] sm:text-sm font-black leading-tight tracking-[0.1em] uppercase text-slate-300 truncate max-w-[80px] sm:max-w-[100px]">
-                  {opponentName}
-                </h2>
-                <div className="flex items-center space-x-1 sm:space-x-2">
-                  <button
-                    onClick={() => manualScoreAdjust("opp", -1)}
-                    className="text-white/30 hover:text-white p-1 active:scale-90 hidden sm:block"
-                  >
-                    <ChevronDown size={16} />
-                  </button>
-                  <p className="text-4xl sm:text-5xl font-black tabular-nums tracking-tighter drop-shadow-md">
-                    {score.opp}
-                  </p>
-                  <button
-                    onClick={() => manualScoreAdjust("opp", 1)}
-                    className="text-white/30 hover:text-white p-1 active:scale-90 hidden sm:block"
-                  >
-                    <ChevronUp size={16} />
-                  </button>
+            <div className="flex items-center space-x-2 sm:space-x-4 order-2 sm:order-none">
+              <div
+                className={`py-1 sm:py-2 px-2 sm:px-4 rounded-xl sm:rounded-3xl flex items-center gap-2 transition-all duration-300 ${
+                  serving === "opp"
+                    ? "bg-white/15 border border-yellow-400/50 shadow-[0_0_10px_rgba(250,204,21,0.1)]"
+                    : "bg-transparent border border-transparent"
+                }`}
+              >
+                {serving === "opp" && (
+                  <div className="text-xl sm:text-2xl animate-bounce drop-shadow-md">
+                    🏐
+                  </div>
+                )}
+                <div className="flex flex-col items-end">
+                  <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-slate-300 opacity-70 truncate max-w-[60px] sm:max-w-[100px]">
+                    {opponentName}
+                  </h2>
+                  <div className="flex items-center space-x-1 sm:space-x-2">
+                    <button
+                      onClick={() => manualScoreAdjust("opp", -1)}
+                      className="text-white/30 hover:text-white p-0.5 active:scale-90 hidden sm:block"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                      {score.opp}
+                    </p>
+                    <button
+                      onClick={() => manualScoreAdjust("opp", 1)}
+                      className="text-white/30 hover:text-white p-0.5 active:scale-90 hidden sm:block"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
+
           </div>
         </header>
 
@@ -2685,8 +2821,8 @@ export default function App() {
 
         {/* UCC PLAYER ACTION MODAL */}
         {selectedPlayerId && selectedPlayerObj && (
-          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
-            <div className="bg-white w-full max-w-sm sm:max-w-md rounded-2xl sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-[#0033A0]/20">
+          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-2 sm:p-4 backdrop-blur-md animate-in fade-in duration-150 overflow-y-auto">
+            <div className="bg-white w-full max-w-sm sm:max-w-md rounded-2xl sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-[#0033A0]/20 my-auto max-h-[95vh]">
               <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-3 sm:p-4 flex justify-between items-center text-white">
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white text-[#0033A0] rounded-full flex items-center justify-center text-xl sm:text-2xl font-black shadow-inner">
@@ -2918,8 +3054,8 @@ export default function App() {
 
         {/* OPPONENT PLAYER ACTION MODAL */}
         {selectedOppId && (
-          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
-            <div className="bg-slate-100 w-full max-w-sm sm:max-w-md rounded-2xl sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-slate-700/50">
+          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-2 sm:p-4 backdrop-blur-md animate-in fade-in duration-150 overflow-y-auto">
+            <div className="bg-slate-100 w-full max-w-sm sm:max-w-md rounded-2xl sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-slate-700/50 my-auto max-h-[95vh]">
               <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-3 sm:p-4 flex justify-between items-center text-white">
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-600 rounded-full flex items-center justify-center text-xl sm:text-2xl font-black shadow-inner border border-white/20">
@@ -3410,13 +3546,27 @@ export default function App() {
             <div className="bg-slate-100 p-3 sm:p-4 border-b border-slate-200 shadow-sm">
               <div className="flex overflow-x-auto gap-2 sm:gap-3 pb-2 scrollbar-hide">
                 {subNavOptions.map((opt) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => navigateStats(opt.level, opt.id, opt.name)}
-                    className="flex-shrink-0 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm hover:bg-[#0033A0] hover:text-white hover:border-[#0033A0] transition-colors shadow-sm whitespace-nowrap"
-                  >
-                    {opt.name}
-                  </button>
+                  <div key={opt.id} className="flex-shrink-0 flex items-center bg-white border border-slate-300 rounded-xl overflow-hidden shadow-sm hover:border-[#0033A0] transition-colors group">
+                    <button
+                      onClick={() => navigateStats(opt.level, opt.id, opt.name)}
+                      className="px-4 py-2 text-slate-700 font-bold text-xs sm:text-sm whitespace-nowrap hover:bg-[#0033A0] hover:text-white transition-colors"
+                    >
+                      {opt.name}
+                    </button>
+                    {teamInfo.role === 'coach' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (opt.level === "match") handleDeleteMatch(opt.id);
+                          if (opt.level === "set") handleDeleteSet(opt.id);
+                        }}
+                        className="px-2 py-2 text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors border-l border-slate-200"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>

@@ -8,13 +8,15 @@ service cloud.firestore {
 
     // Phase 3: Primitive Definition
     function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() > 0 && id.size() <= 128;
     }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
     function isSignedIn() { 
-      return request.auth != null 
-        && request.auth.token.email_verified == true; 
+      return request.auth != null; 
+    }
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
     }
     
     // The "Master Gate" (Relational Sync)
@@ -79,61 +81,63 @@ service cloud.firestore {
         && data.playerId is string && data.playerId.size() <= 128
         && data.category is string && data.category.size() <= 128
         && data.metric is string && data.metric.size() <= 128
-        && data.timestamp is string && data.timestamp.size() <= 64;
+        && data.timestamp is string && data.timestamp.size() <= 64
+        && (!('value' in data) || data.value is number)
+        && (!('isOpponent' in data) || data.isOpponent is bool);
     }
 
-    // Path Variable Hardening
     match /users/{userId} {
-      allow read, write: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+      allow read, write: if isSignedIn() && isVerified() && request.auth.uid == userId && isValidId(userId);
     }
 
     match /share_codes/{codeId} {
       allow get: if isSignedIn() && isValidId(codeId);
-      // codes are only created during team creation (handled by developers or batch usually)
-      // but if the app allows it:
-      allow create: if isSignedIn() && isValidId(codeId);
+      allow create: if isSignedIn() && isVerified() && isValidId(codeId);
     }
 
     match /teams/{teamId} {
-      allow create: if isSignedIn() && isValidId(teamId) && isTeamMember(teamId);
+      allow create: if isSignedIn() && isVerified() && isValidId(teamId) && isTeamMember(teamId);
       allow get: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId);
+      allow delete: if isSignedIn() && isVerified() && isCoach(teamId);
 
       match /members/{userId} {
-        allow get: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(userId);
-        allow list: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId);
-        allow create: if isSignedIn() && request.auth.uid == userId && isValidId(teamId) && isValidId(userId)
+        allow get: if isSignedIn() && isTeamMember(teamId) && isValidId(userId);
+        allow list: if isSignedIn() && isTeamMember(teamId);
+        allow create: if isSignedIn() && isVerified() && request.auth.uid == userId && isValidId(userId)
           && isValidTeamMember(incoming(), userId);
-        allow update, delete: if isSignedIn() && request.auth.uid == userId && isValidId(teamId) && isValidId(userId);
+        allow update, delete: if isSignedIn() && isVerified() && request.auth.uid == userId && isValidId(userId);
       }
 
       match /settings/{settingId} {
-        allow read: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(settingId);
-        allow write: if isSignedIn() && isCoach(teamId) && isValidId(teamId) && isValidId(settingId)
-          && isValidSetting(incoming());
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow write: if isSignedIn() && isVerified() && isCoach(teamId)
+          && (request.method == 'DELETE' || isValidSetting(incoming()));
       }
 
       match /opponents/{opponentId} {
-        allow read: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(opponentId);
-        allow write: if isSignedIn() && isCoach(teamId) && isValidId(teamId) && isValidId(opponentId);
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow write: if isSignedIn() && isVerified() && isCoach(teamId);
       }
 
       match /matches/{matchId} {
-        allow read: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(matchId);
-        allow write: if isSignedIn() && isCoach(teamId) && isValidId(teamId) && isValidId(matchId)
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow create, update: if isSignedIn() && isVerified() && isCoach(teamId)
           && isValidMatch(incoming());
+        allow delete: if isSignedIn() && isVerified() && isCoach(teamId);
       }
 
       match /sets/{setId} {
-        allow read: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(setId);
-        allow write: if isSignedIn() && isCoach(teamId) && isValidId(teamId) && isValidId(setId)
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow create, update: if isSignedIn() && isVerified() && isCoach(teamId)
           && isValidSet(incoming());
+        allow delete: if isSignedIn() && isVerified() && isCoach(teamId);
       }
 
       match /stats/{statId} {
-        allow read: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId) && isValidId(statId);
-        allow create, delete: if isSignedIn() && isCoach(teamId) && isValidId(teamId) && isValidId(statId)
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow create, delete: if isSignedIn() && isVerified() && isCoach(teamId)
           && (request.method == 'DELETE' || isValidStat(incoming()));
-        allow update: if false;
+        allow update: if isSignedIn() && isVerified() && isCoach(teamId) && isValidStat(incoming());
       }
     }
   }
