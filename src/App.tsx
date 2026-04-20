@@ -197,7 +197,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
             } else if (s.category === "Serve") {
               if (s.metric === "Attempt") pTeam.srvCount += 1;
               if (s.metric === "Ace") pTeam.srvAce += 1;
-              if (s.metric.includes("Miss")) pTeam.srvErr += 1;
+              if (s.metric?.includes("Miss")) pTeam.srvErr += 1;
             }
           });
 
@@ -611,14 +611,22 @@ export default function App() {
   useEffect(() => {
     if (activeSetId && appData.sets.length > 0) {
       const currentSet = appData.sets.find((s) => s.id === activeSetId);
-      if (
-        currentSet &&
-        (score.ucc !== currentSet.scoreUcc || score.opp !== currentSet.scoreOpp)
-      ) {
-        setScore({ ucc: currentSet.scoreUcc, opp: currentSet.scoreOpp });
+      if (currentSet) {
+        if (score.ucc !== currentSet.scoreUcc || score.opp !== currentSet.scoreOpp) {
+          setScore({ ucc: currentSet.scoreUcc || 0, opp: currentSet.scoreOpp || 0 });
+        }
+        if (currentSet.lineup && JSON.stringify(lineup) !== JSON.stringify(currentSet.lineup)) {
+          setLineup(currentSet.lineup);
+        }
+        if (currentSet.serving && serving !== currentSet.serving) {
+          setServing(currentSet.serving);
+        }
+        if (currentSet.rallyPhase && rallyPhase !== currentSet.rallyPhase) {
+          setRallyPhase(currentSet.rallyPhase);
+        }
       }
     }
-  }, [appData.sets, activeSetId]);
+  }, [appData.sets, activeSetId, lineup, score, serving, rallyPhase]);
 
   // -------------------------------------------------------------
   // HELPER FUNCTIONS & DUAL-MODE DATA WRITES
@@ -633,8 +641,30 @@ export default function App() {
       );
   };
 
-  const rotateUCC = () => setLineup((prev) => [...prev.slice(1), prev[0]]);
-  const rotateOpp = () => setOppLineup((prev) => [...prev.slice(1), prev[0]]);
+  const updateSetState = async (updates) => {
+    if (isFirebaseAvailable && user && activeSetId) {
+      try {
+        await setDoc(doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`), updates, { merge: true });
+      } catch (e) {
+        console.error("Failed to sync set state:", e);
+      }
+    }
+  };
+
+  const rotateUCC = () => {
+    setLineup((prev) => {
+      const newLineup = [...prev.slice(1), prev[0]];
+      updateSetState({ lineup: newLineup });
+      return newLineup;
+    });
+  };
+  const rotateOpp = () => {
+    setOppLineup((prev) => {
+      const newLineup = [...prev.slice(1), prev[0]];
+      updateSetState({ oppLineup: newLineup });
+      return newLineup;
+    });
+  };
 
   const addPlayer = async () => {
     if (newPlayerName && newPlayerNum && newPlayerBirthYear) {
@@ -830,8 +860,12 @@ export default function App() {
       setNum: 1,
       scoreUcc: 0,
       scoreOpp: 0,
+      lineup: lineup,
+      oppLineup: finalOppLineup,
+      serving: serving,
+      rallyPhase: serving === "ucc" ? "serve" : "receive"
     };
-    const safeOppName = opponentName.trim();
+    const safeOppName = opponentName.trim().replace(/\//g, "-");
 
     try {
       if (isFirebaseAvailable && user) {
@@ -1079,12 +1113,7 @@ export default function App() {
     }
 
     if (isFirebaseAvailable && user) {
-      const currentSet = appData.sets.find((s) => s.id === activeSetId);
-      if (currentSet)
-        await setDoc(
-          doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
-          { ...currentSet, scoreUcc: newUcc, scoreOpp: newOpp }
-        );
+      updateSetState({ scoreUcc: newUcc, scoreOpp: newOpp, serving: serving === "opp" && team === "ucc" ? "ucc" : (serving === "ucc" && team !== "ucc" ? "opp" : serving) });
     } else if (!isFirebaseAvailable) {
       writeLocalDb({
         ...appData,
@@ -1140,6 +1169,10 @@ export default function App() {
       setNum: nextSetNum,
       scoreUcc: 0,
       scoreOpp: 0,
+      lineup: lineup,
+      oppLineup: oppLineup,
+      serving: serving,
+      rallyPhase: "serve"
     };
 
     if (isFirebaseAvailable && user) {
@@ -1217,6 +1250,7 @@ export default function App() {
       const newLineup = [...lineup];
       newLineup[index] = benchPlayerId;
       setLineup(newLineup);
+      updateSetState({ lineup: newLineup });
       setSelectedPlayerId(benchPlayerId);
       setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
     }
@@ -1228,7 +1262,7 @@ export default function App() {
     if (!opponentName) return;
     const updatedMem = { ...oppNotesMem, [selectedOppId]: tempNote };
     setOppNotesMem(updatedMem);
-    const safeOppName = opponentName.trim();
+    const safeOppName = opponentName.trim().replace(/\//g, "-");
 
     if (isFirebaseAvailable && user) {
       await setDoc(
@@ -1254,7 +1288,7 @@ export default function App() {
     if (!opponentName) return;
     const newSetter = oppSetterId === selectedOppId ? null : selectedOppId;
     setOppSetterId(newSetter);
-    const safeOppName = opponentName.trim();
+    const safeOppName = opponentName.trim().replace(/\//g, "-");
 
     if (isFirebaseAvailable && user) {
       await setDoc(
@@ -1289,6 +1323,7 @@ export default function App() {
       newLineup[index] = oppLiberoId;
     }
     setOppLineup(newLineup);
+    updateSetState({ oppLineup: newLineup });
     setSelectedOppId(null);
   };
 
@@ -1300,6 +1335,7 @@ export default function App() {
       const newLineup = [...oppLineup];
       newLineup[index] = newOppNumber;
       setOppLineup(newLineup);
+      updateSetState({ oppLineup: newLineup });
       setTeamStats((s) => ({ ...s, oppSubs: s.oppSubs + 1 }));
       setSelectedOppId(newOppNumber);
       setNewOppNumber("");
@@ -1319,6 +1355,7 @@ export default function App() {
       newLineup[index] = liberoId;
     }
     setLineup(newLineup);
+    updateSetState({ lineup: newLineup });
     setSelectedPlayerId(null);
   };
 
@@ -1442,7 +1479,7 @@ export default function App() {
           if (s.metric === "Kill") p.attKill += 1;
         } else if (s.category === "Serve") {
           if (s.metric === "Ace") p.srvAce += 1;
-          if (s.metric.includes("Miss")) p.srvErr += 1;
+          if (s.metric?.includes("Miss")) p.srvErr += 1;
         } else if (s.category === "Pass") {
           p.passCount += 1;
           p.passSum += s.value;
@@ -1474,7 +1511,7 @@ export default function App() {
         } else if (s.category === "Serve") {
           if (s.metric === "Attempt") p.srvCount += 1;
           if (s.metric === "Ace") p.srvAce += 1;
-          if (s.metric.includes("Miss")) p.srvErr += 1;
+          if (s.metric?.includes("Miss")) p.srvErr += 1;
         }
       }
     });
@@ -1532,12 +1569,7 @@ export default function App() {
   const handleCreateTeam = async () => {
     if (!user) return;
     
-    // Safety check for verified email (Required by Security Rules)
-    if (!user.emailVerified) {
-      alert("❌ Email Verification Required\n\nTo prevent unauthorized access, your Google account email must be verified. Please verify your email in your Google Account settings and refresh the page.");
-      return;
-    }
-
+    // Safety check bypassed for broad Google Sign-in to avoid blocking organizational accounts
     const name = prompt("Enter new team name (e.g. 'Varsity Boys 2026'):");
     if (!name) return;
     
