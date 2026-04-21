@@ -3634,6 +3634,7 @@ export default function App() {
   // STATS VIEW (Hierarchical Drill-Down)
   // -------------------------------------------------------------
   if (view === "stats") {
+    const teamInfo = myTeams.find((t) => t.id === activeTeam) || { name: "Team Data", color: "from-slate-600 to-slate-800", role: "none" };
     return (
       <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col relative z-50">
         <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-slate-200 flex-1 flex flex-col overflow-hidden max-w-[1400px] mx-auto w-full">
