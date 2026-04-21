@@ -2599,7 +2599,7 @@ export default function App() {
 
   if (view === "game") {
     return (
-      <div className="h-[100dvh] w-full bg-slate-900 flex flex-col font-sans select-none overflow-hidden">
+      <div className="fixed inset-0 bg-slate-900 flex flex-col font-sans select-none overflow-hidden">
         {/* HEADER / SCOREBOARD */}
         <header className="bg-gradient-to-r from-slate-900 via-[#001b5e] to-slate-900 text-white shadow-md z-10 border-b border-white/10 shrink-0">
           <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1 sm:gap-4">
@@ -2743,7 +2743,7 @@ export default function App() {
           </div>
 
           {/* COURT CONTAINER */}
-          <div className="w-full max-w-full h-full sm:max-h-full sm:w-auto aspect-[9/16] sm:aspect-[1/1.8] bg-[#c28e60] p-1.5 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-lg flex flex-col border-2 sm:border-4 border-slate-800 mx-auto">
+          <div className="w-full max-w-[600px] h-full bg-[#c28e60] p-1.5 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-lg flex flex-col border-2 sm:border-4 border-slate-800 mx-auto">
             <div className="flex-1 bg-gradient-to-b from-[#e3b587] to-[#d6a575] border-2 sm:border-[6px] border-white relative flex flex-col shadow-inner">
               {/* OPPONENT SIDE */}
               <div className="flex-1 relative flex flex-col justify-between p-1 sm:p-4 border-b-2 sm:border-b-4 border-white/80">
