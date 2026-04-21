@@ -443,14 +443,14 @@ export default function App() {
       link.rel = "icon";
       document.head.appendChild(link);
     }
-    link.href = "https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png";
+    link.href = "/unamed.jpg";
     let appleLink = document.querySelector("link[rel~='apple-touch-icon']");
     if (!appleLink) {
       appleLink = document.createElement("link");
       appleLink.rel = "apple-touch-icon";
       document.head.appendChild(appleLink);
     }
-    appleLink.href = "https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png";
+    appleLink.href = "/unamed.jpg";
   }, []);
 
   useEffect(() => {
@@ -1891,7 +1891,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
           <img
-            src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
+            src="/unamed.jpg"
             alt="bg"
             referrerPolicy="no-referrer"
             className="h-[800px] w-[800px] object-contain blur-sm rounded-full"
@@ -1901,7 +1901,7 @@ export default function App() {
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
           <div className="bg-white p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8">
             <img
-              src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
+              src="/unamed.jpg"
               alt="Lancers Logo"
               referrerPolicy="no-referrer"
               className="h-24 w-24 sm:h-32 sm:w-32 object-contain rounded-full"
@@ -2017,7 +2017,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center">
           <img
-            src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
+            src="/unamed.jpg"
             alt="bg"
             referrerPolicy="no-referrer"
             className="h-[500px] w-[500px] sm:h-[800px] sm:w-[800px] object-contain blur-sm rounded-full"
@@ -2042,7 +2042,7 @@ export default function App() {
           <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
             <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6">
               <img
-                src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
+                src="/unamed.jpg"
                 alt="Lancers Logo"
                 referrerPolicy="no-referrer"
                 className="h-20 w-20 sm:h-32 sm:w-32 object-contain rounded-full"
@@ -2134,7 +2134,7 @@ export default function App() {
             <div className="flex items-center space-x-3 sm:space-x-4">
               <div className="bg-white p-1 rounded-full shadow-inner hidden sm:block">
                 <img
-                  src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
+                  src="/unamed.jpg"
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-8 w-8 sm:h-12 sm:w-12 object-contain rounded-full"
@@ -2587,7 +2587,7 @@ export default function App() {
             <div className="flex items-center space-x-2 sm:space-x-4 order-1 sm:order-none">
               <div className="bg-white/10 backdrop-blur-md p-1 rounded-full border border-white/20 shadow-sm hidden md:block">
                 <img
-                  src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
+                  src="/unamed.jpg"
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-8 w-8 object-contain rounded-full bg-white/10 p-0.5"
@@ -2709,7 +2709,7 @@ export default function App() {
           {/* Background Logo */}
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
             <img
-              src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
+              src="/unamed.jpg"
               alt="Lancers Logo bg"
               className="h-[300px] w-[300px] sm:h-[500px] sm:w-[500px] object-contain rounded-full"
             />
@@ -3614,7 +3614,7 @@ export default function App() {
             <div className="flex items-center w-full sm:w-auto">
               <div className="bg-white p-1 sm:p-1.5 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:block">
                 <img
-                  src="https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png"
+                  src="/unamed.jpg"
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-full"
