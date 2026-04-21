@@ -421,6 +421,11 @@ export default function App() {
   const [careerPlayerName, setCareerPlayerName] = useState(null);
   const [careerPlayerBirthYear, setCareerPlayerBirthYear] = useState(null);
   const [statFilter, setStatFilter] = useState("all");
+  const [trackOppReceives, setTrackOppReceives] = useState(() => localStorage.getItem("ucc_track_opp_receives") !== "false");
+
+  useEffect(() => {
+    localStorage.setItem("ucc_track_opp_receives", trackOppReceives);
+  }, [trackOppReceives]);
 
   // Hierarchical Stats Navigation State
   const [statsPath, setStatsPath] = useState([
@@ -819,9 +824,13 @@ export default function App() {
     const sortedMatches = [...appData.matches].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
+    const liveMatches = sortedMatches.filter(m => m.isLive !== false);
     const latestMatch =
-      sortedMatches.length > 0 ? sortedMatches[sortedMatches.length - 1] : null;
-    if (!latestMatch) return;
+      liveMatches.length > 0 ? liveMatches[liveMatches.length - 1] : (sortedMatches.length > 0 ? sortedMatches[sortedMatches.length - 1] : null);
+    if (!latestMatch) {
+      alert("No recent live matches found.");
+      return;
+    }
 
     const matchSets = appData.sets
       .filter((s) => s.matchId === latestMatch.id)
@@ -842,6 +851,29 @@ export default function App() {
     }
 
     setView("game");
+  };
+
+  const handleEndGameLive = async () => {
+    if (!activeMatch) return;
+    if (window.confirm("Are you sure you want to end this game and leave? It will be marked as complete.")) {
+      if (isFirebaseAvailable && user && activeTeam) {
+        try {
+          await setDoc(doc(db, `${publicPath}/${activeTeam}/matches/${activeMatch.id}`), { isLive: false }, { merge: true });
+        } catch (e) {
+          console.error("Failed to mark match complete", e);
+        }
+      }
+      
+      // Update local state proactively
+      setAppData(prev => ({
+        ...prev,
+        matches: prev.matches.map(m => m.id === activeMatch.id ? { ...m, isLive: false } : m)
+      }));
+
+      setActiveMatch(null);
+      setActiveSetId(null);
+      setView("menu");
+    }
   };
 
   const startGame = () => {
@@ -873,6 +905,7 @@ export default function App() {
       opponent: opponentName,
       format: matchFormat,
       cap: scoreCap,
+      isLive: true,
     };
 
     const setId = Date.now().toString() + "_set";
@@ -1165,7 +1198,6 @@ export default function App() {
     if (winner) setSetWinnerModal(winner);
     else {
       changeRallyPhase("serve");
-      setTimeout(() => setServePromptVisible(true), 400);
     }
   };
 
@@ -1224,7 +1256,6 @@ export default function App() {
     setTeamStats({ uccSubs: 0, oppSubs: 0, uccTimeouts: 0, oppTimeouts: 0 });
     setSetWinnerModal(null);
     changeRallyPhase("serve");
-    setTimeout(() => setServePromptVisible(true), 500);
   };
 
   const handleServeStat = (metric, team) => {
@@ -1239,8 +1270,8 @@ export default function App() {
     } else if (metric === "Error") setServeErrorPrompt(team);
     else if (metric === "In Play") {
       logStat(serverId, "Serve", "Attempt", 1, isOpp);
-      // New: If we serve, prompt for opponent passing (opp_receive)
-      changeRallyPhase(team === "ucc" ? "opp_receive" : "receive");
+      // New: If we serve, prompt for opponent passing (opp_receive) based on setting
+      changeRallyPhase(team === "ucc" ? (trackOppReceives ? "opp_receive" : "play") : "receive");
     }
   };
 
@@ -1708,47 +1739,39 @@ export default function App() {
     if (!team) return;
     
     const confirmMsg = team.role === 'coach' 
-      ? `⚠️ DISBAND TEAM: Are you sure you want to delete "${team.name}"?\n\nThis will remove the team for you and potentially disband it for everyone else. This action cannot be undone.`
+      ? `⚠️ DISBAND / LEAVE TEAM: Are you sure you want to remove "${team.name}"?`
       : `LEAVE TEAM: Are you sure you want to remove "${team.name}" from your list?`;
       
     if (!window.confirm(confirmMsg)) return;
 
     try {
-      const batch = writeBatch(db);
-      
-      // 1. Remove from user profile
+      // 1. Remove from user profile instantly so they are unblocked
       const newTeams = myTeams.filter(t => t.id !== teamId);
-      batch.set(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
-
-      // 2. If coach, try to delete the root team doc (this will help flag it if we ever do a cleanup)
-      // Note: We don't delete all subcollections client-side as it's too many writes, 
-      // but deleting the root doc prevents some queries if rules are tight.
-      if (team.role === 'coach') {
-        const teamDoc = doc(db, `${publicPath}/${teamId}`);
-        batch.delete(teamDoc);
-        
-        // Also remove from members
-        const memberDoc = doc(db, `${publicPath}/${teamId}/members/${user.uid}`);
-        batch.delete(memberDoc);
-      } else {
-        // If just a player, just remove our membership
-        const memberDoc = doc(db, `${publicPath}/${teamId}/members/${user.uid}`);
-        batch.delete(memberDoc);
-      }
-
-      await batch.commit();
+      await setDoc(doc(db, "users", user.uid), { teams: newTeams }, { merge: true });
       
-      // If we were viewing this team, go back to select
+      // Update local state immediately before attempting other risky deletes
+      setMyTeams(newTeams);
       if (activeTeam === teamId) {
         setActiveTeam(null);
         localStorage.removeItem("ucc_vball_active_team");
         setView("team_select");
       }
-      
-      alert("Team successfully removed.");
+
+      // 2. Try cleaning up team traces
+      try {
+        await deleteDoc(doc(db, `${publicPath}/${teamId}/members/${user.uid}`));
+        if (team.role === 'coach') {
+          // Attempt root deletion just in case rules allow it
+          await deleteDoc(doc(db, `${publicPath}/${teamId}`));
+        }
+      } catch (cleanupError) {
+        console.log("Cleanup skipping due to rules (expected):", cleanupError);
+      }
+
+      alert("Team successfully removed from your account.");
     } catch (e) {
-      console.error("Delete Team Error:", e);
-      alert("Failed to remove team. You might not have permission to disband the team root doc.");
+      console.error("Delete Team Profile Error:", e);
+      alert("Failed to remove team from your profile.");
     }
   };
 
@@ -2067,7 +2090,7 @@ export default function App() {
                   <Users className="mr-3 text-blue-300" size={20} /> SCRIMMAGE /
                   CUSTOM
                 </button>
-                {appData.matches.length > 0 && (
+                {appData.matches.filter(m => m.isLive !== false).length > 0 && (
                   <button
                     onClick={joinLiveMatch}
                     className="md:col-span-2 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 border border-green-400 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-xl tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center uppercase shadow-lg"
@@ -2214,6 +2237,20 @@ export default function App() {
                     <option>Single Set</option>
                     <option>Custom / Scrimmage</option>
                   </select>
+                </div>
+                <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
+                  <label className="text-[10px] sm:text-[12px] font-black text-slate-700 uppercase tracking-widest ml-2">
+                    Track Opp. Serve Receive
+                  </label>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={trackOppReceives}
+                      onChange={(e) => setTrackOppReceives(e.target.checked)}
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0033A0]"></div>
+                  </label>
                 </div>
                 <div>
                   <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
@@ -2851,6 +2888,22 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {rallyPhase === "serve" && !servePromptVisible && (
+                <div className="absolute inset-0 flex flex-col justify-center items-center pointer-events-none z-20">
+                  <button
+                    onClick={() => setServePromptVisible(true)}
+                    className="pointer-events-auto bg-gradient-to-b from-green-500 to-green-600 text-white px-10 sm:px-16 py-4 sm:py-6 rounded-full shadow-[0_0_40px_rgba(34,197,94,0.4)] border-2 border-green-300 animate-pulse active:scale-95 transition-all outline-none"
+                  >
+                    <span className="font-black text-2xl sm:text-4xl tracking-widest uppercase block drop-shadow-md">
+                      SERVE
+                    </span>
+                    <span className="text-[10px] sm:text-xs font-bold tracking-widest opacity-80 block mt-1 uppercase text-center">
+                      Tap when served
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2883,13 +2936,7 @@ export default function App() {
               <Activity size={18} />
             </button>
             <button
-              onClick={() => {
-                if (window.confirm("Are you sure you want to end this game and leave?")) {
-                  setActiveMatch(null);
-                  setActiveSetId(null);
-                  setView("menu");
-                }
-              }}
+              onClick={handleEndGameLive}
               className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-red-600 to-red-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-red-500 hover:to-red-700 shadow-md border-t border-red-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap"
             >
               End Game
@@ -2983,10 +3030,12 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                  <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
-                    <Crosshair size={12} className="mr-1 text-red-500" /> Attack
-                  </h4>
+                {!rallyPhase.includes("receive") && (
+                  <>
+                    <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
+                        <Crosshair size={12} className="mr-1 text-red-500" /> Attack
+                      </h4>
                   <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
                     <button
                       onClick={() =>
@@ -3108,8 +3157,11 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+                </>
+              )}
               </div>
 
+              {!rallyPhase.includes("receive") && (
               <div className="bg-slate-200 p-2 sm:p-3 flex gap-1.5 sm:gap-2">
                 <button
                   onClick={() => setSubModalVisible(true)}
@@ -3130,6 +3182,7 @@ export default function App() {
                     </button>
                   )}
               </div>
+              )}
             </div>
           </div>
         )}
