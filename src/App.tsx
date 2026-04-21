@@ -26,6 +26,7 @@ import {
   Home,
   LogOut,
   Trash2,
+  Maximize,
 } from "lucide-react";
 
 // Firebase Imports
@@ -330,6 +331,25 @@ export default function App() {
           docElm.requestFullscreen().catch(() => {});
         } else if (docElm.webkitRequestFullscreen) {
           docElm.webkitRequestFullscreen();
+        }
+      }
+    } catch(e) {}
+  };
+
+  const toggleFullscreen = () => {
+    try {
+      const docElm = document.documentElement as any;
+      if (!document.fullscreenElement && !docElm.webkitFullscreenElement) {
+        if (docElm.requestFullscreen) {
+          docElm.requestFullscreen().catch(() => {});
+        } else if (docElm.webkitRequestFullscreen) {
+          docElm.webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen();
         }
       }
     } catch(e) {}
@@ -2579,7 +2599,7 @@ export default function App() {
 
   if (view === "game") {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col font-sans select-none relative overflow-hidden">
+      <div className="h-[100dvh] w-full bg-slate-900 flex flex-col font-sans select-none overflow-hidden">
         {/* HEADER / SCOREBOARD */}
         <header className="bg-gradient-to-r from-slate-900 via-[#001b5e] to-slate-900 text-white shadow-md z-10 border-b border-white/10 shrink-0">
           <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1 sm:gap-4">
@@ -2631,8 +2651,15 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex flex-row sm:flex-col items-center justify-center px-1 sm:px-2 order-3 sm:order-none w-full sm:w-auto mt-1 sm:mt-0 pt-1 sm:pt-0 border-t border-white/5 sm:border-none">
-              <span className="text-[7px] sm:text-[9px] font-black text-amber-400 tracking-[0.1em] sm:tracking-[0.2em] uppercase bg-amber-400/10 px-1.5 sm:px-2 py-0.5 rounded-full text-center flex items-center sm:flex-col whitespace-nowrap">
+            <div className="flex flex-row sm:flex-col items-center justify-center px-1 sm:px-2 order-3 sm:order-none w-full sm:w-auto mt-1 sm:mt-0 pt-1 sm:pt-0 border-t border-white/5 sm:border-none relative">
+              <button 
+                onClick={toggleFullscreen}
+                className="absolute left-2 sm:-left-8 text-white/50 hover:text-white p-1"
+                title="Toggle Fullscreen"
+              >
+                <Maximize size={14} />
+              </button>
+              <span className="text-[7px] sm:text-[9px] font-black text-amber-400 tracking-[0.1em] sm:tracking-[0.2em] uppercase bg-amber-400/10 px-1.5 sm:px-2 py-0.5 rounded-full text-center flex items-center sm:flex-col whitespace-nowrap ml-6 sm:ml-0">
                 <span className="mr-2 sm:mr-0">
                  {matchFormat === "Best of 3"
                    ? "BO3"
