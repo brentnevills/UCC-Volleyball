@@ -2599,12 +2599,12 @@ export default function App() {
 
   if (view === "game") {
     return (
-      <div className="fixed inset-0 bg-slate-900 flex flex-col font-sans select-none overflow-hidden">
+      <div className="fixed inset-0 bg-slate-900 flex flex-col landscape:flex-row font-sans select-none overflow-hidden">
         {/* HEADER / SCOREBOARD */}
-        <header className="bg-gradient-to-r from-slate-900 via-[#001b5e] to-slate-900 text-white shadow-md z-10 border-b border-white/10 shrink-0">
-          <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1 sm:gap-4">
+        <header className="bg-gradient-to-r landscape:bg-gradient-to-b from-slate-900 via-[#001b5e] to-slate-900 text-white shadow-md z-10 border-b landscape:border-b-0 landscape:border-r border-white/10 shrink-0 landscape:w-48 xl:landscape:w-64">
+          <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 landscape:py-6 flex flex-wrap sm:flex-nowrap landscape:flex-col items-center justify-between gap-1 sm:gap-4 landscape:h-full landscape:justify-around">
             
-            <div className="flex items-center space-x-2 sm:space-x-4 order-1 sm:order-none">
+            <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
               <div className="bg-white/10 backdrop-blur-md p-1 rounded-full border border-white/20 shadow-sm hidden md:block">
                 <img
                   src="/unamed.jpg"
@@ -2654,7 +2654,7 @@ export default function App() {
             <div className="flex flex-row sm:flex-col items-center justify-center px-1 sm:px-2 order-3 sm:order-none w-full sm:w-auto mt-1 sm:mt-0 pt-1 sm:pt-0 border-t border-white/5 sm:border-none relative">
               <button 
                 onClick={toggleFullscreen}
-                className="absolute left-2 sm:-left-8 text-white/50 hover:text-white p-1"
+                className="absolute left-2 sm:-left-8 landscape:absolute landscape:top-0 landscape:left-0 text-white/50 hover:text-white p-1"
                 title="Toggle Fullscreen"
               >
                 <Maximize size={14} />
@@ -2689,9 +2689,9 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center space-x-2 sm:space-x-4 order-2 sm:order-none">
+            <div className="flex items-center space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-2 sm:order-none">
               <div
-                className={`py-1 sm:py-2 px-2 sm:px-4 rounded-xl sm:rounded-3xl flex items-center gap-2 transition-all duration-300 ${
+                className={`py-1 sm:py-2 px-2 sm:px-4 landscape:px-2 rounded-xl sm:rounded-3xl flex items-center landscape:flex-col gap-2 transition-all duration-300 ${
                   serving === "opp"
                     ? "bg-white/15 border border-yellow-400/50 shadow-[0_0_10px_rgba(250,204,21,0.1)]"
                     : "bg-transparent border border-transparent"
@@ -2731,7 +2731,7 @@ export default function App() {
         </header>
 
         {/* FULL SCREEN COURT */}
-        <div className="flex-1 flex items-center justify-center relative bg-slate-900 shadow-inner p-2 sm:p-4 md:p-6 overflow-hidden min-h-0">
+        <div className="flex-1 flex items-center justify-center relative bg-slate-900 shadow-inner p-2 sm:p-4 md:p-6 landscape:p-2 overflow-hidden min-h-0 landscape:min-w-0">
 
           {/* Background Logo */}
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
@@ -2743,7 +2743,7 @@ export default function App() {
           </div>
 
           {/* COURT CONTAINER */}
-          <div className="w-full max-w-[600px] h-full bg-[#c28e60] p-1.5 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-lg flex flex-col border-2 sm:border-4 border-slate-800 mx-auto">
+          <div className="w-full max-w-[600px] landscape:max-w-none landscape:w-auto landscape:aspect-[1/2] h-full bg-[#c28e60] p-1.5 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-lg flex flex-col border-2 sm:border-4 border-slate-800 mx-auto">
             <div className="flex-1 bg-gradient-to-b from-[#e3b587] to-[#d6a575] border-2 sm:border-[6px] border-white relative flex flex-col shadow-inner">
               {/* OPPONENT SIDE */}
               <div className="flex-1 relative flex flex-col justify-between p-1 sm:p-4 border-b-2 sm:border-b-4 border-white/80">
@@ -2763,7 +2763,7 @@ export default function App() {
                       <button
                         key={idx}
                         onClick={() => setSelectedOppId(oppId)}
-                        className={`relative w-10 h-10 sm:w-16 sm:h-16 rounded-full flex flex-col items-center justify-center text-white font-black shadow-md sm:shadow-[0_5px_10px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 transition-all border-2 border-white/50 ${
+                        className={`relative w-[max(2.5rem,10vh)] h-[max(2.5rem,10vh)] landscape:w-[12vh] landscape:h-[12vh] sm:w-16 sm:h-16 landscape:max-w-16 landscape:max-h-16 rounded-full flex flex-col items-center justify-center text-white font-black shadow-md sm:shadow-[0_5px_10px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 transition-all border-2 border-white/50 ${
                           isSetter
                             ? "bg-gradient-to-br from-green-400 to-green-600"
                             : isLibero
@@ -2795,7 +2795,7 @@ export default function App() {
                       <button
                         key={idx}
                         onClick={() => setSelectedOppId(oppId)}
-                        className={`relative w-10 h-10 sm:w-16 sm:h-16 rounded-full flex flex-col items-center justify-center text-white font-black shadow-md sm:shadow-[0_5px_10px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 transition-all border-2 border-white/50 ${
+                        className={`relative w-[max(2.5rem,10vh)] h-[max(2.5rem,10vh)] landscape:w-[12vh] landscape:h-[12vh] sm:w-16 sm:h-16 landscape:max-w-16 landscape:max-h-16 rounded-full flex flex-col items-center justify-center text-white font-black shadow-md sm:shadow-[0_5px_10px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 transition-all border-2 border-white/50 ${
                           isSetter
                             ? "bg-gradient-to-br from-green-400 to-green-600"
                             : isLibero
@@ -2840,7 +2840,7 @@ export default function App() {
                       <button
                         key={idx}
                         onClick={() => setSelectedPlayerId(p?.id)}
-                        className={`relative w-12 h-12 sm:w-20 sm:h-20 rounded-full flex flex-col items-center justify-center text-white shadow-lg sm:shadow-xl transition-all active:scale-95 border-2 sm:border-[3px] border-white/30 hover:scale-105 ${
+                        className={`relative w-[max(3rem,12vh)] h-[max(3rem,12vh)] landscape:w-[16vh] landscape:h-[16vh] sm:w-20 sm:h-20 landscape:max-w-20 landscape:max-h-20 rounded-full flex flex-col items-center justify-center text-white shadow-lg sm:shadow-xl transition-all active:scale-95 border-2 sm:border-[3px] border-white/30 hover:scale-105 ${
                           isLibero
                             ? "bg-gradient-to-br from-slate-700 to-slate-900"
                             : "bg-gradient-to-br from-[#0044cc] to-[#001b5e]"
@@ -2866,7 +2866,7 @@ export default function App() {
                       <button
                         key={idx}
                         onClick={() => setSelectedPlayerId(p?.id)}
-                        className={`relative w-12 h-12 sm:w-20 sm:h-20 rounded-full flex flex-col items-center justify-center text-white shadow-lg sm:shadow-xl transition-all active:scale-95 border-2 sm:border-[3px] border-white/30 hover:scale-105 ${
+                        className={`relative w-[max(3rem,12vh)] h-[max(3rem,12vh)] landscape:w-[16vh] landscape:h-[16vh] sm:w-20 sm:h-20 landscape:max-w-20 landscape:max-h-20 rounded-full flex flex-col items-center justify-center text-white shadow-lg sm:shadow-xl transition-all active:scale-95 border-2 sm:border-[3px] border-white/30 hover:scale-105 ${
                           isLibero
                             ? "bg-gradient-to-br from-slate-700 to-slate-900"
                             : "bg-gradient-to-br from-[#0044cc] to-[#001b5e]"
@@ -2936,8 +2936,8 @@ export default function App() {
         </div>
 
         {/* STICKY BOTTOM BAR (Controls) */}
-        <div className="bg-slate-900 border-t border-white/10 px-2 sm:px-4 py-2 sm:py-3 z-30 shadow-[0_-10px_30px_rgba(0,0,0,0.5)] shrink-0">
-          <div className="max-w-5xl mx-auto flex gap-2 sm:gap-3 w-full justify-center">
+        <div className="bg-slate-900 border-t landscape:border-t-0 landscape:border-l border-white/10 px-2 sm:px-4 py-2 sm:py-3 landscape:py-4 z-30 shadow-[0_-10px_30px_rgba(0,0,0,0.5)] shrink-0 landscape:w-32 xl:landscape:w-48 flex items-center">
+          <div className="max-w-5xl mx-auto flex landscape:flex-col gap-2 sm:gap-3 landscape:gap-4 w-full h-full justify-center landscape:items-stretch">
             <button
               onClick={handleUndo}
               disabled={history.length === 0}
