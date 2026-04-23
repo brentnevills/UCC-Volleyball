@@ -1931,8 +1931,13 @@ export default function App() {
         </div>
 
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
-          <div className="bg-white p-6 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8">
-            <Shield className="text-slate-800 h-24 w-24 sm:h-32 sm:w-32" />
+          <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8">
+            <img
+              src="/LancerVolleyballLogo.jpg"
+              alt="Lancers Logo"
+              referrerPolicy="no-referrer"
+              className="h-20 w-20 sm:h-32 sm:w-32 object-contain rounded-full"
+            />
           </div>
           <h1 className="text-4xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center mb-2">
             UCC Lancers
@@ -2061,8 +2066,13 @@ export default function App() {
           </button>
 
           <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
-            <div className="bg-white p-4 sm:p-6 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6">
-              <Shield className="h-16 w-16 sm:h-24 sm:w-24 text-slate-800" />
+            <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6">
+              <img
+                src="/LancerVolleyballLogo.jpg"
+                alt="Lancers Logo"
+                referrerPolicy="no-referrer"
+                className="h-20 w-20 sm:h-32 sm:w-32 object-contain rounded-full"
+              />
             </div>
             <h1 className="text-3xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center">
               UCC Lancers
@@ -2288,8 +2298,13 @@ export default function App() {
         <div className="w-full max-w-4xl bg-white rounded-2xl sm:rounded-[2rem] shadow-xl sm:shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex justify-between items-center shadow-md z-10 relative">
             <div className="flex items-center space-x-3 sm:space-x-4">
-              <div className="bg-white p-2 rounded-full shadow-inner hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14">
-                <Shield className="text-[#001b5e] h-6 w-6 sm:h-8 sm:w-8" />
+              <div className="bg-white p-1 rounded-full shadow-inner hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14 overflow-hidden">
+                <img
+                  src="/LancerVolleyballLogo.jpg"
+                  alt="Logo"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-contain mix-blend-multiply"
+                />
               </div>
               <div>
                 <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase text-white drop-shadow-md">
@@ -2740,8 +2755,13 @@ export default function App() {
           <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 landscape:py-6 flex flex-wrap sm:flex-nowrap landscape:flex-col items-center justify-between gap-1 sm:gap-4 landscape:h-full landscape:justify-around">
             
             <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
-              <div className="bg-white/10 backdrop-blur-md p-1.5 rounded-full border border-white/20 shadow-sm hidden md:flex items-center justify-center h-10 w-10">
-                <Shield className="text-white fill-white/20 h-6 w-6" />
+              <div className="bg-white backdrop-blur-md p-0.5 rounded-full border border-white/20 shadow-sm hidden md:flex items-center justify-center h-10 w-10 overflow-hidden">
+                <img
+                  src="/LancerVolleyballLogo.jpg"
+                  alt="Logo"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-contain"
+                />
               </div>
 
               <div
@@ -3796,8 +3816,13 @@ export default function App() {
         <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-slate-200 flex-1 flex flex-col overflow-hidden max-w-[1400px] mx-auto w-full">
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center shadow-md gap-4">
             <div className="flex items-center w-full sm:w-auto">
-              <div className="bg-white p-2 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14">
-                <Shield className="text-[#001b5e] h-6 w-6 sm:h-8 sm:w-8" />
+              <div className="bg-white p-1 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14 overflow-hidden">
+                <img
+                  src="/LancerVolleyballLogo.jpg"
+                  alt="Logo"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-contain mix-blend-multiply"
+                />
               </div>
               <div className="flex-1">
                 <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase drop-shadow-md">
