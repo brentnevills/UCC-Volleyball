@@ -463,14 +463,14 @@ export default function App() {
       link.rel = "icon";
       document.head.appendChild(link);
     }
-    link.href = "/unnamed.jpg";
+    link.href = "/LancerVolleyballLogo.png";
     let appleLink = document.querySelector("link[rel~='apple-touch-icon']");
     if (!appleLink) {
       appleLink = document.createElement("link");
       appleLink.rel = "apple-touch-icon";
       document.head.appendChild(appleLink);
     }
-    appleLink.href = "/unnamed.jpg";
+    appleLink.href = "/LancerVolleyballLogo.png";
   }, []);
 
   useEffect(() => {
@@ -1113,18 +1113,24 @@ export default function App() {
     pushToHistory();
     logStat(playerId, category, metric, value);
     
+    const currentLineupIdx = lineup.indexOf(playerId);
+    const isBackRow = [0, 4, 5].includes(currentLineupIdx) || playerId === liberoId;
+
     // Only close modal if it's NOT a 'Late' block
     if (!(category === "Block" && metric === "Late")) {
       setSelectedPlayerId(null);
     }
 
     if (category === "Attack") {
+      const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
       if (metric === "Kill") {
-        logStat(playerId, "Attack", "Swing", 1);
+        logStat(playerId, "Attack", swingMetric, 1);
         handlePoint("ucc", true);
-      } else if (metric === "Out" || metric === "Net") {
-        logStat(playerId, "Attack", "Swing", 1);
+      } else if (metric === "Out" || metric === "Net" || metric === "Blocked") {
+        logStat(playerId, "Attack", swingMetric, 1);
         handlePoint("opp", true);
+      } else if (metric === "Swing") {
+        logStat(playerId, "Attack", swingMetric, 1);
       }
     }
     if (category === "Block") {
@@ -1142,18 +1148,24 @@ export default function App() {
     pushToHistory();
     logStat(oppId, category, metric, value, true);
     
+    const currentLineupIdx = oppLineup.indexOf(oppId);
+    const isBackRow = [0, 4, 5].includes(currentLineupIdx) || oppId === oppLiberoId;
+
     // Only close modal if it's NOT a 'Late' block (for symmetry)
     if (!(category === "Block" && metric === "Late")) {
       setSelectedOppId(null);
     }
 
     if (category === "Attack") {
+      const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
       if (metric === "Kill") {
-        logStat(oppId, "Attack", "Swing", 1, true);
+        logStat(oppId, "Attack", swingMetric, 1, true);
         handlePoint("opp", true);
-      } else if (metric === "Out" || metric === "Net") {
-        logStat(oppId, "Attack", "Swing", 1, true);
+      } else if (metric === "Out" || metric === "Net" || metric === "Blocked") {
+        logStat(oppId, "Attack", swingMetric, 1, true);
         handlePoint("ucc", true);
+      } else if (metric === "Swing") {
+        logStat(oppId, "Attack", swingMetric, 1, true);
       }
     }
     
@@ -1534,6 +1546,9 @@ export default function App() {
         passSum: 0,
         passCount: 0,
         attCount: 0,
+        attCountFront: 0,
+        attCountBack: 0,
+        attBlk: 0,
         attKill: 0,
         attErr: 0,
         blkCount: 0,
@@ -1562,7 +1577,7 @@ export default function App() {
           };
         const p = oppData[s.playerId];
         if (s.category === "Attack") {
-          if (s.metric === "Swing") p.attCount += 1;
+          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back") p.attCount += 1;
           if (s.metric === "Kill") p.attKill += 1;
         } else if (s.category === "Serve") {
           if (s.metric === "Ace") p.srvAce += 1;
@@ -1581,7 +1596,11 @@ export default function App() {
           if (s.metric === "Dig") p.digCount += 1;
           if (s.metric === "Error") p.digErr += 1;
         } else if (s.category === "Attack") {
-          if (s.metric === "Swing") p.attCount += 1;
+          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back") {
+            p.attCount += 1;
+            if (s.metric === "Swing Front") p.attCountFront += 1;
+            if (s.metric === "Swing Back") p.attCountBack += 1;
+          }
           if (s.metric === "Kill") p.attKill += 1;
           if (
             s.metric === "Out" ||
@@ -1589,6 +1608,7 @@ export default function App() {
             s.metric === "Out/Net"
           )
             p.attErr += 1;
+          if (s.metric === "Blocked") p.attBlk += 1;
         } else if (s.category === "Block") {
           if (s.metric === "Attempt") p.blkCount += 1;
           if (s.metric === "Block") p.blkStuff += 1;
@@ -1610,7 +1630,7 @@ export default function App() {
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
-    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Kills,Kill %,Att Errors,Blocks,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
     Object.values(uccStats).forEach((p) => {
       const passAvg =
@@ -1622,7 +1642,7 @@ export default function App() {
           ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
           : "0.0%";
       const srvPlusMinus = p.srvAce - p.srvErr;
-      csv += `"${p.number}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attKill},${killPct},${p.attErr},${blkTot},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+      csv += `"${p.number}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
     });
 
     csv +=
@@ -1911,7 +1931,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
           <img
-            src="/unnamed.jpg"
+            src="/LancerVolleyballLogo.png"
             alt="bg"
             referrerPolicy="no-referrer"
             className="h-[800px] w-[800px] object-contain blur-sm rounded-full"
@@ -1921,7 +1941,7 @@ export default function App() {
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
           <div className="bg-white p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8">
             <img
-              src="/unnamed.jpg"
+              src="/LancerVolleyballLogo.png"
               alt="Lancers Logo"
               referrerPolicy="no-referrer"
               className="h-24 w-24 sm:h-32 sm:w-32 object-contain rounded-full"
@@ -2037,7 +2057,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center">
           <img
-            src="/unnamed.jpg"
+            src="/LancerVolleyballLogo.png"
             alt="bg"
             referrerPolicy="no-referrer"
             className="h-[500px] w-[500px] sm:h-[800px] sm:w-[800px] object-contain blur-sm rounded-full"
@@ -2062,7 +2082,7 @@ export default function App() {
           <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
             <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6">
               <img
-                src="/unnamed.jpg"
+                src="/LancerVolleyballLogo.png"
                 alt="Lancers Logo"
                 referrerPolicy="no-referrer"
                 className="h-20 w-20 sm:h-32 sm:w-32 object-contain rounded-full"
@@ -2123,7 +2143,16 @@ export default function App() {
             )}
           </div>
 
-          <div className="w-full">
+          <div className="w-full flex flex-col gap-4 sm:gap-6">
+            {teamInfo.role !== 'player' && (
+              <button
+                onClick={() => setIsRosterModalOpen(true)}
+                className="w-full bg-white text-slate-700 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)]"
+              >
+                <Users className="mr-2 sm:mr-3 text-slate-500" size={24} />{" "}
+                EDIT ROSTER
+              </button>
+            )}
             <button
               onClick={viewStatsFromMenu}
               className="w-full bg-white text-[#001b5e] p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)]"
@@ -2133,6 +2162,137 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {/* ROSTER MODAL FROM MENU */}
+        {isRosterModalOpen && (
+          <div className="absolute inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-2 sm:p-4 backdrop-blur-md">
+            <div className="bg-white rounded-2xl sm:rounded-[2rem] w-full max-w-xl h-[90vh] sm:h-[85vh] overflow-hidden shadow-2xl flex flex-col">
+              <div className="bg-slate-800 p-4 sm:p-6 text-white flex justify-between items-center">
+                <h3 className="font-black text-lg sm:text-xl tracking-widest uppercase flex items-center">
+                  <Users className="mr-2 sm:mr-3 text-slate-400" size={20} />{" "}
+                  Manage Roster
+                </h3>
+                <button
+                  onClick={() => setIsRosterModalOpen(false)}
+                  className="text-slate-400 hover:text-white transition-colors bg-slate-700 p-2 rounded-full"
+                >
+                  <XCircle size={20} className="sm:w-6 sm:h-6" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-6 bg-slate-50 border-b border-slate-200 space-y-3 sm:space-y-4">
+                <div className="flex items-center space-x-2 sm:space-x-3 bg-white p-1 sm:p-2 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                  <FolderOpen
+                    size={16}
+                    className="text-slate-400 ml-2 sm:w-5 sm:h-5"
+                  />
+                  <select
+                    onChange={(e) => loadRosterPreset(e.target.value)}
+                    className="flex-1 bg-transparent border-none text-slate-700 font-bold focus:ring-0 outline-none text-xs sm:text-base"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>
+                      Load Saved Roster...
+                    </option>
+                    {Object.keys(appData.savedRosters || {}).map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center space-x-2 sm:space-x-3 bg-white p-1 sm:p-2 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                  <Save
+                    size={16}
+                    className="text-[#0033A0] ml-2 sm:w-5 sm:h-5"
+                  />
+                  <input
+                    placeholder="Save Roster As..."
+                    value={rosterPresetName}
+                    onChange={(e) => setRosterPresetName(e.target.value)}
+                    className="flex-1 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-base"
+                  />
+                  <button
+                    onClick={saveRosterAsPreset}
+                    className="bg-[#0033A0] text-white px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-sm text-xs sm:text-sm"
+                  >
+                    SAVE
+                  </button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-slate-200">
+                  <div className="flex gap-2">
+                    <input
+                      placeholder="#"
+                      className="w-12 sm:w-16 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-black text-center text-[#0033A0] text-sm sm:text-base"
+                      value={newPlayerNum}
+                      onChange={(e) => setNewPlayerNum(e.target.value)}
+                      type="number"
+                    />
+                    <input
+                      placeholder="Birth Year (YYYY)"
+                      className="w-24 sm:w-32 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base text-center hidden sm:block"
+                      value={newPlayerBirthYear}
+                      onChange={(e) => setNewPlayerBirthYear(e.target.value)}
+                      maxLength={4}
+                    />
+                  </div>
+                  <div className="flex flex-1 gap-2">
+                    <input
+                      placeholder="Birth YYYY"
+                      className="w-24 p-2 rounded-lg border border-slate-200 outline-none font-bold text-slate-700 text-sm text-center sm:hidden"
+                      value={newPlayerBirthYear}
+                      onChange={(e) => setNewPlayerBirthYear(e.target.value)}
+                      maxLength={4}
+                    />
+                    <input
+                      placeholder="Player Name"
+                      className="flex-1 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base"
+                      value={newPlayerName}
+                      onChange={(e) => setNewPlayerName(e.target.value)}
+                    />
+                    <button
+                      onClick={addPlayer}
+                      className="bg-green-500 text-white px-3 sm:px-4 rounded-lg sm:rounded-xl font-black hover:bg-green-600 transition-colors shadow-sm flex items-center justify-center min-w-[3rem]"
+                    >
+                      <PlusCircle size={18} className="sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-slate-100">
+                {appData.roster.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-sm border border-slate-200"
+                  >
+                    <div className="flex items-center space-x-2 sm:space-x-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base">
+                        {p.number}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-bold text-slate-700 text-sm sm:text-base truncate">
+                          {p.name}
+                        </span>
+                        {p.birthYear && (
+                          <span className="text-[10px] text-slate-400 font-bold tracking-widest">{p.birthYear}</span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removePlayer(p.id)}
+                      className="text-red-400 hover:text-red-600 transition-colors p-2"
+                    >
+                      <XCircle size={18} className="sm:w-5 sm:h-5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     );
   }
@@ -2154,7 +2314,7 @@ export default function App() {
             <div className="flex items-center space-x-3 sm:space-x-4">
               <div className="bg-white p-1 rounded-full shadow-inner hidden sm:block">
                 <img
-                  src="/unnamed.jpg"
+                  src="/LancerVolleyballLogo.png"
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-8 w-8 sm:h-12 sm:w-12 object-contain rounded-full"
@@ -2607,7 +2767,7 @@ export default function App() {
             <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
               <div className="bg-white/10 backdrop-blur-md p-1 rounded-full border border-white/20 shadow-sm hidden md:block">
                 <img
-                  src="/unnamed.jpg"
+                  src="/LancerVolleyballLogo.png"
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-8 w-8 object-contain rounded-full bg-white/10 p-0.5"
@@ -2736,7 +2896,7 @@ export default function App() {
           {/* Background Logo */}
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
             <img
-              src="/unnamed.jpg"
+              src="/LancerVolleyballLogo.png"
               alt="Lancers Logo bg"
               className="h-[300px] w-[300px] sm:h-[500px] sm:w-[500px] object-contain rounded-full"
             />
@@ -3096,7 +3256,7 @@ export default function App() {
                           "Out"
                         )
                       }
-                      className="col-span-2 bg-slate-100 text-slate-600 py-2 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-slate-200 active:scale-95 uppercase tracking-wider"
+                      className="col-span-1 bg-slate-100 text-slate-600 py-2 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-slate-200 active:scale-95 uppercase tracking-wider"
                     >
                       Out
                     </button>
@@ -3108,17 +3268,30 @@ export default function App() {
                           "Net"
                         )
                       }
-                      className="col-span-2 bg-slate-100 text-slate-600 py-2 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-slate-200 active:scale-95 uppercase tracking-wider"
+                      className="col-span-1 bg-slate-100 text-slate-600 py-2 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-slate-200 active:scale-95 uppercase tracking-wider"
                     >
                       Net
+                    </button>
+                    <button
+                      onClick={() =>
+                        recordStatAndCheckPoint(
+                          selectedPlayerId,
+                          "Attack",
+                          "Blocked"
+                        )
+                      }
+                      className="col-span-2 bg-gradient-to-b from-amber-500 to-amber-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-white/20 shadow-sm active:scale-95 uppercase tracking-wider"
+                    >
+                      Blocked
                     </button>
                   </div>
                 </div>
 
-                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                  <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
-                    <Shield size={12} className="mr-1 text-slate-500" /> Block
-                  </h4>
+                {(!rallyPhase.includes("receive") && !([0, 4, 5].includes(lineup.indexOf(selectedPlayerId)) || selectedPlayerId === liberoId)) && (
+                  <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                    <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
+                      <Shield size={12} className="mr-1 text-slate-500" /> Block
+                    </h4>
                   <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
                     <button
                       onClick={() =>
@@ -3184,6 +3357,7 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+                )}
                 </>
               )}
               </div>
@@ -3304,7 +3478,7 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-1.5 sm:gap-3">
+                    <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
                       <button
                         onClick={() =>
                           recordOppStatAndCheckPoint(
@@ -3328,6 +3502,18 @@ export default function App() {
                         className="bg-slate-200 text-slate-700 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95 uppercase tracking-widest border border-slate-300"
                       >
                         Attack Net
+                      </button>
+                      <button
+                        onClick={() =>
+                          recordOppStatAndCheckPoint(
+                            selectedOppId,
+                            "Attack",
+                            "Blocked"
+                          )
+                        }
+                        className="bg-gradient-to-b from-amber-500 to-amber-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95 uppercase tracking-widest border border-white/20"
+                      >
+                        Blocked
                       </button>
                     </div>
                   </div>
@@ -3642,7 +3828,7 @@ export default function App() {
             <div className="flex items-center w-full sm:w-auto">
               <div className="bg-white p-1 sm:p-1.5 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:block">
                 <img
-                  src="/unnamed.jpg"
+                  src="/LancerVolleyballLogo.png"
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-full"
@@ -3770,8 +3956,8 @@ export default function App() {
                       <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
                         SWINGS
                         <br />
-                        <span className="opacity-70 font-bold tracking-normal">
-                          (Att-K-Err)
+                        <span className="opacity-70 font-bold tracking-normal text-[8px] sm:text-[9px]">
+                          Tot(F/B) K-E-B
                         </span>
                       </th>
                       <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-green-600">
@@ -3854,13 +4040,18 @@ export default function App() {
                             <span className="font-bold text-slate-600">
                               {p.attCount}
                             </span>{" "}
-                            <span className="text-slate-300 mx-0.5">-</span>{" "}
+                            <span className="text-[9px] text-slate-400 font-medium">({p.attCountFront}/{p.attCountBack})</span>
+                            <br />
                             <span className="text-green-600 font-black text-sm">
                               {p.attKill}
                             </span>{" "}
                             <span className="text-slate-300 mx-0.5">-</span>{" "}
-                            <span className="text-red-500 font-bold">
+                            <span className="text-red-500 font-bold text-xs">
                               {p.attErr}
+                            </span>{" "}
+                            <span className="text-slate-300 mx-0.5">-</span>{" "}
+                            <span className="text-amber-600 font-bold text-xs">
+                              {p.attBlk}
                             </span>
                           </td>
                           <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30">
