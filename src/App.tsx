@@ -1933,7 +1933,7 @@ export default function App() {
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
           <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8 relative flex items-center justify-center h-20 w-20 sm:h-32 sm:w-32 group">
             <img
-              src="/LancerVolleyballLogo.png"
+              src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
               alt="Lancers Logo"
               referrerPolicy="no-referrer"
               className="h-full w-full object-contain rounded-full absolute inset-0 z-10"
@@ -2072,7 +2072,7 @@ export default function App() {
           <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
             <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6 relative flex items-center justify-center h-20 w-20 sm:h-32 sm:w-32 group">
               <img
-                src="/LancerVolleyballLogo.png"
+                src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
                 alt="Lancers Logo"
                 referrerPolicy="no-referrer"
                 className="h-full w-full object-contain rounded-full absolute inset-0 z-10"
@@ -2309,7 +2309,7 @@ export default function App() {
               <div className="bg-white p-1 rounded-full shadow-inner hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14 overflow-hidden relative">
                 <Shield className="text-[#001b5e] h-6 w-6 sm:h-8 sm:w-8 absolute z-0" />
                 <img
-                  src="/LancerVolleyballLogo.png"
+                  src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain mix-blend-multiply absolute inset-0 z-10 bg-white"
@@ -2770,7 +2770,7 @@ export default function App() {
               <div className="bg-white backdrop-blur-md p-0.5 rounded-full border border-white/20 shadow-sm hidden md:flex items-center justify-center h-10 w-10 overflow-hidden relative">
                 <Shield className="text-[#001b5e] h-6 w-6 absolute z-0" />
                 <img
-                  src="/LancerVolleyballLogo.png"
+                  src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10 bg-white"
@@ -2902,7 +2902,7 @@ export default function App() {
           {/* Background Logo */}
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
             <img
-              src="/LancerVolleyballLogo.png"
+              src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
               alt="Lancers Logo bg"
               className="h-[300px] w-[300px] sm:h-[500px] sm:w-[500px] object-contain rounded-full"
             />
@@ -3830,7 +3830,7 @@ export default function App() {
               <div className="bg-white p-1 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14 overflow-hidden relative">
                 <Shield className="text-[#001b5e] h-6 w-6 sm:h-8 sm:w-8 absolute z-0" />
                 <img
-                  src="/LancerVolleyballLogo.png"
+                  src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain mix-blend-multiply absolute inset-0 z-10 bg-white"
