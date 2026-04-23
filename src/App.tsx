@@ -457,20 +457,7 @@ export default function App() {
   // -------------------------------------------------------------
 
   useEffect(() => {
-    let link = document.querySelector("link[rel~='icon']");
-    if (!link) {
-      link = document.createElement("link");
-      link.rel = "icon";
-      document.head.appendChild(link);
-    }
-    link.href = "/LancerVolleyballLogo.png";
-    let appleLink = document.querySelector("link[rel~='apple-touch-icon']");
-    if (!appleLink) {
-      appleLink = document.createElement("link");
-      appleLink.rel = "apple-touch-icon";
-      document.head.appendChild(appleLink);
-    }
-    appleLink.href = "/LancerVolleyballLogo.png";
+    // Favicon logic removed to prevent missing image error
   }, []);
 
   useEffect(() => {
@@ -1537,7 +1524,7 @@ export default function App() {
 
   const { uccStats, opponentStats } = useMemo(() => {
     const uccData = {};
-    const oppData = {};
+    const oppData = {}; // { 'Match Opponent Name': { 'O1': stats... } }
     appData.roster.forEach((p) => {
       uccData[p.id] = {
         name: p.name,
@@ -1564,10 +1551,20 @@ export default function App() {
       };
     });
 
+    const matchesMap = {};
+    appData.matches.forEach(m => {
+      matchesMap[m.id] = m.opponent || "Unknown Team";
+    });
+
     filteredStats.forEach((s) => {
       if (s.isOpponent) {
-        if (!oppData[s.playerId])
-          oppData[s.playerId] = {
+        const teamName = matchesMap[s.matchId] || "Unknown Team";
+        if (!oppData[teamName]) {
+          oppData[teamName] = {};
+        }
+
+        if (!oppData[teamName][s.playerId])
+          oppData[teamName][s.playerId] = {
             attCount: 0,
             attKill: 0,
             srvAce: 0,
@@ -1575,9 +1572,10 @@ export default function App() {
             passSum: 0,
             passCount: 0,
           };
-        const p = oppData[s.playerId];
+        
+        const p = oppData[teamName][s.playerId];
         if (s.category === "Attack") {
-          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back") p.attCount += 1;
+          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back" || s.metric === "Blocked" || s.metric === "Out" || s.metric === "Net") p.attCount += 1;
           if (s.metric === "Kill") p.attKill += 1;
         } else if (s.category === "Serve") {
           if (s.metric === "Ace") p.srvAce += 1;
@@ -1596,7 +1594,7 @@ export default function App() {
           if (s.metric === "Dig") p.digCount += 1;
           if (s.metric === "Error") p.digErr += 1;
         } else if (s.category === "Attack") {
-          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back") {
+          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back" || s.metric === "Blocked" || s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Kill") {
             p.attCount += 1;
             if (s.metric === "Swing Front") p.attCountFront += 1;
             if (s.metric === "Swing Back") p.attCountBack += 1;
@@ -1623,7 +1621,7 @@ export default function App() {
       }
     });
     return { uccStats: uccData, opponentStats: oppData };
-  }, [filteredStats, appData.roster]);
+  }, [filteredStats, appData.roster, appData.matches]);
 
   const exportCSV = () => {
     const currentTeam = myTeams.find(t => t.id === activeTeam);
@@ -1926,26 +1924,15 @@ export default function App() {
     );
   }
 
-  if (view === "team_select") {
+    if (view === "team_select") {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
-          <img
-            src="/LancerVolleyballLogo.png"
-            alt="bg"
-            referrerPolicy="no-referrer"
-            className="h-[800px] w-[800px] object-contain blur-sm rounded-full"
-          />
         </div>
 
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
-          <div className="bg-white p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8">
-            <img
-              src="/LancerVolleyballLogo.png"
-              alt="Lancers Logo"
-              referrerPolicy="no-referrer"
-              className="h-24 w-24 sm:h-32 sm:w-32 object-contain rounded-full"
-            />
+          <div className="bg-white p-6 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.1)] mb-8">
+            <Shield className="text-slate-800 h-24 w-24 sm:h-32 sm:w-32" />
           </div>
           <h1 className="text-4xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center mb-2">
             UCC Lancers
@@ -2056,12 +2043,6 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center">
-          <img
-            src="/LancerVolleyballLogo.png"
-            alt="bg"
-            referrerPolicy="no-referrer"
-            className="h-[500px] w-[500px] sm:h-[800px] sm:w-[800px] object-contain blur-sm rounded-full"
-          />
         </div>
 
         <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-[2rem] sm:rounded-[3rem] shadow-2xl p-6 sm:p-12 max-w-3xl w-full relative z-10 flex flex-col items-center">
@@ -2080,13 +2061,8 @@ export default function App() {
           </button>
 
           <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
-            <div className="bg-white p-3 sm:p-4 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6">
-              <img
-                src="/LancerVolleyballLogo.png"
-                alt="Lancers Logo"
-                referrerPolicy="no-referrer"
-                className="h-20 w-20 sm:h-32 sm:w-32 object-contain rounded-full"
-              />
+            <div className="bg-white p-4 sm:p-6 rounded-full shadow-[0_0_40px_rgba(255,255,255,0.2)] mb-4 sm:mb-6">
+              <Shield className="h-16 w-16 sm:h-24 sm:w-24 text-slate-800" />
             </div>
             <h1 className="text-3xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center">
               UCC Lancers
@@ -2312,13 +2288,8 @@ export default function App() {
         <div className="w-full max-w-4xl bg-white rounded-2xl sm:rounded-[2rem] shadow-xl sm:shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex justify-between items-center shadow-md z-10 relative">
             <div className="flex items-center space-x-3 sm:space-x-4">
-              <div className="bg-white p-1 rounded-full shadow-inner hidden sm:block">
-                <img
-                  src="/LancerVolleyballLogo.png"
-                  alt="Logo"
-                  referrerPolicy="no-referrer"
-                  className="h-8 w-8 sm:h-12 sm:w-12 object-contain rounded-full"
-                />
+              <div className="bg-white p-2 rounded-full shadow-inner hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14">
+                <Shield className="text-[#001b5e] h-6 w-6 sm:h-8 sm:w-8" />
               </div>
               <div>
                 <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase text-white drop-shadow-md">
@@ -2503,7 +2474,9 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3">
-                {[1, 2, 3, 4, 5, 6].map((pos, idx) => (
+                {[4, 3, 2, 5, 6, 1].map((pos) => {
+                  const arrIdx = pos - 1;
+                  return (
                   <div
                     key={pos}
                     className="bg-slate-50 rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden focus-within:ring-2 focus-within:ring-[#0033A0] transition-all flex flex-col"
@@ -2518,10 +2491,10 @@ export default function App() {
                     </div>
                     <select
                       className="p-2 sm:p-3 bg-transparent font-black text-slate-800 outline-none w-full appearance-none cursor-pointer text-center text-sm sm:text-base"
-                      value={lineup[idx] || ""}
+                      value={lineup[arrIdx] || ""}
                       onChange={(e) => {
                         const newLineup = [...lineup];
-                        newLineup[idx] = e.target.value;
+                        newLineup[arrIdx] = e.target.value;
                         setLineup(newLineup);
                       }}
                     >
@@ -2531,7 +2504,7 @@ export default function App() {
                           key={p.id}
                           value={p.id}
                           disabled={
-                            lineup.includes(p.id) && lineup[idx] !== p.id
+                            lineup.includes(p.id) && lineup[arrIdx] !== p.id
                           }
                         >
                           #{p.number} {p.name}
@@ -2539,7 +2512,7 @@ export default function App() {
                       ))}
                     </select>
                   </div>
-                ))}
+                )})}
               </div>
             </div>
 
@@ -2696,7 +2669,9 @@ export default function App() {
                 </p>
               </div>
               <div className="p-4 sm:p-6 grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 bg-slate-50 border-b border-slate-200">
-                {[1, 2, 3, 4, 5, 6].map((pos, idx) => (
+                {[4, 3, 2, 5, 6, 1].map((pos) => {
+                  const arrIdx = pos - 1;
+                  return (
                   <div
                     key={pos}
                     className="flex flex-col bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 focus-within:border-slate-400 transition-colors"
@@ -2711,16 +2686,16 @@ export default function App() {
                     </label>
                     <input
                       placeholder={`Opp ${pos}`}
-                      value={tempOppLineup[idx]}
+                      value={tempOppLineup[arrIdx]}
                       onChange={(e) => {
                         const newArr = [...tempOppLineup];
-                        newArr[idx] = e.target.value;
+                        newArr[arrIdx] = e.target.value;
                         setTempOppLineup(newArr);
                       }}
                       className="w-full bg-transparent border-none focus:ring-0 outline-none text-base sm:text-xl font-black text-slate-700 text-center uppercase p-0"
                     />
                   </div>
-                ))}
+                )})}
               </div>
               <div className="p-4 sm:p-6 bg-white flex flex-col gap-3 sm:gap-4">
                 <div className="flex items-center justify-between bg-slate-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl border border-slate-200">
@@ -2765,13 +2740,8 @@ export default function App() {
           <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 landscape:py-6 flex flex-wrap sm:flex-nowrap landscape:flex-col items-center justify-between gap-1 sm:gap-4 landscape:h-full landscape:justify-around">
             
             <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
-              <div className="bg-white/10 backdrop-blur-md p-1 rounded-full border border-white/20 shadow-sm hidden md:block">
-                <img
-                  src="/LancerVolleyballLogo.png"
-                  alt="Logo"
-                  referrerPolicy="no-referrer"
-                  className="h-8 w-8 object-contain rounded-full bg-white/10 p-0.5"
-                />
+              <div className="bg-white/10 backdrop-blur-md p-1.5 rounded-full border border-white/20 shadow-sm hidden md:flex items-center justify-center h-10 w-10">
+                <Shield className="text-white fill-white/20 h-6 w-6" />
               </div>
 
               <div
@@ -3826,13 +3796,8 @@ export default function App() {
         <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-slate-200 flex-1 flex flex-col overflow-hidden max-w-[1400px] mx-auto w-full">
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center shadow-md gap-4">
             <div className="flex items-center w-full sm:w-auto">
-              <div className="bg-white p-1 sm:p-1.5 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:block">
-                <img
-                  src="/LancerVolleyballLogo.png"
-                  alt="Logo"
-                  referrerPolicy="no-referrer"
-                  className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-full"
-                />
+              <div className="bg-white p-2 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14">
+                <Shield className="text-[#001b5e] h-6 w-6 sm:h-8 sm:w-8" />
               </div>
               <div className="flex-1">
                 <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase drop-shadow-md">
@@ -4145,65 +4110,75 @@ export default function App() {
                         </td>
                       </tr>
                     ) : (
-                      Object.entries(opponentStats).map(([id, p]) => {
-                        const passAvg =
-                          p.passCount > 0
-                            ? (p.passSum / p.passCount).toFixed(2)
-                            : "-";
-                        const killPct =
-                          p.attCount > 0
-                            ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
-                            : "0.0%";
-                        const srvPlusMinus = p.srvAce - p.srvErr;
-                        return (
-                          <tr
-                            key={id}
-                            className="hover:bg-slate-50 text-[10px] sm:text-xs"
-                          >
-                            <td className="p-2 sm:p-3">
-                              <span className="bg-slate-200 text-slate-800 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-black text-xs sm:text-sm">
-                                {id}
-                              </span>
-                            </td>
-                            <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 bg-slate-50 text-slate-700">
-                              {passAvg}{" "}
-                              <span className="text-[9px] sm:text-[10px] text-slate-400 ml-0.5 sm:ml-1">
-                                ({p.passCount})
-                              </span>
-                            </td>
-                            <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 text-slate-600">
-                              {p.attCount}
-                            </td>
-                            <td className="p-2 sm:p-3 font-black text-green-600 text-center border-l border-slate-100 text-sm">
-                              {p.attKill}
-                            </td>
-                            <td className="p-2 sm:p-3 font-black text-green-600 bg-green-50/50 text-center border-l border-slate-100">
-                              {killPct}
-                            </td>
-                            <td className="p-2 sm:p-3 font-black text-blue-600 text-center border-l border-slate-100 bg-slate-50 text-sm">
-                              {p.srvAce}
-                            </td>
-                            <td className="p-2 sm:p-3 font-bold text-red-500 text-center border-l border-slate-100 bg-slate-50 text-sm">
-                              {p.srvErr}
-                            </td>
-                            <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-slate-50 text-sm">
-                              <span
-                                className={
-                                  srvPlusMinus > 0
-                                    ? "text-green-600"
-                                    : srvPlusMinus < 0
-                                    ? "text-red-500"
-                                    : "text-slate-400"
-                                }
-                              >
-                                {srvPlusMinus > 0
-                                  ? `+${srvPlusMinus}`
-                                  : srvPlusMinus}
-                              </span>
+                      Object.entries(opponentStats).map(([teamName, players]) => (
+                        <React.Fragment key={teamName}>
+                          <tr className="bg-slate-200/50">
+                            <td colSpan="8" className="p-2 sm:p-3 font-black text-slate-700 text-xs sm:text-sm uppercase tracking-widest flex items-center">
+                              <Shield size={14} className="mr-2 text-slate-500" />
+                              {teamName}
                             </td>
                           </tr>
-                        );
-                      })
+                          {Object.entries(players).map(([id, p]) => {
+                            const passAvg =
+                              p.passCount > 0
+                                ? (p.passSum / p.passCount).toFixed(2)
+                                : "-";
+                            const killPct =
+                              p.attCount > 0
+                                ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+                                : "0.0%";
+                            const srvPlusMinus = p.srvAce - p.srvErr;
+                            return (
+                              <tr
+                                key={id}
+                                className="hover:bg-slate-50 text-[10px] sm:text-xs"
+                              >
+                                <td className="p-2 sm:p-3">
+                                  <span className="bg-white border border-slate-200 text-slate-600 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-black text-xs sm:text-sm ml-2 shadow-sm">
+                                    {id}
+                                  </span>
+                                </td>
+                                <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 bg-slate-50 text-slate-700">
+                                  {passAvg}{" "}
+                                  <span className="text-[9px] sm:text-[10px] text-slate-400 ml-0.5 sm:ml-1">
+                                    ({p.passCount})
+                                  </span>
+                                </td>
+                                <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 text-slate-600">
+                                  {p.attCount}
+                                </td>
+                                <td className="p-2 sm:p-3 font-black text-green-600 text-center border-l border-slate-100 text-sm">
+                                  {p.attKill}
+                                </td>
+                                <td className="p-2 sm:p-3 font-black text-green-600 bg-green-50/50 text-center border-l border-slate-100">
+                                  {killPct}
+                                </td>
+                                <td className="p-2 sm:p-3 font-black text-blue-600 text-center border-l border-slate-100 bg-slate-50 text-sm">
+                                  {p.srvAce}
+                                </td>
+                                <td className="p-2 sm:p-3 font-bold text-red-500 text-center border-l border-slate-100 bg-slate-50 text-sm">
+                                  {p.srvErr}
+                                </td>
+                                <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-slate-50 text-sm">
+                                  <span
+                                    className={
+                                      srvPlusMinus > 0
+                                        ? "text-green-600"
+                                        : srvPlusMinus < 0
+                                        ? "text-red-500"
+                                        : "text-slate-400"
+                                    }
+                                  >
+                                    {srvPlusMinus > 0
+                                      ? `+${srvPlusMinus}`
+                                      : srvPlusMinus}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
+                      ))
                     )}
                   </tbody>
                 </table>

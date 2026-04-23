@@ -53,21 +53,11 @@ service cloud.firestore {
     }
 
     function isValidMatch(data) {
-      return data.keys().hasAll(['id', 'date', 'type', 'opponent', 'format'])
-        && data.id is string && data.id.size() <= 128
-        && data.date is string && data.date.size() <= 64
-        && data.type is string && data.type.size() <= 64
-        && data.opponent is string && data.opponent.size() <= 128
-        && data.format is string && data.format.size() <= 64;
+      return data.keys().hasAll(['id', 'date', 'type', 'opponent', 'format']);
     }
 
     function isValidSet(data) {
-      return data.keys().hasAll(['id', 'matchId', 'setNum', 'scoreUcc', 'scoreOpp'])
-        && data.id is string && data.id.size() <= 128
-        && data.matchId is string && data.matchId.size() <= 128
-        && data.setNum is number
-        && data.scoreUcc is number
-        && data.scoreOpp is number;
+      return data.keys().hasAll(['id', 'matchId', 'setNum', 'scoreUcc', 'scoreOpp']);
     }
 
     function isValidStat(data) {
