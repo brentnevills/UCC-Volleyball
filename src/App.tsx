@@ -831,9 +831,9 @@ export default function App() {
     const sortedMatches = [...appData.matches].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
-    const liveMatches = sortedMatches.filter(m => m.isLive !== false);
+    const liveMatches = sortedMatches.filter(m => m.isLive === true);
     const latestMatch =
-      liveMatches.length > 0 ? liveMatches[liveMatches.length - 1] : (sortedMatches.length > 0 ? sortedMatches[sortedMatches.length - 1] : null);
+      liveMatches.length > 0 ? liveMatches[liveMatches.length - 1] : null;
     if (!latestMatch) {
       alert("No recent live matches found.");
       return;
@@ -862,7 +862,7 @@ export default function App() {
 
   const handleEndGameLive = async () => {
     if (!activeMatch) return;
-    if (window.confirm("Are you sure you want to end this game and leave? It will be marked as complete.")) {
+    if (window.confirm("Are you sure you want to end this game? It will become inaccessible for new users to join.")) {
       if (isFirebaseAvailable && user && activeTeam) {
         try {
           await setDoc(doc(db, `${publicPath}/${activeTeam}/matches/${activeMatch.id}`), { isLive: false }, { merge: true });
@@ -876,10 +876,6 @@ export default function App() {
         ...prev,
         matches: prev.matches.map(m => m.id === activeMatch.id ? { ...m, isLive: false } : m)
       }));
-
-      setActiveMatch(null);
-      setActiveSetId(null);
-      setView("menu");
     }
   };
 
@@ -2124,7 +2120,7 @@ export default function App() {
                   <Users className="mr-3 text-blue-300" size={20} /> SCRIMMAGE /
                   CUSTOM
                 </button>
-                {appData.matches.filter(m => m.isLive !== false).length > 0 && (
+                {appData.matches.filter(m => m.isLive === true).length > 0 && (
                   <button
                     onClick={joinLiveMatch}
                     className="md:col-span-2 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 border border-green-400 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-xl tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center uppercase shadow-lg"
@@ -3123,12 +3119,25 @@ export default function App() {
             >
               <Activity size={18} />
             </button>
-            <button
-              onClick={handleEndGameLive}
-              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-red-600 to-red-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-red-500 hover:to-red-700 shadow-md border-t border-red-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap"
-            >
-              End Game
-            </button>
+            {appData.matches.find(m => m.id === activeMatch?.id)?.isLive !== false ? (
+              <button
+                onClick={handleEndGameLive}
+                className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-red-600 to-red-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-red-500 hover:to-red-700 shadow-md border-t border-red-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap"
+              >
+                End Game
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setActiveMatch(null);
+                  setActiveSetId(null);
+                  setView("menu");
+                }}
+                className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-slate-600 to-slate-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-slate-500 hover:to-slate-700 shadow-md border-t border-slate-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap"
+              >
+                Exit Match
+              </button>
+            )}
           </div>
         </div>
 
