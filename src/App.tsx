@@ -3082,21 +3082,7 @@ export default function App() {
                 </div>
               )}
 
-              {rallyPhase === "serve" && !servePromptVisible && (
-                <div className="absolute inset-0 flex flex-col justify-center items-center pointer-events-none z-20">
-                  <button
-                    onClick={() => setServePromptVisible(true)}
-                    className="pointer-events-auto bg-gradient-to-b from-green-500 to-green-600 text-white px-10 sm:px-16 py-4 sm:py-6 rounded-full shadow-[0_0_40px_rgba(34,197,94,0.4)] border-2 border-green-300 animate-pulse active:scale-95 transition-all outline-none"
-                  >
-                    <span className="font-black text-2xl sm:text-4xl tracking-widest uppercase block drop-shadow-md">
-                      SERVE
-                    </span>
-                    <span className="text-[10px] sm:text-xs font-bold tracking-widest opacity-80 block mt-1 uppercase text-center">
-                      Tap when served
-                    </span>
-                  </button>
-                </div>
-              )}
+
             </div>
           </div>
         </div>
@@ -3116,6 +3102,15 @@ export default function App() {
               <Undo className="sm:mr-1.5" size={16} />{" "}
               <span className="hidden sm:inline">UNDO</span>
             </button>
+            {rallyPhase === "serve" && !servePromptVisible && (
+              <button
+                onClick={() => setServePromptVisible(true)}
+                className="flex-1 bg-gradient-to-b from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30 transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none"
+              >
+                <span>SERVE</span>
+                <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">TAP WHEN SERVED</span>
+              </button>
+            )}
             <button
               onClick={() => setEndRallyVisible(true)}
               className="flex-1 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-widest uppercase"
