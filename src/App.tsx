@@ -876,6 +876,10 @@ export default function App() {
         ...prev,
         matches: prev.matches.map(m => m.id === activeMatch.id ? { ...m, isLive: false } : m)
       }));
+
+      setActiveMatch(null);
+      setActiveSetId(null);
+      setView("menu");
     }
   };
 
