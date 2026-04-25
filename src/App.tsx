@@ -190,11 +190,11 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
               if (s.metric === "Kill") pTeam.attKill += 1;
               if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net") pTeam.attErr += 1;
             } else if (s.category === "Block") {
-              if (s.metric === "Attempt") pTeam.blkCount += 1;
-              if (s.metric === "Block") pTeam.blkStuff += 1;
-              if (s.metric === "Late") pTeam.blkLate += 1;
-              if (s.metric === "Net Viol") pTeam.blkNet += 1;
-              if (s.metric === "Used") pTeam.blkUsed += 1;
+              if (s.metric === "Attempt") pTeam.blkCount += (s.value || 1);
+              if (s.metric === "Block") pTeam.blkStuff += (s.value || 1);
+              if (s.metric === "Late") pTeam.blkLate += (s.value || 1);
+              if (s.metric === "Net Viol") pTeam.blkNet += (s.value || 1);
+              if (s.metric === "Used") pTeam.blkUsed += (s.value || 1);
             } else if (s.category === "Serve") {
               if (s.metric === "Attempt") pTeam.srvCount += 1;
               if (s.metric === "Ace") pTeam.srvAce += 1;
@@ -429,6 +429,9 @@ export default function App() {
   // Modals & UI
   const [servePromptVisible, setServePromptVisible] = useState(false);
   const [serveErrorPrompt, setServeErrorPrompt] = useState(null);
+  const [blockAssistPrompt, setBlockAssistPrompt] = useState(null);
+  const [aceReceiverPrompt, setAceReceiverPrompt] = useState(null);
+  const [pendingAceData, setPendingAceData] = useState(null);
   const [endRallyVisible, setEndRallyVisible] = useState(false);
   const [subModalVisible, setSubModalVisible] = useState(false);
   const [showOppLineupPrompt, setShowOppLineupPrompt] = useState(false);
@@ -674,6 +677,10 @@ export default function App() {
       );
   };
 
+  const sortedRoster = useMemo(() => {
+    return [...(appData.roster || [])].sort((a, b) => parseInt(a.number || 0) - parseInt(b.number || 0));
+  }, [appData.roster]);
+
   const updateSetState = async (updates) => {
     if (isFirebaseAvailable && user && activeSetId) {
       try {
@@ -686,7 +693,17 @@ export default function App() {
 
   const rotateUCC = () => {
     setLineup((prev) => {
-      const newLineup = [...prev.slice(1), prev[0]];
+      let newLineup = [...prev.slice(1), prev[0]];
+      // If libero rotates to the front row (indices 1, 2, 3 correspond to positions 2, 3, 4)
+      if (liberoId && (newLineup[1] === liberoId || newLineup[2] === liberoId || newLineup[3] === liberoId)) {
+        if (liberoSwappedOutId) {
+          const idx = newLineup.indexOf(liberoId);
+          if (idx !== -1) {
+            newLineup[idx] = liberoSwappedOutId;
+            setLiberoSwappedOutId(null);
+          }
+        }
+      }
       updateSetState({ lineup: newLineup });
       return newLineup;
     });
@@ -767,14 +784,16 @@ export default function App() {
       setLineup(lineup.map((p) => (p === id ? null : p)));
   };
 
-  const saveRosterAsPreset = async () => {
-    if (!rosterPresetName.trim()) {
+  const saveRosterAsPreset = async (suppliedNameTitle) => {
+    const finalName = typeof suppliedNameTitle === 'string' ? suppliedNameTitle : rosterPresetName;
+    if (!finalName || !finalName.trim()) {
       setErrorMsg("Please enter a name for the roster preset.");
+      setTimeout(() => setErrorMsg(""), 3000);
       return;
     }
     const updatedRosters = {
       ...appData.savedRosters,
-      [rosterPresetName]: appData.roster,
+      [finalName]: appData.roster,
     };
     if (isFirebaseAvailable && user) {
       await setDoc(
@@ -785,8 +804,9 @@ export default function App() {
     } else if (!isFirebaseAvailable) {
       writeLocalDb({ ...appData, savedRosters: updatedRosters });
     }
-    setRosterPresetName("");
-    setErrorMsg("");
+    setRosterPresetName(finalName);
+    setErrorMsg(`Roster saved as "${finalName}"`);
+    setTimeout(() => setErrorMsg(""), 3000);
   };
 
   const loadRosterPreset = async (name) => {
@@ -901,8 +921,52 @@ export default function App() {
     }
   };
 
-  const startSetup = (type) => {
+  const startSetup = async (type) => {
     enforceFullscreen();
+    if (type === "Practice") {
+      const matchId = Date.now().toString();
+      const newMatch = {
+        id: matchId,
+        date: new Date().toISOString(),
+        type: "Practice",
+        title: "Open Drill",
+        opponent: "Practice",
+        format: "Open Drill (Grid)",
+        cap: "",
+        isLive: true,
+      };
+
+      const setId = Date.now().toString() + "_set";
+      const newSet = {
+        id: setId,
+        matchId: matchId,
+        setNum: 1,
+        scoreUcc: 0,
+        scoreOpp: 0,
+      };
+
+      if (isFirebaseAvailable && user) {
+        const batch = writeBatch(db);
+        batch.set(doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`), newMatch);
+        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
+        await batch.commit();
+      } else if (!isFirebaseAvailable) {
+        writeLocalDb({
+          ...appData,
+          matches: [...appData.matches, newMatch],
+          sets: [...appData.sets, newSet],
+        });
+      }
+
+      setActiveMatch(newMatch);
+      setActiveSetId(setId);
+      setScore({ ucc: 0, opp: 0 });
+      setSetsWon({ ucc: 0, opp: 0 });
+      setCurrentSetNum(1);
+      setView("open_practice");
+      return;
+    }
+
     setMatchType(type);
     setView("setup");
     if (activeMatch) {
@@ -1252,10 +1316,10 @@ export default function App() {
       if (metric === "Kill") {
         logStat(playerId, "Attack", swingMetric, 1);
         handlePoint("ucc", true);
-      } else if (metric === "Out" || metric === "Net" || metric === "Blocked") {
+      } else if (metric === "Out" || metric === "Net") {
         logStat(playerId, "Attack", swingMetric, 1);
         handlePoint("opp", true);
-      } else if (metric === "Swing") {
+      } else if (metric === "Swing" || metric === "Blocked") {
         logStat(playerId, "Attack", swingMetric, 1);
       }
     }
@@ -1287,10 +1351,10 @@ export default function App() {
       if (metric === "Kill") {
         logStat(oppId, "Attack", swingMetric, 1, true);
         handlePoint("opp", true);
-      } else if (metric === "Out" || metric === "Net" || metric === "Blocked") {
+      } else if (metric === "Out" || metric === "Net") {
         logStat(oppId, "Attack", swingMetric, 1, true);
         handlePoint("ucc", true);
-      } else if (metric === "Swing") {
+      } else if (metric === "Swing" || metric === "Blocked") {
         logStat(oppId, "Attack", swingMetric, 1, true);
       }
     }
@@ -1423,14 +1487,44 @@ export default function App() {
     setServePromptVisible(false);
 
     if (metric === "Ace") {
-      logStat(serverId, "Serve", "Ace", 1, isOpp);
-      handlePoint(team, true);
+      setPendingAceData({ serverId, team, isOpp });
+      setAceReceiverPrompt(team);
     } else if (metric === "Error") setServeErrorPrompt(team);
     else if (metric === "In Play") {
       logStat(serverId, "Serve", "Attempt", 1, isOpp);
       // New: If we serve, prompt for opponent passing (opp_receive) based on setting
       changeRallyPhase(team === "ucc" ? (trackOppReceives ? "opp_receive" : "play") : "receive");
     }
+  };
+
+  const handleAceReceiverChoice = (receiverId) => {
+    const { serverId, team, isOpp } = pendingAceData;
+    
+    // Log the ace for the server
+    logStat(serverId, "Serve", "Ace", 1, isOpp);
+    
+    // Log the 0 pass for the receiver if one was selected
+    if (receiverId) {
+      logStat(receiverId, "Pass", "Rating", 0, !isOpp);
+    }
+    
+    setAceReceiverPrompt(null);
+    setPendingAceData(null);
+    handlePoint(team, true);
+  };
+
+  const handleBlockAssistChoice = (assistPlayerId) => {
+    const { playerId, isOpp } = blockAssistPrompt;
+    
+    // Log the main stuff (1 if solo, 0.5 if assist)
+    recordStatAndCheckPoint(playerId, "Block", "Block", assistPlayerId ? 0.5 : 1);
+    
+    // If an assist was selected, log for them too, but don't check point again (already done)
+    if (assistPlayerId) {
+      logStat(assistPlayerId, "Block", "Block", 0.5, isOpp);
+    }
+    
+    setBlockAssistPrompt(null);
   };
 
   const handleServeErrorChoice = (errorType) => {
@@ -1773,11 +1867,11 @@ export default function App() {
             p.attErr += 1;
           if (s.metric === "Blocked") p.attBlk += 1;
         } else if (s.category === "Block") {
-          if (s.metric === "Attempt") p.blkCount += 1;
-          if (s.metric === "Block") p.blkStuff += 1;
-          if (s.metric === "Late") p.blkLate += 1;
-          if (s.metric === "Net Viol") p.blkNet += 1;
-          if (s.metric === "Used") p.blkUsed += 1;
+          if (s.metric === "Attempt") p.blkCount += (s.value || 1);
+          if (s.metric === "Block") p.blkStuff += (s.value || 1);
+          if (s.metric === "Late") p.blkLate += (s.value || 1);
+          if (s.metric === "Net Viol") p.blkNet += (s.value || 1);
+          if (s.metric === "Used") p.blkUsed += (s.value || 1);
         } else if (s.category === "Serve") {
           if (s.metric === "Attempt") p.srvCount += 1;
           if (s.metric === "Ace") p.srvAce += 1;
@@ -2001,33 +2095,45 @@ export default function App() {
     if (!window.confirm(`⚠️ DELETE GAME: Are you sure you want to delete the match vs ${match.opponent}?\n\nThis will permanently erase all stats and sets for this game. This cannot be undone.`)) return;
 
     try {
-      const teamId = activeTeam;
-      
-      // 1. Delete associated stats (filter locally then request deletes)
-      const statsToDelete = appData.stats.filter(s => s.matchId === matchId);
-      if (statsToDelete.length > 0) {
-        // Break into batches of 500 (Firestore limit)
-        for (let i = 0; i < statsToDelete.length; i += 500) {
-          const batch = writeBatch(db);
-          statsToDelete.slice(i, i + 500).forEach(s => {
-            batch.delete(doc(db, `${publicPath}/${teamId}/stats/${s.id}`));
-          });
-          await batch.commit();
+      if (isFirebaseAvailable && user) {
+        const teamId = activeTeam;
+        
+        // 1. Delete associated stats (filter locally then request deletes)
+        const statsToDelete = appData.stats.filter(s => s.matchId === matchId);
+        if (statsToDelete.length > 0) {
+          // Break into batches of 500 (Firestore limit)
+          for (let i = 0; i < statsToDelete.length; i += 500) {
+            const batch = writeBatch(db);
+            statsToDelete.slice(i, i + 500).forEach(s => {
+              batch.delete(doc(db, `${publicPath}/${teamId}/stats/${s.id}`));
+            });
+            await batch.commit();
+          }
         }
-      }
 
-      // 2. Delete associated sets
-      const setsToDelete = appData.sets.filter(s => s.matchId === matchId);
-      if (setsToDelete.length > 0) {
-        const setBatch = writeBatch(db);
-        setsToDelete.forEach(s => {
-          setBatch.delete(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
+        // 2. Delete associated sets
+        const setsToDelete = appData.sets.filter(s => s.matchId === matchId);
+        if (setsToDelete.length > 0) {
+          const setBatch = writeBatch(db);
+          setsToDelete.forEach(s => {
+            setBatch.delete(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
+          });
+          await setBatch.commit();
+        }
+
+        // 3. Finally delete the match record itself
+        await deleteDoc(doc(db, `${publicPath}/${teamId}/matches/${matchId}`));
+      } else {
+        const newStats = appData.stats.filter(s => s.matchId !== matchId);
+        const newSets = appData.sets.filter(s => s.matchId !== matchId);
+        const newMatches = appData.matches.filter(m => m.id !== matchId);
+        writeLocalDb({
+          ...appData,
+          stats: newStats,
+          sets: newSets,
+          matches: newMatches
         });
-        await setBatch.commit();
       }
-
-      // 3. Finally delete the match record itself
-      await deleteDoc(doc(db, `${publicPath}/${teamId}/matches/${matchId}`));
       
       // If we were in this game, reset view
       if (activeMatch?.id === matchId) {
@@ -2048,21 +2154,30 @@ export default function App() {
     if (!window.confirm(`⚠️ DELETE SET: Are you sure you want to delete Set ${s.setNum}?\n\nAll stats recorded during this set will be permanently erased.`)) return;
     
     try {
-       const teamId = activeTeam;
-       const statsToDelete = appData.stats.filter(stat => stat.setId === setId);
-       if (statsToDelete.length > 0) {
-         const batch = writeBatch(db);
-         statsToDelete.forEach(stat => {
-           batch.delete(doc(db, `${publicPath}/${teamId}/stats/${stat.id}`));
-         });
-         await batch.commit();
-       }
-       
-       await deleteDoc(doc(db, `${publicPath}/${teamId}/sets/${setId}`));
-       alert("Set and associated stats deleted.");
+      if (isFirebaseAvailable && user) {
+        const teamId = activeTeam;
+        const statsToDelete = appData.stats.filter(stat => stat.setId === setId);
+        if (statsToDelete.length > 0) {
+          const batch = writeBatch(db);
+          statsToDelete.forEach(stat => {
+            batch.delete(doc(db, `${publicPath}/${teamId}/stats/${stat.id}`));
+          });
+          await batch.commit();
+        }
+        await deleteDoc(doc(db, `${publicPath}/${teamId}/sets/${setId}`));
+      } else {
+        const newStats = appData.stats.filter(stat => stat.setId !== setId);
+        const newSets = appData.sets.filter(set => set.id !== setId);
+        writeLocalDb({
+          ...appData,
+          stats: newStats,
+          sets: newSets
+        });
+      }
+      alert("Set and associated stats deleted.");
     } catch (e) {
-       console.error("Delete Set Error:", e);
-       alert("Failed to delete set.");
+      console.error("Delete Set Error:", e);
+      alert("Failed to delete set.");
     }
   };
 
@@ -2404,17 +2519,28 @@ export default function App() {
                     className="text-[#0033A0] ml-2 sm:w-5 sm:h-5"
                   />
                   <input
-                    placeholder="Save Roster As..."
+                    placeholder="Preset Name..."
                     value={rosterPresetName}
                     onChange={(e) => setRosterPresetName(e.target.value)}
-                    className="flex-1 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-base"
+                    className="flex-1 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-base min-w-[50px] w-12"
                   />
-                  <button
-                    onClick={saveRosterAsPreset}
-                    className="bg-[#0033A0] text-white px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-sm text-xs sm:text-sm"
-                  >
-                    SAVE
-                  </button>
+                  <div className="flex space-x-1 pr-1">
+                    <button
+                      onClick={() => saveRosterAsPreset()}
+                      className="bg-[#0033A0] text-white px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-sm text-[10px] sm:text-xs tracking-wider"
+                    >
+                      SAVE
+                    </button>
+                    <button
+                      onClick={() => {
+                        const newName = prompt("Save Roster As:");
+                        if (newName) saveRosterAsPreset(newName);
+                      }}
+                      className="bg-slate-200 text-slate-800 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl font-bold hover:bg-slate-300 transition-colors shadow-sm text-[10px] sm:text-xs tracking-wider whitespace-nowrap"
+                    >
+                      SAVE AS
+                    </button>
+                  </div>
                 </div>
 
                 {myTeams.length > 1 && (
@@ -2788,7 +2914,7 @@ export default function App() {
                     onChange={(e) => setLiberoId(e.target.value)}
                   >
                     <option value="">None</option>
-                    {appData.roster.filter(p => showRetired || !p.isRetired).map((p) => (
+                    {sortedRoster.filter(p => showRetired || !p.isRetired).map((p) => (
                       <option key={p.id} value={p.id}>
                         #{p.number} {p.name}
                       </option>
@@ -2823,7 +2949,7 @@ export default function App() {
                       }}
                     >
                       <option value="">Select Player</option>
-                      {appData.roster.filter(p => showRetired || !p.isRetired).map((p) => (
+                      {sortedRoster.filter(p => (showRetired || !p.isRetired) && p.id !== liberoId).map((p) => (
                         <option
                           key={p.id}
                           value={p.id}
@@ -2894,17 +3020,28 @@ export default function App() {
                     className="text-[#0033A0] ml-2 sm:w-5 sm:h-5"
                   />
                   <input
-                    placeholder="Save Roster As..."
+                    placeholder="Preset Name..."
                     value={rosterPresetName}
                     onChange={(e) => setRosterPresetName(e.target.value)}
-                    className="flex-1 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-base"
+                    className="flex-1 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-base min-w-[50px] w-12"
                   />
-                  <button
-                    onClick={saveRosterAsPreset}
-                    className="bg-[#0033A0] text-white px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-sm text-xs sm:text-sm"
-                  >
-                    SAVE
-                  </button>
+                  <div className="flex space-x-1 pr-1">
+                    <button
+                      onClick={() => saveRosterAsPreset()}
+                      className="bg-[#0033A0] text-white px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl font-bold hover:bg-blue-800 transition-colors shadow-sm text-[10px] sm:text-xs tracking-wider"
+                    >
+                      SAVE
+                    </button>
+                    <button
+                      onClick={() => {
+                        const newName = prompt("Save Roster As:");
+                        if (newName) saveRosterAsPreset(newName);
+                      }}
+                      className="bg-slate-200 text-slate-800 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl font-bold hover:bg-slate-300 transition-colors shadow-sm text-[10px] sm:text-xs tracking-wider whitespace-nowrap"
+                    >
+                      SAVE AS
+                    </button>
+                  </div>
                 </div>
 
                 {myTeams.length > 1 && (
@@ -3125,7 +3262,6 @@ export default function App() {
             
             <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
               <div className="bg-white backdrop-blur-md p-0.5 rounded-full border border-white/20 shadow-sm hidden md:flex items-center justify-center h-10 w-10 overflow-hidden relative">
-                <Shield className="text-[#001b5e] h-6 w-6 absolute z-0" />
                 <img
                   src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
                   alt="Logo"
@@ -3459,7 +3595,7 @@ export default function App() {
               <Undo className="sm:mr-1.5" size={16} />{" "}
               <span className="hidden sm:inline">UNDO</span>
             </button>
-            {rallyPhase === "serve" && !servePromptVisible && (
+            {rallyPhase === "serve" && !servePromptVisible ? (
               <button
                 onClick={() => setServePromptVisible(true)}
                 className="flex-1 bg-gradient-to-b from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30 transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none"
@@ -3467,13 +3603,14 @@ export default function App() {
                 <span>SERVE</span>
                 <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">TAP WHEN SERVED</span>
               </button>
+            ) : (
+              <button
+                onClick={() => setEndRallyVisible(true)}
+                className="flex-1 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-widest uppercase"
+              >
+                End Rally
+              </button>
             )}
-            <button
-              onClick={() => setEndRallyVisible(true)}
-              className="flex-1 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-widest uppercase"
-            >
-              End Rally
-            </button>
             <button
               onClick={viewStatsWithCurrentMatch}
               className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase"
@@ -3663,18 +3800,29 @@ export default function App() {
                     <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
                       <Shield size={12} className="mr-1 text-slate-500" /> Block
                     </h4>
-                  <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
+                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
+                    <button
+                      onClick={() => {
+                        setBlockAssistPrompt({ playerId: selectedPlayerId, isOpp: false, step: "type" });
+                        setSelectedPlayerId(null);
+                      }}
+                      className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 flex flex-col items-center justify-center leading-tight"
+                    >
+                      <span className="text-xs sm:text-sm">STUFF</span>
+                      <span className="text-[8px] sm:text-[9px] opacity-75">(Point)</span>
+                    </button>
                     <button
                       onClick={() =>
                         recordStatAndCheckPoint(
                           selectedPlayerId,
                           "Block",
-                          "Block"
+                          "Play On"
                         )
                       }
-                      className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95"
+                      className="bg-gradient-to-b from-teal-500 to-teal-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 flex flex-col items-center justify-center leading-tight"
                     >
-                      STUFF
+                      <span className="text-xs sm:text-sm">BLOCK</span>
+                      <span className="text-[8px] sm:text-[9px] opacity-75">(Play On)</span>
                     </button>
                     <button
                       onClick={() =>
@@ -4057,6 +4205,102 @@ export default function App() {
                 OUT
               </button>
             </div>
+            <button
+              onClick={() => setServeErrorPrompt(null)}
+              className="mt-6 sm:mt-8 text-slate-400 font-bold text-sm sm:text-lg hover:text-white px-6 py-2 sm:py-3 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {blockAssistPrompt && !setWinnerModal && (
+          <div className="absolute inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+            <Shield
+              size={60}
+              className="text-green-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(34,197,94,0.5)] sm:w-20 sm:h-20"
+            />
+            <h2 className="text-2xl sm:text-4xl font-black mb-8 sm:mb-10 text-center tracking-widest uppercase">
+              Who Assisted?
+            </h2>
+            <div className="flex flex-col w-full max-w-sm gap-3 sm:gap-4">
+              <div className="flex gap-2 w-full">
+                <button
+                  onClick={() => handleBlockAssistChoice(null)}
+                  className="flex-1 bg-gradient-to-b from-green-500 to-green-700 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-lg sm:text-xl shadow-xl active:scale-95 border-t border-green-400/30"
+                >
+                  SOLO BLOCK
+                </button>
+              </div>
+              <p className="text-center font-bold text-slate-400 mt-2 mb-1 text-xs sm:text-sm uppercase tracking-widest border-b border-white/10 pb-2">Or select assist:</p>
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                {lineup.filter((id, i) => [1, 2, 3].includes(i) && id !== blockAssistPrompt.playerId).map(id => {
+                  const pInfo = appData.roster.find(p => p.id === id);
+                  if (!pInfo) return null;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => handleBlockAssistChoice(id)}
+                      className="bg-slate-800 hover:bg-slate-700 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base border border-slate-700 shadow-sm flex flex-col items-center active:scale-95"
+                    >
+                      <span className="opacity-60 text-[10px] sm:text-xs">#{pInfo.number}</span>
+                      <span>{pInfo.name.substring(0, 6)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            
+            <button
+              onClick={() => setBlockAssistPrompt(null)}
+              className="mt-6 sm:mt-8 text-slate-400 font-bold text-sm sm:text-lg hover:text-white px-6 py-2 sm:py-3 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {aceReceiverPrompt && !setWinnerModal && (
+          <div className="absolute inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl animate-in fade-in zoom-in-95">
+            <Activity
+              size={60}
+              className="text-amber-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(245,158,11,0.5)] sm:w-20 sm:h-20"
+            />
+            <h2 className="text-2xl sm:text-4xl font-black mb-8 sm:mb-10 text-center tracking-widest uppercase">
+              {aceReceiverPrompt === "opp" ? "Who Got Aced?" : "Who Passed 0?"}
+            </h2>
+            <div className="flex flex-col w-full max-w-sm gap-2 sm:gap-3">
+              {(aceReceiverPrompt === "opp" ? lineup : []).filter((id, i) => [0, 4, 5].includes(i)).map(id => {
+                const pInfo = appData.roster.find(p => p.id === id);
+                if (!pInfo) return null;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => handleAceReceiverChoice(id)}
+                    className="bg-slate-800 hover:bg-slate-700 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-lg shadow-xl active:scale-95 flex justify-center items-center gap-2 border border-slate-600"
+                  >
+                    <span className="opacity-60">#{pInfo.number}</span>
+                    <span>{pInfo.name}</span>
+                  </button>
+                )
+              })}
+              <button
+                onClick={() => handleAceReceiverChoice(null)}
+                className="mt-4 bg-slate-600 hover:bg-slate-500 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base border border-slate-500 shadow-sm active:scale-95"
+              >
+                SKIP / UNKNOWN
+              </button>
+            </div>
+            
+            <button
+              onClick={() => {
+                setAceReceiverPrompt(null);
+                setPendingAceData(null);
+              }}
+              className="mt-6 sm:mt-8 text-slate-400 font-bold text-sm sm:text-lg hover:text-white px-6 py-2 sm:py-3 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         )}
 
@@ -4209,7 +4453,7 @@ export default function App() {
          </div>
 
          <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
-            {appData.roster.filter(p => !p.isRetired).map(p => (
+            {sortedRoster.filter(p => !p.isRetired).map(p => (
                <div key={p.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
                   <div className="flex items-center space-x-3 mb-3">
                      <div className="w-10 h-10 rounded-full bg-blue-50 text-[#0033A0] font-black flex items-center justify-center text-lg">
