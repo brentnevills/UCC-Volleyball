@@ -1,15 +1,15 @@
 {
-  "name": "Live Match Viewer",
-  "short_name": "MatchStats",
+  "name": "Lancer Volleyball",
+  "short_name": "UCC Vball",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
-  "description": "Live Match Stats App",
+  "background_color": "#0033A0",
+  "theme_color": "#0033A0",
+  "description": "UCC Lancers Volleyball Dashboard",
   "icons": [
     {
-      "src": "https://upload.wikimedia.org/wikipedia/en/thumb/4/41/Ursuline_College_Chatham_Lancers_logo.png/220px-Ursuline_College_Chatham_Lancers_logo.png",
-      "sizes": "192x192 512x512",
+      "src": "/lancer-logo.png",
+      "sizes": "192x192 512x512 any",
       "type": "image/png"
     }
   ]
