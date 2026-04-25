@@ -392,6 +392,7 @@ export default function App() {
   const [newPlayerBirthYear, setNewPlayerBirthYear] = useState("");
   const [opponentName, setOpponentName] = useState("");
   const [rosterPresetName, setRosterPresetName] = useState("");
+  const [lineupPresetName, setLineupPresetName] = useState("");
   const [isRosterModalOpen, setIsRosterModalOpen] = useState(false);
 
   // Game State
@@ -441,6 +442,12 @@ export default function App() {
   const [careerPlayerName, setCareerPlayerName] = useState(null);
   const [careerPlayerBirthYear, setCareerPlayerBirthYear] = useState(null);
   const [statFilter, setStatFilter] = useState("all");
+  const [showRetired, setShowRetired] = useState(false);
+  const [compareMode, setCompareMode] = useState("players"); // "players" or "events"
+  const [comparePlayer1, setComparePlayer1] = useState("");
+  const [comparePlayer2, setComparePlayer2] = useState("");
+  const [compareEvent1, setCompareEvent1] = useState("season"); // "season" or eventId or matchId
+  const [compareEvent2, setCompareEvent2] = useState("");
   const [trackOppReceives, setTrackOppReceives] = useState(() => localStorage.getItem("ucc_track_opp_receives") !== "false");
 
   useEffect(() => {
@@ -708,6 +715,7 @@ export default function App() {
         name: newPlayerName,
         number: newPlayerNum,
         birthYear: newPlayerBirthYear,
+        isRetired: false,
       };
       if (isFirebaseAvailable && user) {
         const newRoster = [...appData.roster, newPlayer];
@@ -724,6 +732,20 @@ export default function App() {
       setNewPlayerBirthYear("");
     } else {
         alert("Please fill in Name, Number, and Birth Year (YYYY).");
+    }
+  };
+
+  const updatePlayer = async (id, updates) => {
+    const newRoster = appData.roster.map(p => p.id === id ? { ...p, ...updates } : p);
+    setAppData(prev => ({ ...prev, roster: newRoster }));
+    if (isFirebaseAvailable && user) {
+      await setDoc(
+        doc(db, `${publicPath}/${activeTeam}/settings/core`),
+        { roster: newRoster },
+        { merge: true }
+      );
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({ ...appData, roster: newRoster });
     }
   };
 
@@ -783,6 +805,79 @@ export default function App() {
       setLineup((prev) =>
         prev.map((id) => (currentIds.includes(id) ? id : null))
       );
+    }
+  };
+
+  const importRosterFromTeam = async (sourceTeamId) => {
+    if (!sourceTeamId || sourceTeamId === activeTeam) return;
+    if (!confirm("This will merge the selected team's roster into your current roster. Continue?")) return;
+    
+    let importedRoster = [];
+
+    if (isFirebaseAvailable && user) {
+      try {
+        const docSnap = await getDoc(doc(db, `${publicPath}/${sourceTeamId}/settings/core`));
+        if (docSnap.exists() && docSnap.data().roster) {
+          importedRoster = docSnap.data().roster;
+        }
+      } catch (e) {
+        console.error("Failed to import roster from Firebase:", e);
+      }
+    } else {
+      const sourceDbRaw = localStorage.getItem(`ucc_vball_db_${sourceTeamId}`);
+      if (sourceDbRaw) {
+        const sourceDb = JSON.parse(sourceDbRaw);
+        if (sourceDb.roster) importedRoster = sourceDb.roster;
+      }
+    }
+
+    if (importedRoster.length > 0) {
+      // Merge by ID to prevent duplicates
+      const currentIds = new Set(appData.roster.map(p => p.id));
+      const newPlayers = importedRoster.filter(p => !currentIds.has(p.id));
+      const mergedRoster = [...appData.roster, ...newPlayers];
+      
+      const newAppData = { ...appData, roster: mergedRoster };
+      if (isFirebaseAvailable && user) {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/settings/core`),
+          { roster: mergedRoster },
+          { merge: true }
+        );
+      } else {
+        writeLocalDb(newAppData);
+      }
+      setAppData(newAppData);
+    }
+  };
+
+  const saveLineupAsPreset = async () => {
+    if (!lineupPresetName.trim()) {
+      setErrorMsg("Please enter a name for the lineup preset.");
+      return;
+    }
+    const updatedLineups = {
+      ...appData.savedLineups,
+      [lineupPresetName]: { lineup, liberoId },
+    };
+    if (isFirebaseAvailable && user) {
+      await setDoc(
+        doc(db, `${publicPath}/${activeTeam}/settings/core`),
+        { savedLineups: updatedLineups },
+        { merge: true }
+      );
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({ ...appData, savedLineups: updatedLineups });
+    }
+    setLineupPresetName("");
+    setErrorMsg("");
+  };
+
+  const loadLineupPreset = (name) => {
+    if (name && appData.savedLineups?.[name]) {
+      const preset = appData.savedLineups[name];
+      setLineup(preset.lineup || [null, null, null, null, null, null]);
+      setLiberoId(preset.liberoId || "");
     }
   };
 
@@ -883,8 +978,52 @@ export default function App() {
     }
   };
 
-  const startGame = () => {
+  const startGame = async () => {
     enforceFullscreen();
+    if (matchFormat === "Open Drill (Grid)") {
+      const matchId = Date.now().toString();
+      const newMatch = {
+        id: matchId,
+        date: new Date().toISOString(),
+        type: "Practice",
+        title: "Open Drill",
+        opponent: "Practice",
+        format: matchFormat,
+        cap: "",
+        isLive: true,
+      };
+
+      const setId = Date.now().toString() + "_set";
+      const newSet = {
+        id: setId,
+        matchId: matchId,
+        setNum: 1,
+        scoreUcc: 0,
+        scoreOpp: 0,
+      };
+
+      if (isFirebaseAvailable && user) {
+        const batch = writeBatch(db);
+        batch.set(doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`), newMatch);
+        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
+        await batch.commit();
+      } else if (!isFirebaseAvailable) {
+        writeLocalDb({
+          ...appData,
+          matches: [...appData.matches, newMatch],
+          sets: [...appData.sets, newSet],
+        });
+      }
+
+      setActiveMatch(newMatch);
+      setActiveSetId(setId);
+      setScore({ ucc: 0, opp: 0 });
+      setSetsWon({ ucc: 0, opp: 0 });
+      setCurrentSetNum(1);
+      setView("open_practice");
+      return;
+    }
+
     if (lineup.some((p) => p === null)) {
       setErrorMsg("Assign a player to all 6 starting positions.");
       return;
@@ -1486,10 +1625,17 @@ export default function App() {
   };
 
   const filteredStats = useMemo(() => {
-    if (currentNav.level === "season") return appData.stats;
+    if (currentNav.level === "season") {
+      const nonPracticeMatchIds = appData.matches.filter(m => m.type !== "Practice").map(m => m.id);
+      return appData.stats.filter(s => nonPracticeMatchIds.includes(s.matchId));
+    }
     if (currentNav.level === "event") {
+      if (currentNav.id === "practice_sessions") {
+        const practiceMatchIds = appData.matches.filter(m => m.type === "Practice").map(m => m.id);
+        return appData.stats.filter(s => practiceMatchIds.includes(s.matchId));
+      }
       const matchIds = appData.matches
-        .filter((m) => getEventDetails(m).id === currentNav.id)
+        .filter((m) => getEventDetails(m).id === currentNav.id && m.type !== "Practice")
         .map((m) => m.id);
       return appData.stats.filter((s) => matchIds.includes(s.matchId));
     }
@@ -1503,17 +1649,35 @@ export default function App() {
   const subNavOptions = useMemo(() => {
     if (currentNav.level === "season") {
       const events = {};
-      appData.matches.forEach((m) => {
-        const detail = getEventDetails(m);
-        if (!events[detail.id])
-          events[detail.id] = { ...detail, level: "event" };
-      });
+      appData.matches
+        .filter((m) => m.type !== "Practice")
+        .forEach((m) => {
+          const detail = getEventDetails(m);
+          if (!events[detail.id])
+            events[detail.id] = { ...detail, level: "event" };
+        });
+      
+      const practiceMatches = appData.matches.filter(m => m.type === "Practice");
+      if (practiceMatches.length > 0) {
+        events["practice_sessions"] = {
+          id: "practice_sessions",
+          name: "Practice Sessions",
+          level: "event"
+        };
+      }
+
       return Object.values(events);
     }
-    if (currentNav.level === "event")
+    if (currentNav.level === "event") {
+      if (currentNav.id === "practice_sessions") {
+        return appData.matches
+          .filter((m) => m.type === "Practice")
+          .map((m) => ({ level: "match", id: m.id, name: `${m.date ? new Date(m.date).toLocaleDateString() : "Practice"}` }));
+      }
       return appData.matches
-        .filter((m) => getEventDetails(m).id === currentNav.id)
+        .filter((m) => getEventDetails(m).id === currentNav.id && m.type !== "Practice")
         .map((m) => ({ level: "match", id: m.id, name: `vs ${m.opponent}` }));
+    }
     if (currentNav.level === "match")
       return appData.sets
         .filter((s) => s.matchId === currentNav.id)
@@ -1530,6 +1694,7 @@ export default function App() {
         name: p.name,
         number: p.number,
         birthYear: p.birthYear || null,
+        isRetired: p.isRetired || false,
         passSum: 0,
         passCount: 0,
         attCount: 0,
@@ -1668,7 +1833,7 @@ export default function App() {
     window.URL.revokeObjectURL(url);
   };
 
-  const benchPlayers = appData.roster.filter(p => !lineup.includes(p.id));
+  const benchPlayers = appData.roster.filter(p => !lineup.includes(p.id) && !p.isRetired);
   const selectedPlayerObj = appData.roster.find((r) => r.id === selectedPlayerId);
 
   const handleCreateTeam = async () => {
@@ -1729,6 +1894,22 @@ export default function App() {
         errorMsg = "Forbidden: Your account does not have permission to create teams. This usually happens if your email is not verified or your session has expired.";
       }
       alert(`❌ Failed to create team.\n\nDetails: ${errorMsg}`);
+    }
+  };
+
+  const handleShareCode = async (code, type) => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Join team on UCC Volleyball`,
+          text: `Use this ${type} code to join: ${code}`
+        });
+      } catch (e) {
+        console.log(e);
+      }
+    } else {
+      navigator.clipboard.writeText(code);
+      alert(`${type} code ${code} copied to clipboard!`);
     }
   };
 
@@ -2093,9 +2274,25 @@ export default function App() {
               </h2>
             </div>
             {activeTeam && (
-              <div className="mt-4 text-slate-400 text-xs sm:text-sm bg-white/5 px-4 py-2 rounded-full border border-white/10 flex items-center gap-2">
-                <Users size={14} />
-                <span>Share Code: <strong className="text-white tracking-widest select-all">{activeTeam}</strong></span>
+              <div className="mt-4 flex flex-col gap-2 w-full max-w-sm mx-auto">
+                 <div className="text-slate-400 text-xs sm:text-sm bg-white/5 px-4 py-2 rounded-full border border-white/10 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                       <Users size={14} />
+                       <span>Player Code: <strong className="text-white tracking-widest select-all">{appData.playerCode || activeTeam}</strong></span>
+                    </div>
+                    {(appData.playerCode || activeTeam) && (
+                       <button onClick={() => handleShareCode(appData.playerCode || activeTeam, 'Player')} className="text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-widest text-[10px] ml-2">Share</button>
+                    )}
+                 </div>
+                 {teamInfo.role === 'coach' && appData.coachCode && (
+                 <div className="text-slate-400 text-xs sm:text-sm bg-white/5 px-4 py-2 rounded-full border border-white/10 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                       <Shield size={14} />
+                       <span>Coach Code: <strong className="text-amber-400 tracking-widest select-all">{appData.coachCode}</strong></span>
+                    </div>
+                    <button onClick={() => handleShareCode(appData.coachCode, 'Coach')} className="text-amber-400 hover:text-amber-300 font-bold uppercase tracking-widest text-[10px] ml-2">Share</button>
+                 </div>
+                 )}
               </div>
             )}
           </div>
@@ -2123,6 +2320,12 @@ export default function App() {
                 >
                   <Users className="mr-3 text-blue-300" size={20} /> SCRIMMAGE /
                   CUSTOM
+                </button>
+                <button
+                  onClick={() => startSetup("Practice")}
+                  className="md:col-span-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-bold text-sm sm:text-lg tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center"
+                >
+                  <Activity className="mr-3 text-slate-500" size={20} /> PRACTICE MODE
                 </button>
                 {appData.matches.filter(m => m.isLive === true).length > 0 && (
                   <button
@@ -2190,7 +2393,7 @@ export default function App() {
                     </option>
                     {Object.keys(appData.savedRosters || {}).map((name) => (
                       <option key={name} value={name}>
-                        {name}
+                         {name}
                       </option>
                     ))}
                   </select>
@@ -2214,6 +2417,32 @@ export default function App() {
                   </button>
                 </div>
 
+                {myTeams.length > 1 && (
+                  <div className="flex items-center space-x-2 sm:space-x-3 bg-white p-1 sm:p-2 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                    <Download
+                      size={16}
+                      className="text-slate-400 ml-2 sm:w-5 sm:h-5"
+                    />
+                    <select
+                      onChange={(e) => {
+                        importRosterFromTeam(e.target.value);
+                        e.target.value = "";
+                      }}
+                      className="flex-1 bg-transparent border-none text-slate-700 font-bold focus:ring-0 outline-none text-xs sm:text-base"
+                      defaultValue=""
+                    >
+                      <option value="" disabled>
+                        Import Roster from Team...
+                      </option>
+                      {myTeams.filter(t => t.id !== activeTeam).map((t) => (
+                        <option key={t.id} value={t.id}>
+                           {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-slate-200">
                   <div className="flex gap-2">
                     <input
@@ -2222,6 +2451,8 @@ export default function App() {
                       value={newPlayerNum}
                       onChange={(e) => setNewPlayerNum(e.target.value)}
                       type="number"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                     />
                     <input
                       placeholder="Birth Year (YYYY)"
@@ -2229,6 +2460,8 @@ export default function App() {
                       value={newPlayerBirthYear}
                       onChange={(e) => setNewPlayerBirthYear(e.target.value)}
                       maxLength={4}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                     />
                   </div>
                   <div className="flex flex-1 gap-2">
@@ -2238,6 +2471,8 @@ export default function App() {
                       value={newPlayerBirthYear}
                       onChange={(e) => setNewPlayerBirthYear(e.target.value)}
                       maxLength={4}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                     />
                     <input
                       placeholder="Player Name"
@@ -2255,31 +2490,59 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-slate-100">
-                {appData.roster.map((p) => (
+              <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-slate-100 relative">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    Team Players
+                  </span>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={showRetired} 
+                      onChange={(e) => setShowRetired(e.target.checked)}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
+                    />
+                    Show Retired
+                  </label>
+                </div>
+                {appData.roster.filter(p => showRetired || !p.isRetired).map((p) => (
                   <div
                     key={p.id}
-                    className="flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-sm border border-slate-200"
+                    className={`flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-sm border ${p.isRetired ? 'border-amber-200 opacity-60' : 'border-slate-200'}`}
                   >
-                    <div className="flex items-center space-x-2 sm:space-x-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base">
-                        {p.number}
-                      </div>
-                      <div className="flex flex-col min-w-0">
+                    <div className="flex items-center space-x-2 sm:space-x-3 flex-1">
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={p.number}
+                        onChange={(e) => updatePlayer(p.id, { number: e.target.value })}
+                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base border-none text-center outline-none focus:ring-2 focus:ring-[#0033A0] p-0"
+                      />
+                      <div className="flex flex-col min-w-0 flex-1">
                         <span className="font-bold text-slate-700 text-sm sm:text-base truncate">
-                          {p.name}
+                          {p.name} {p.isRetired && '(Retired)'}
                         </span>
                         {p.birthYear && (
                           <span className="text-[10px] text-slate-400 font-bold tracking-widest">{p.birthYear}</span>
                         )}
                       </div>
                     </div>
-                    <button
-                      onClick={() => removePlayer(p.id)}
-                      className="text-red-400 hover:text-red-600 transition-colors p-2"
-                    >
-                      <XCircle size={18} className="sm:w-5 sm:h-5" />
-                    </button>
+                    <div className="flex items-center space-x-1 shrink-0">
+                      <button
+                        onClick={() => updatePlayer(p.id, { isRetired: !p.isRetired })}
+                        className={`text-[10px] sm:text-xs ml-2 px-2 py-1 rounded font-bold uppercase tracking-widest ${p.isRetired ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}`}
+                      >
+                        {p.isRetired ? 'Unretire' : 'Retire'}
+                      </button>
+                      <button
+                        onClick={() => removePlayer(p.id)}
+                        className="text-red-400 hover:text-red-600 transition-colors p-2"
+                        title="Delete permanently"
+                      >
+                        <XCircle size={18} className="sm:w-5 sm:h-5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2414,22 +2677,25 @@ export default function App() {
                     <option>2 Sets</option>
                     <option>Single Set</option>
                     <option>Custom / Scrimmage</option>
+                    {matchType === 'Practice' && <option>Open Drill (Grid)</option>}
                   </select>
                 </div>
-                <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
-                  <label className="text-[10px] sm:text-[12px] font-black text-slate-700 uppercase tracking-widest ml-2">
-                    Track Opp. Serve Receive
-                  </label>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="sr-only peer"
-                      checked={trackOppReceives}
-                      onChange={(e) => setTrackOppReceives(e.target.checked)}
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0033A0]"></div>
-                  </label>
-                </div>
+                {matchType !== 'Practice' && (
+                  <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
+                    <label className="text-[10px] sm:text-[12px] font-black text-slate-700 uppercase tracking-widest ml-2">
+                      Track Opp. Serve Receive
+                    </label>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={trackOppReceives}
+                        onChange={(e) => setTrackOppReceives(e.target.checked)}
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0033A0]"></div>
+                    </label>
+                  </div>
+                )}
                 <div>
                   <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
                     Score Cap
@@ -2473,10 +2739,41 @@ export default function App() {
             </div>
 
             <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm">
-              <div className="flex justify-between items-center mb-3 sm:mb-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 sm:mb-4 gap-2">
                 <label className="block font-black text-slate-800 uppercase tracking-widest text-sm sm:text-base">
                   UCC Lineup
                 </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center space-x-1 sm:space-x-2 bg-slate-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 shadow-sm">
+                      <select
+                        onChange={(e) => loadLineupPreset(e.target.value)}
+                        className="bg-transparent border-none text-slate-700 font-bold focus:ring-0 outline-none text-xs sm:text-sm pl-1"
+                        defaultValue=""
+                      >
+                        <option value="" disabled>Load Lineup...</option>
+                        {Object.keys(appData.savedLineups || {}).map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                  </div>
+                  <div className="flex items-center space-x-1 sm:space-x-2 bg-slate-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 shadow-sm">
+                    <input
+                      placeholder="Save As..."
+                      value={lineupPresetName}
+                      onChange={(e) => setLineupPresetName(e.target.value)}
+                      className="w-24 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-sm"
+                    />
+                    <button
+                      onClick={saveLineupAsPreset}
+                      className="bg-[#0033A0] text-white px-2 py-1 rounded md:rounded-lg font-bold hover:bg-blue-800 transition-colors text-[10px] sm:text-xs uppercase tracking-widest"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center mb-3 sm:mb-4">
                 <div className="flex items-center space-x-1.5 sm:space-x-2 bg-slate-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200">
                   <Shield
                     size={14}
@@ -2491,7 +2788,7 @@ export default function App() {
                     onChange={(e) => setLiberoId(e.target.value)}
                   >
                     <option value="">None</option>
-                    {appData.roster.map((p) => (
+                    {appData.roster.filter(p => showRetired || !p.isRetired).map((p) => (
                       <option key={p.id} value={p.id}>
                         #{p.number} {p.name}
                       </option>
@@ -2526,7 +2823,7 @@ export default function App() {
                       }}
                     >
                       <option value="">Select Player</option>
-                      {appData.roster.map((p) => (
+                      {appData.roster.filter(p => showRetired || !p.isRetired).map((p) => (
                         <option
                           key={p.id}
                           value={p.id}
@@ -2610,6 +2907,32 @@ export default function App() {
                   </button>
                 </div>
 
+                {myTeams.length > 1 && (
+                  <div className="flex items-center space-x-2 sm:space-x-3 bg-white p-1 sm:p-2 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                    <Download
+                      size={16}
+                      className="text-slate-400 ml-2 sm:w-5 sm:h-5"
+                    />
+                    <select
+                      onChange={(e) => {
+                        importRosterFromTeam(e.target.value);
+                        e.target.value = "";
+                      }}
+                      className="flex-1 bg-transparent border-none text-slate-700 font-bold focus:ring-0 outline-none text-xs sm:text-base"
+                      defaultValue=""
+                    >
+                      <option value="" disabled>
+                        Import Roster from Team...
+                      </option>
+                      {myTeams.filter(t => t.id !== activeTeam).map((t) => (
+                        <option key={t.id} value={t.id}>
+                           {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-slate-200">
                   <div className="flex gap-2">
                     <input
@@ -2618,6 +2941,8 @@ export default function App() {
                       value={newPlayerNum}
                       onChange={(e) => setNewPlayerNum(e.target.value)}
                       type="number"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                     />
                     <input
                       placeholder="Birth Year (YYYY)"
@@ -2625,6 +2950,8 @@ export default function App() {
                       value={newPlayerBirthYear}
                       onChange={(e) => setNewPlayerBirthYear(e.target.value)}
                       maxLength={4}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                     />
                   </div>
                   <div className="flex flex-1 gap-2">
@@ -2634,6 +2961,8 @@ export default function App() {
                       value={newPlayerBirthYear}
                       onChange={(e) => setNewPlayerBirthYear(e.target.value)}
                       maxLength={4}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                     />
                     <input
                       placeholder="Player Name"
@@ -2651,31 +2980,59 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-slate-100">
-                {appData.roster.map((p) => (
+              <div className="flex-1 overflow-y-auto p-2 sm:p-4 space-y-2 bg-slate-100 relative">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    Team Players
+                  </span>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={showRetired} 
+                      onChange={(e) => setShowRetired(e.target.checked)}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
+                    />
+                    Show Retired
+                  </label>
+                </div>
+                {appData.roster.filter(p => showRetired || !p.isRetired).map((p) => (
                   <div
                     key={p.id}
-                    className="flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-sm border border-slate-200"
+                    className={`flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-sm border ${p.isRetired ? 'border-amber-200 opacity-60' : 'border-slate-200'}`}
                   >
-                    <div className="flex items-center space-x-2 sm:space-x-3">
-                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base">
-                        {p.number}
-                      </div>
-                      <div className="flex flex-col min-w-0">
+                    <div className="flex items-center space-x-2 sm:space-x-3 flex-1">
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={p.number}
+                        onChange={(e) => updatePlayer(p.id, { number: e.target.value })}
+                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base border-none text-center outline-none focus:ring-2 focus:ring-[#0033A0] p-0"
+                      />
+                      <div className="flex flex-col min-w-0 flex-1">
                         <span className="font-bold text-slate-700 text-sm sm:text-base truncate">
-                          {p.name}
+                          {p.name} {p.isRetired && '(Retired)'}
                         </span>
                         {p.birthYear && (
                           <span className="text-[10px] text-slate-400 font-bold tracking-widest">{p.birthYear}</span>
                         )}
                       </div>
                     </div>
-                    <button
-                      onClick={() => removePlayer(p.id)}
-                      className="text-red-400 hover:text-red-600 transition-colors p-2"
-                    >
-                      <XCircle size={18} className="sm:w-5 sm:h-5" />
-                    </button>
+                    <div className="flex items-center space-x-1 shrink-0">
+                      <button
+                        onClick={() => updatePlayer(p.id, { isRetired: !p.isRetired })}
+                        className={`text-[10px] sm:text-xs ml-2 px-2 py-1 rounded font-bold uppercase tracking-widest ${p.isRetired ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}`}
+                      >
+                        {p.isRetired ? 'Unretire' : 'Retire'}
+                      </button>
+                      <button
+                        onClick={() => removePlayer(p.id)}
+                        className="text-red-400 hover:text-red-600 transition-colors p-2"
+                        title="Delete permanently"
+                      >
+                        <XCircle size={18} className="sm:w-5 sm:h-5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -3830,9 +4187,259 @@ export default function App() {
     );
   }
 
+  if (view === "open_practice") {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative">
+         <div className="bg-slate-900 text-white p-4 shadow-lg sticky top-0 z-50 flex justify-between items-center">
+            <h1 className="text-xl font-black uppercase tracking-widest flex items-center">
+               <Activity className="mr-2 text-blue-400" size={24} /> Open Practice
+            </h1>
+            <button
+               onClick={() => {
+                  if (confirm("End open practice?")) {
+                     setView("stats");
+                     setActiveMatch(null);
+                     setActiveSetId(null);
+                  }
+               }}
+               className="bg-red-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-red-600 transition-colors"
+            >
+               END
+            </button>
+         </div>
+
+         <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
+            {appData.roster.filter(p => !p.isRetired).map(p => (
+               <div key={p.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                  <div className="flex items-center space-x-3 mb-3">
+                     <div className="w-10 h-10 rounded-full bg-blue-50 text-[#0033A0] font-black flex items-center justify-center text-lg">
+                        {p.number}
+                     </div>
+                     <span className="font-bold text-slate-800 text-lg">{p.name}</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                     <button onClick={() => logStat(p.id, "Pass", "3", 1, false)} className="bg-blue-100 text-blue-800 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Pass +</button>
+                     <button onClick={() => logStat(p.id, "Serve", "Ace", 1, false)} className="bg-emerald-100 text-emerald-800 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Serve Ace</button>
+                     <button onClick={() => logStat(p.id, "Attack", "Kill", 1, false)} className="bg-green-100 text-green-800 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Att Kill</button>
+                     <button onClick={() => logStat(p.id, "Dig", "Dig", 1, false)} className="bg-indigo-100 text-indigo-800 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Dig</button>
+                     
+                     <button onClick={() => logStat(p.id, "Pass", "0", 1, false)} className="bg-blue-50/50 text-blue-600 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Pass Err</button>
+                     <button onClick={() => logStat(p.id, "Serve", "Error", 1, false)} className="bg-red-50 text-red-600 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Serve Err</button>
+                     <button onClick={() => logStat(p.id, "Attack", "Error", 1, false)} className="bg-red-50 text-red-600 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Att Err</button>
+                     <button onClick={() => logStat(p.id, "Dig", "Error", 1, false)} className="bg-red-50 text-red-600 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Dig Err</button>
+                  </div>
+               </div>
+            ))}
+         </div>
+      </div>
+    );
+  }
+
   // -------------------------------------------------------------
   // STATS VIEW (Hierarchical Drill-Down)
   // -------------------------------------------------------------
+  if (view === "compare") {
+    // Collect all contexts
+    const contexts = [{ id: "season", name: "Season Totals (No Practice)" }, { id: "practice_sessions", name: "All Practice Sessions" }];
+    appData.matches.filter(m => m.type !== "Practice").forEach((m) => {
+      const detail = getEventDetails(m);
+      if (!contexts.find(c => c.id === detail.id)) {
+        contexts.push({ id: detail.id, name: detail.name });
+      }
+      contexts.push({ id: m.id, name: `${detail.name} - vs ${m.opponent}` }); // Matches
+    });
+
+    const getStatsForContextAndPlayer = (contextId, playerId) => {
+      let filteredStats = appData.stats;
+      if (contextId === "season") {
+        const nonPracticeMatchIds = appData.matches.filter(m => m.type !== "Practice").map(m => m.id);
+        filteredStats = appData.stats.filter(s => nonPracticeMatchIds.includes(s.matchId));
+      } else if (contextId === "practice_sessions") {
+        const practiceMatchIds = appData.matches.filter(m => m.type === "Practice").map(m => m.id);
+        filteredStats = appData.stats.filter(s => practiceMatchIds.includes(s.matchId));
+      } else if (contextId.startsWith("day_") || contextId.startsWith("tourney_")) {
+        const matchIds = appData.matches.filter((m) => getEventDetails(m).id === contextId).map((m) => m.id);
+        filteredStats = appData.stats.filter(s => matchIds.includes(s.matchId));
+      } else {
+        // match
+        filteredStats = appData.stats.filter((s) => s.matchId === contextId);
+      }
+      const playerStats = filteredStats.filter(s => s.playerId === playerId);
+      let pSum = 0; let pCount = 0; let aCount = 0; let aKill = 0; let aErr = 0; let dCount = 0; let dErr = 0; let sCount = 0; let sAce = 0; let sErr = 0; let bTot = 0;
+      playerStats.forEach(s => {
+        if (s.statType === "Pass") {
+          pCount++; pSum += (parseFloat(s.result) || 0);
+        } else if (s.statType === "Attack") {
+          aCount++;
+          if (s.result === "Kill") aKill++;
+          if (s.result === "Error" || s.result === "Blocked") aErr++;
+        } else if (s.statType === "Dig") {
+          dCount++;
+          if (s.result === "Error") dErr++;
+        } else if (s.statType === "Serve") {
+          sCount++;
+          if (s.result === "Ace") sAce++;
+          if (s.result === "Error") sErr++;
+        } else if (s.statType === "Block" && s.result === "Block") {
+          bTot++;
+        }
+      });
+      return {
+        passAvg: pCount > 0 ? (pSum / pCount).toFixed(2) : "-",
+        passCount: pCount,
+        attPct: aCount > 0 ? (((aKill - aErr) / aCount) * 100).toFixed(0) : "0",
+        aKill, aErr, aCount,
+        dCount, dErr,
+        sAce, sErr, sCount,
+        bTot
+      };
+    };
+
+    const s1 = (compareMode === "players" && comparePlayer1) ? getStatsForContextAndPlayer(compareEvent1, comparePlayer1) : null;
+    const s2 = (compareMode === "players" && comparePlayer2) ? getStatsForContextAndPlayer(compareEvent1, comparePlayer2) : null;
+    const s1e = (compareMode === "events" && comparePlayer1 && compareEvent1) ? getStatsForContextAndPlayer(compareEvent1, comparePlayer1) : null;
+    const s2e = (compareMode === "events" && comparePlayer1 && compareEvent2) ? getStatsForContextAndPlayer(compareEvent2, comparePlayer1) : null;
+
+    return (
+      <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col">
+        <div className="max-w-4xl w-full mx-auto">
+          <div className="bg-slate-900 text-white rounded-t-2xl sm:rounded-t-3xl p-4 sm:p-6 shadow-xl flex justify-between items-center z-10 relative">
+            <h1 className="text-xl sm:text-2xl font-black uppercase tracking-widest flex items-center">
+              <ArrowRightLeft className="mr-2 sm:mr-3 text-indigo-400" size={24} /> Compare Stats
+            </h1>
+            <button onClick={() => setView("stats")} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs">Back</button>
+          </div>
+
+          <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
+             <div className="flex space-x-2 border-b border-slate-200 mb-4 pb-2">
+                <button onClick={() => setCompareMode("players")} className={`px-4 py-2 font-bold text-sm uppercase tracking-widest border-b-4 ${compareMode === "players" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400"}`}>Compare Players</button>
+                <button onClick={() => setCompareMode("events")} className={`px-4 py-2 font-bold text-sm uppercase tracking-widest border-b-4 ${compareMode === "events" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400"}`}>Compare Events</button>
+             </div>
+
+             {compareMode === "players" && (
+                <div className="space-y-4">
+                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col md:flex-row gap-4 items-center">
+                      <div className="w-full">
+                         <label className="text-xs font-bold text-slate-500 uppercase">Context</label>
+                         <select value={compareEvent1} onChange={(e) => setCompareEvent1(e.target.value)} className="w-full mt-1 p-2 border rounded-lg">
+                            {contexts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                         </select>
+                      </div>
+                      <div className="hidden md:block w-px h-12 bg-slate-200 mx-2"></div>
+                      <div className="w-full flex space-x-2">
+                         <div className="w-1/2">
+                           <label className="text-xs font-bold text-slate-500 uppercase">Player A</label>
+                           <select value={comparePlayer1} onChange={(e) => setComparePlayer1(e.target.value)} className="w-full mt-1 p-2 border rounded-lg">
+                              <option value="">Select...</option>
+                              {appData.roster.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                           </select>
+                         </div>
+                         <div className="w-1/2">
+                           <label className="text-xs font-bold text-slate-500 uppercase">Player B</label>
+                           <select value={comparePlayer2} onChange={(e) => setComparePlayer2(e.target.value)} className="w-full mt-1 p-2 border rounded-lg">
+                              <option value="">Select...</option>
+                              {appData.roster.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                           </select>
+                         </div>
+                      </div>
+                   </div>
+
+                   {s1 && s2 && (
+                   <div className="grid grid-cols-3 gap-2 text-center items-center py-4 bg-slate-50 rounded-xl border border-slate-200 overflow-x-auto">
+                      <div className="font-black text-slate-800 border-b pb-2 col-span-3 mb-2 uppercase text-xs tracking-wider">Comparison Stats</div>
+                      <div className="font-black text-indigo-700">{appData.roster.find(p=>p.id===comparePlayer1)?.name}</div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Metric</div>
+                      <div className="font-black text-amber-600">{appData.roster.find(p=>p.id===comparePlayer2)?.name}</div>
+                      
+                      <div className="font-bold">{s1.passAvg} <span className="text-[10px] text-slate-400">({s1.passCount})</span></div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Passing Avg</div>
+                      <div className="font-bold">{s2.passAvg} <span className="text-[10px] text-slate-400">({s2.passCount})</span></div>
+
+                      <div className="font-bold">{s1.aKill} <span className="text-[10px] text-slate-400">({s1.attPct}%)</span></div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Kills (Pct)</div>
+                      <div className="font-bold">{s2.aKill} <span className="text-[10px] text-slate-400">({s2.attPct}%)</span></div>
+
+                      <div className="font-bold">{s1.sAce} / {s1.sErr}</div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Aces / Errors</div>
+                      <div className="font-bold">{s2.sAce} / {s2.sErr}</div>
+
+                      <div className="font-bold">{s1.dCount} <span className="text-[10px] text-slate-400">({s1.dErr} err)</span></div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Digs</div>
+                      <div className="font-bold">{s2.dCount} <span className="text-[10px] text-slate-400">({s2.dErr} err)</span></div>
+
+                      <div className="font-bold">{s1.bTot}</div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Blocks</div>
+                      <div className="font-bold">{s2.bTot}</div>
+                   </div>
+                   )}
+                </div>
+             )}
+
+             {compareMode === "events" && (
+                <div className="space-y-4">
+                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col md:flex-row gap-4 items-center">
+                      <div className="w-full">
+                         <label className="text-xs font-bold text-slate-500 uppercase">Player</label>
+                         <select value={comparePlayer1} onChange={(e) => setComparePlayer1(e.target.value)} className="w-full mt-1 p-2 border rounded-lg">
+                            <option value="">Select...</option>
+                            {appData.roster.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                         </select>
+                      </div>
+                      <div className="hidden md:block w-px h-12 bg-slate-200 mx-2"></div>
+                      <div className="w-full flex space-x-2">
+                         <div className="w-1/2">
+                           <label className="text-xs font-bold text-slate-500 uppercase">Context A</label>
+                           <select value={compareEvent1} onChange={(e) => setCompareEvent1(e.target.value)} className="w-full mt-1 p-2 border rounded-lg">
+                              <option value="">Select...</option>
+                              {contexts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                           </select>
+                         </div>
+                         <div className="w-1/2">
+                           <label className="text-xs font-bold text-slate-500 uppercase">Context B</label>
+                           <select value={compareEvent2} onChange={(e) => setCompareEvent2(e.target.value)} className="w-full mt-1 p-2 border rounded-lg">
+                              <option value="">Select...</option>
+                              {contexts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                           </select>
+                         </div>
+                      </div>
+                   </div>
+
+                   {s1e && s2e && (
+                   <div className="grid grid-cols-3 gap-2 text-center items-center py-4 bg-slate-50 rounded-xl border border-slate-200 overflow-x-auto">
+                      <div className="font-black text-slate-800 border-b pb-2 col-span-3 mb-2 uppercase text-xs tracking-wider">Comparison Stats</div>
+                      <div className="font-black text-indigo-700 truncate px-2 text-xs">{contexts.find(c=>c.id===compareEvent1)?.name}</div>
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Metric</div>
+                      <div className="font-black text-amber-600 truncate px-2 text-xs">{contexts.find(c=>c.id===compareEvent2)?.name}</div>
+                      
+                      <div className="font-bold">{s1e.passAvg} <span className="text-[10px] text-slate-400">({s1e.passCount})</span></div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Passing Avg</div>
+                      <div className="font-bold">{s2e.passAvg} <span className="text-[10px] text-slate-400">({s2e.passCount})</span></div>
+
+                      <div className="font-bold">{s1e.aKill} <span className="text-[10px] text-slate-400">({s1e.attPct}%)</span></div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Kills (Pct)</div>
+                      <div className="font-bold">{s2e.aKill} <span className="text-[10px] text-slate-400">({s2e.attPct}%)</span></div>
+
+                      <div className="font-bold">{s1e.sAce} / {s1e.sErr}</div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Aces / Errors</div>
+                      <div className="font-bold">{s2e.sAce} / {s2e.sErr}</div>
+
+                      <div className="font-bold">{s1e.dCount} <span className="text-[10px] text-slate-400">({s1e.dErr} err)</span></div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Digs</div>
+                      <div className="font-bold">{s2e.dCount} <span className="text-[10px] text-slate-400">({s2e.dErr} err)</span></div>
+
+                      <div className="font-bold">{s1e.bTot}</div>
+                      <div className="text-xs uppercase text-slate-500 font-bold">Blocks</div>
+                      <div className="font-bold">{s2e.bTot}</div>
+                   </div>
+                   )}
+                </div>
+             )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (view === "stats") {
     const teamInfo = myTeams.find((t) => t.id === activeTeam) || { name: "Team Data", color: "from-slate-600 to-slate-800", role: "none" };
     return (
@@ -3859,6 +4466,12 @@ export default function App() {
               </div>
             </div>
             <div className="flex space-x-2 w-full sm:w-auto">
+              <button
+                onClick={() => setView("compare")}
+                className="flex-1 sm:flex-none bg-indigo-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+              >
+                <ArrowRightLeft className="mr-1 sm:mr-1.5" size={14} /> Compare
+              </button>
               <button
                 onClick={exportCSV}
                 className="flex-1 sm:flex-none bg-green-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
@@ -3940,12 +4553,40 @@ export default function App() {
           )}
 
           <div className="p-3 sm:p-8 flex-1 overflow-y-auto bg-slate-50/50">
-            <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
-              <Shield className="mr-2 text-[#0033A0]" size={18} /> Lancers{" "}
-              <span className="text-slate-400 text-sm ml-2 hidden sm:inline">
-                ({currentNav.name})
-              </span>
-            </h2>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 sm:mb-4 gap-3">
+              <h2 className="text-lg sm:text-xl font-black text-slate-800 tracking-widest uppercase flex items-center">
+                <Shield className="mr-2 text-[#0033A0]" size={18} /> Lancers{" "}
+                <span className="text-slate-400 text-sm ml-2 hidden sm:inline">
+                  ({currentNav.name})
+                </span>
+              </h2>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                <label className="text-[10px] sm:text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={showRetired} 
+                    onChange={(e) => setShowRetired(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
+                  />
+                  Include Retired
+                </label>
+                <div className="bg-white px-3 py-1.5 rounded-lg border border-slate-200 flex items-center shadow-sm w-full sm:w-64">
+                  <span className="text-slate-400 font-bold mr-2 text-xs">Search</span>
+                  <input
+                    type="text"
+                    placeholder="Player Name / #"
+                    value={statFilter === "all" ? "" : statFilter}
+                    onChange={(e) => setStatFilter(e.target.value)}
+                    className="flex-1 bg-transparent border-none outline-none text-xs sm:text-sm font-bold text-slate-700 w-full"
+                  />
+                  {statFilter !== "all" && statFilter !== "" && (
+                    <button onClick={() => setStatFilter("all")} className="text-slate-400 hover:text-slate-600 ml-2">
+                       <XCircle size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
             <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
               {/* Scroll indicator for mobile */}
               <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
@@ -4001,7 +4642,14 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {Object.values(uccStats).map((p) => {
+                    {Object.values(uccStats).filter(p => {
+                      if (!showRetired && p.isRetired) return false;
+                      if (statFilter !== "all" && statFilter !== "") {
+                        const searchLower = statFilter.toLowerCase();
+                        return p.name.toLowerCase().includes(searchLower) || p.number.toString().includes(searchLower);
+                      }
+                      return true;
+                    }).map((p) => {
                       const passAvg =
                         p.passCount > 0
                           ? (p.passSum / p.passCount).toFixed(2)
