@@ -188,7 +188,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
             } else if (s.category === "Attack") {
               if (s.metric === "Swing") pTeam.attCount += 1;
               if (s.metric === "Kill") pTeam.attKill += 1;
-              if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net") pTeam.attErr += 1;
+              if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Stuffed") pTeam.attErr += 1;
             } else if (s.category === "Block") {
               if (s.metric === "Attempt") pTeam.blkCount += (s.value || 1);
               if (s.metric === "Block") pTeam.blkStuff += (s.value || 1);
@@ -1315,17 +1315,25 @@ export default function App() {
       const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
       if (metric === "Kill") {
         logStat(playerId, "Attack", swingMetric, 1);
-        handlePoint("ucc", true);
-      } else if (metric === "Out" || metric === "Net") {
+        if (rallyPhase !== "serve") handlePoint("ucc", true);
+      } else if (metric === "Out" || metric === "Net" || metric === "Stuffed") {
         logStat(playerId, "Attack", swingMetric, 1);
-        handlePoint("opp", true);
+        logStat(playerId, "Attack", metric, 1); // Also log the specific error
+        if (rallyPhase !== "serve") handlePoint("opp", true);
       } else if (metric === "Swing" || metric === "Blocked") {
         logStat(playerId, "Attack", swingMetric, 1);
+        if (metric === "Blocked") {
+           logStat(playerId, "Attack", "Blocked", 1);
+        }
       }
     }
     if (category === "Block") {
-      if (metric === "Block") handlePoint("ucc", true);
-      else if (metric === "Net Viol") handlePoint("opp", true);
+      if (metric === "Block" || metric === "Stuffed") {
+         if (rallyPhase !== "serve") handlePoint("ucc", true);
+      }
+      else if (metric === "Net Viol") {
+         if (rallyPhase !== "serve") handlePoint("opp", true);
+      }
     }
     
     // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
@@ -1350,12 +1358,25 @@ export default function App() {
       const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
       if (metric === "Kill") {
         logStat(oppId, "Attack", swingMetric, 1, true);
-        handlePoint("opp", true);
-      } else if (metric === "Out" || metric === "Net") {
+        if (rallyPhase !== "serve") handlePoint("opp", true);
+      } else if (metric === "Out" || metric === "Net" || metric === "Stuffed") {
         logStat(oppId, "Attack", swingMetric, 1, true);
-        handlePoint("ucc", true);
+        logStat(oppId, "Attack", metric, 1, true);
+        if (rallyPhase !== "serve") handlePoint("ucc", true);
       } else if (metric === "Swing" || metric === "Blocked") {
         logStat(oppId, "Attack", swingMetric, 1, true);
+        if (metric === "Blocked") {
+           logStat(oppId, "Attack", "Blocked", 1, true);
+        }
+      }
+    }
+
+    if (category === "Block") {
+      if (metric === "Block" || metric === "Stuffed") {
+         if (rallyPhase !== "serve") handlePoint("opp", true);
+      }
+      else if (metric === "Net Viol") {
+         if (rallyPhase !== "serve") handlePoint("ucc", true);
       }
     }
     
@@ -1834,7 +1855,7 @@ export default function App() {
         
         const p = oppData[teamName][s.playerId];
         if (s.category === "Attack") {
-          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back" || s.metric === "Blocked" || s.metric === "Out" || s.metric === "Net") p.attCount += 1;
+          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back" || s.metric === "Blocked" || s.metric === "Stuffed" || s.metric === "Out" || s.metric === "Net") p.attCount += 1;
           if (s.metric === "Kill") p.attKill += 1;
         } else if (s.category === "Serve") {
           if (s.metric === "Ace") p.srvAce += 1;
@@ -1853,7 +1874,7 @@ export default function App() {
           if (s.metric === "Dig") p.digCount += 1;
           if (s.metric === "Error") p.digErr += 1;
         } else if (s.category === "Attack") {
-          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back" || s.metric === "Blocked" || s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Kill") {
+          if (s.metric === "Swing" || s.metric === "Swing Front" || s.metric === "Swing Back" || s.metric === "Blocked" || s.metric === "Stuffed" || s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Kill") {
             p.attCount += 1;
             if (s.metric === "Swing Front") p.attCountFront += 1;
             if (s.metric === "Swing Back") p.attCountBack += 1;
@@ -1862,10 +1883,11 @@ export default function App() {
           if (
             s.metric === "Out" ||
             s.metric === "Net" ||
-            s.metric === "Out/Net"
+            s.metric === "Out/Net" ||
+            s.metric === "Stuffed"
           )
             p.attErr += 1;
-          if (s.metric === "Blocked") p.attBlk += 1;
+          if (s.metric === "Blocked" || s.metric === "Stuffed") p.attBlk += 1;
         } else if (s.category === "Block") {
           if (s.metric === "Attempt") p.blkCount += (s.value || 1);
           if (s.metric === "Block") p.blkStuff += (s.value || 1);
@@ -2085,6 +2107,74 @@ export default function App() {
     } catch (e) {
       console.error("Delete Team Profile Error:", e);
       alert("Failed to remove team from your profile.");
+    }
+  };
+
+  const handleDeleteEvent = async (eventId, isPracticeSessions = false) => {
+    try {
+      let matchesToDelete = [];
+      if (isPracticeSessions) {
+        matchesToDelete = appData.matches.filter(m => m.type === "Practice");
+      } else {
+        matchesToDelete = appData.matches.filter(m => getEventDetails(m).id === eventId && m.type !== "Practice");
+      }
+      
+      const matchIds = matchesToDelete.map(m => m.id);
+      if (matchIds.length === 0) return;
+
+      if (isFirebaseAvailable && user) {
+        const teamId = activeTeam;
+        
+        // 1. Delete associated stats
+        const statsToDelete = appData.stats.filter(s => matchIds.includes(s.matchId));
+        if (statsToDelete.length > 0) {
+          for (let i = 0; i < statsToDelete.length; i += 500) {
+            const batch = writeBatch(db);
+            statsToDelete.slice(i, i + 500).forEach(s => {
+              batch.delete(doc(db, `${publicPath}/${teamId}/stats/${s.id}`));
+            });
+            await batch.commit();
+          }
+        }
+
+        // 2. Delete associated sets
+        const setsToDelete = appData.sets.filter(s => matchIds.includes(s.matchId));
+        if (setsToDelete.length > 0) {
+          const setBatch = writeBatch(db);
+          setsToDelete.forEach(s => {
+            setBatch.delete(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
+          });
+          await setBatch.commit();
+        }
+
+        // 3. Delete match records
+        const matchBatch = writeBatch(db);
+        matchIds.forEach(id => {
+          matchBatch.delete(doc(db, `${publicPath}/${teamId}/matches/${id}`));
+        });
+        await matchBatch.commit();
+
+      } else {
+        const newStats = appData.stats.filter(s => !matchIds.includes(s.matchId));
+        const newSets = appData.sets.filter(s => !matchIds.includes(s.matchId));
+        const newMatches = appData.matches.filter(m => !matchIds.includes(m.id));
+        writeLocalDb({
+          ...appData,
+          stats: newStats,
+          sets: newSets,
+          matches: newMatches
+        });
+      }
+      
+      if (matchIds.includes(activeMatch?.id)) {
+        setActiveMatch(null);
+        setView("menu");
+      }
+      
+      alert("Day/Event and all associated games and stats deleted successfully.");
+    } catch (e) {
+      console.error("Delete Event Error:", e);
+      alert("Failed to delete event completely. " + e.message);
     }
   };
 
@@ -2696,7 +2786,6 @@ export default function App() {
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex justify-between items-center shadow-md z-10 relative">
             <div className="flex items-center space-x-3 sm:space-x-4">
               <div className="bg-white p-1 rounded-full shadow-inner hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14 overflow-hidden relative">
-                <Shield className="text-[#001b5e] h-6 w-6 sm:h-8 sm:w-8 absolute z-0" />
                 <img
                   src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
                   alt="Logo"
@@ -3781,16 +3870,22 @@ export default function App() {
                       Net
                     </button>
                     <button
-                      onClick={() =>
-                        recordStatAndCheckPoint(
-                          selectedPlayerId,
-                          "Attack",
-                          "Blocked"
-                        )
-                      }
-                      className="col-span-2 bg-gradient-to-b from-amber-500 to-amber-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-white/20 shadow-sm active:scale-95 uppercase tracking-wider"
+                      onClick={() => {
+                        recordStatAndCheckPoint(selectedPlayerId, "Attack", "Blocked");
+                      }}
+                      className="bg-gradient-to-b from-amber-500 to-amber-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-white/20 shadow-sm active:scale-95 uppercase tracking-wider flex flex-col items-center justify-center leading-tight"
                     >
-                      Blocked
+                      <span className="text-xs sm:text-sm">BLOCKED</span>
+                      <span className="text-[8px] sm:text-[9px] opacity-75">(Play On)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        recordStatAndCheckPoint(selectedPlayerId, "Attack", "Stuffed");
+                      }}
+                      className="bg-gradient-to-b from-red-500 to-red-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-white/20 shadow-sm active:scale-95 uppercase tracking-wider flex flex-col items-center justify-center leading-tight"
+                    >
+                      <span className="text-xs sm:text-sm">STUFFED</span>
+                      <span className="text-[8px] sm:text-[9px] opacity-75">(Point)</span>
                     </button>
                   </div>
                 </div>
@@ -4030,9 +4125,23 @@ export default function App() {
                             "Blocked"
                           )
                         }
-                        className="bg-gradient-to-b from-amber-500 to-amber-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95 uppercase tracking-widest border border-white/20"
+                        className="bg-gradient-to-b from-amber-500 to-amber-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 uppercase tracking-widest border border-white/20 flex flex-col items-center justify-center leading-tight"
                       >
-                        Blocked
+                        <span className="text-xs sm:text-sm">BLOCKED</span>
+                        <span className="text-[8px] sm:text-[9px] opacity-75">(Play On)</span>
+                      </button>
+                      <button
+                        onClick={() =>
+                          recordOppStatAndCheckPoint(
+                            selectedOppId,
+                            "Attack",
+                            "Stuffed"
+                          )
+                        }
+                        className="bg-gradient-to-b from-red-500 to-red-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 uppercase tracking-widest border border-white/20 flex flex-col items-center justify-center leading-tight"
+                      >
+                        <span className="text-xs sm:text-sm">STUFFED</span>
+                        <span className="text-[8px] sm:text-[9px] opacity-75">(Point)</span>
                       </button>
                     </div>
                   </div>
@@ -4432,48 +4541,108 @@ export default function App() {
   }
 
   if (view === "open_practice") {
+    const handlePracticeStat = (pId, category, metric, value = 1) => {
+      pushToHistory();
+      logStat(pId, category, metric, value, false);
+    };
+
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative">
          <div className="bg-slate-900 text-white p-4 shadow-lg sticky top-0 z-50 flex justify-between items-center">
             <h1 className="text-xl font-black uppercase tracking-widest flex items-center">
                <Activity className="mr-2 text-blue-400" size={24} /> Open Practice
             </h1>
-            <button
-               onClick={() => {
-                  if (confirm("End open practice?")) {
-                     setView("stats");
-                     setActiveMatch(null);
-                     setActiveSetId(null);
-                  }
-               }}
-               className="bg-red-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-red-600 transition-colors"
-            >
-               END
-            </button>
+            <div className="flex gap-2">
+               <button
+                  onClick={handleUndo}
+                  className="bg-slate-700 text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-600 transition-colors flex items-center"
+               >
+                  <Undo size={18} className="mr-1 hidden sm:block" /> UNDO
+               </button>
+               <button
+                  onClick={() => {
+                     if (confirm("End open practice?")) {
+                        setView("stats");
+                        setActiveMatch(null);
+                        setActiveSetId(null);
+                     }
+                  }}
+                  className="bg-red-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-red-600 transition-colors"
+               >
+                  END
+               </button>
+            </div>
          </div>
 
          <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
-            {sortedRoster.filter(p => !p.isRetired).map(p => (
+            {sortedRoster.filter(p => !p.isRetired).map(p => {
+               // Compute quick stats for this player in this practice session
+               let pCount = 0, pSum = 0, pErr = 0;
+               let aCount = 0, aKill = 0, aErr = 0;
+               let sCount = 0, sAce = 0, sErr = 0;
+               let dCount = 0, dErr = 0;
+               let blkCount = 0;
+
+               appData.stats.forEach(s => {
+                  if (s.setId === activeSetId && s.playerId === p.id) {
+                     if (s.category === "Pass") {
+                        pCount++;
+                        pSum += s.value;
+                        if (s.value === 0) pErr++;
+                     } else if (s.category === "Attack") {
+                        aCount++;
+                        if (s.metric === "Kill") aKill++;
+                        else if (["Out", "Net", "Out/Net", "Stuffed"].includes(s.metric)) aErr++;
+                     } else if (s.category === "Serve") {
+                        sCount++;
+                        if (s.metric === "Ace") sAce++;
+                        else if (s.metric?.includes("Miss") || s.metric === "Error") sErr++;
+                     } else if (s.category === "Dig") {
+                        dCount++;
+                        if (s.metric === "Error") dErr++;
+                     } else if (s.category === "Block" && s.metric === "Block") {
+                        blkCount++;
+                     }
+                  }
+               });
+
+               const passAvg = pCount > 0 ? (pSum / pCount).toFixed(2) : "-";
+               const hitRate = aCount > 0 ? ((aKill - aErr) / aCount).toFixed(3) : "-";
+
+               return (
                <div key={p.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-                  <div className="flex items-center space-x-3 mb-3">
-                     <div className="w-10 h-10 rounded-full bg-blue-50 text-[#0033A0] font-black flex items-center justify-center text-lg">
-                        {p.number}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
+                     <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 rounded-full bg-blue-50 text-[#0033A0] font-black flex items-center justify-center text-lg shrink-0">
+                           {p.number}
+                        </div>
+                        <span className="font-bold text-slate-800 text-lg leading-tight">{p.name}</span>
                      </div>
-                     <span className="font-bold text-slate-800 text-lg">{p.name}</span>
+                     <div className="flex bg-slate-50 p-2 rounded-lg text-xs font-mono text-slate-600 gap-3 border border-slate-100 overflow-x-auto whitespace-nowrap scrollbar-hide shrink-0">
+                        <div><span className="font-bold text-slate-400">P:</span> {passAvg} ({pCount})</div>
+                        <div><span className="font-bold text-slate-400">A:</span> {hitRate} ({aKill}K/{aErr}E)</div>
+                        <div><span className="font-bold text-slate-400">S:</span> {sAce}A/{sErr}E</div>
+                        <div><span className="font-bold text-slate-400">D:</span> {dCount} ({dErr}E)</div>
+                        <div><span className="font-bold text-slate-400">B:</span> {blkCount}</div>
+                     </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                     <button onClick={() => logStat(p.id, "Pass", "3", 1, false)} className="bg-blue-100 text-blue-800 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Pass +</button>
-                     <button onClick={() => logStat(p.id, "Serve", "Ace", 1, false)} className="bg-emerald-100 text-emerald-800 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Serve Ace</button>
-                     <button onClick={() => logStat(p.id, "Attack", "Kill", 1, false)} className="bg-green-100 text-green-800 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Att Kill</button>
-                     <button onClick={() => logStat(p.id, "Dig", "Dig", 1, false)} className="bg-indigo-100 text-indigo-800 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Dig</button>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                     <button onClick={() => handlePracticeStat(p.id, "Pass", "Rating", 3)} className="bg-blue-100 text-blue-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Pass +</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Serve", "Ace", 1)} className="bg-emerald-100 text-emerald-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Srv Ace</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Attack", "Kill", 1)} className="bg-green-100 text-green-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Att Kill</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Dig", "Dig", 1)} className="bg-indigo-100 text-indigo-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Dig</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Block", "Block", 1)} className="bg-teal-100 text-teal-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Block</button>
                      
-                     <button onClick={() => logStat(p.id, "Pass", "0", 1, false)} className="bg-blue-50/50 text-blue-600 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Pass Err</button>
-                     <button onClick={() => logStat(p.id, "Serve", "Error", 1, false)} className="bg-red-50 text-red-600 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Serve Err</button>
-                     <button onClick={() => logStat(p.id, "Attack", "Error", 1, false)} className="bg-red-50 text-red-600 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Att Err</button>
-                     <button onClick={() => logStat(p.id, "Dig", "Error", 1, false)} className="bg-red-50 text-red-600 font-bold py-2 rounded-lg text-sm active:scale-95 transition-all outline-none">Dig Err</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Pass", "Rating", 0)} className="bg-blue-50/50 text-blue-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-blue-100 text-opacity-80">Pass Err</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Serve", "Miss - Net", 1)} className="bg-red-50 text-red-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-red-100 text-opacity-80">Srv Err</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Attack", "Out", 1)} className="bg-red-50 text-red-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-red-100 text-opacity-80">Att Err</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Dig", "Error", 1)} className="bg-red-50 text-red-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-red-100 text-opacity-80">Dig Err</button>
+                     <button onClick={() => handlePracticeStat(p.id, "Block", "Attempt", 1)} className="bg-slate-100 text-slate-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-slate-200">Blk Tch</button>
+
                   </div>
                </div>
-            ))}
+               );
+            })}
          </div>
       </div>
     );
@@ -4692,7 +4861,6 @@ export default function App() {
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center shadow-md gap-4">
             <div className="flex items-center w-full sm:w-auto">
               <div className="bg-white p-1 rounded-full shadow-inner mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-14 sm:w-14 overflow-hidden relative">
-                <Shield className="text-[#001b5e] h-6 w-6 sm:h-8 sm:w-8 absolute z-0" />
                 <img
                   src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
                   alt="Logo"
@@ -4783,6 +4951,18 @@ export default function App() {
                           e.stopPropagation();
                           if (opt.level === "match") handleDeleteMatch(opt.id);
                           if (opt.level === "set") handleDeleteSet(opt.id);
+                          if (opt.level === "event") {
+                            // Find all matches for this event and delete them
+                            if (window.confirm(`⚠️ DELETE DAY: Are you sure you want to delete this entire day/event "${opt.name}"? This will permanently erase all games and stats within it.`)) {
+                               const matchesToDelete = appData.matches.filter(m => getEventDetails(m).id === opt.id && m.type !== "Practice");
+                               if (opt.id === "practice_sessions") {
+                                  matchesToDelete.push(...appData.matches.filter(m => m.type === "Practice"));
+                               }
+                               // Re-use handleDeleteMatch for each inside an async loop? It has UI prompts...
+                               // We need a silent bulk delete, or we just extract the bulk delete logic
+                               handleDeleteEvent(opt.id, opt.id === "practice_sessions");
+                            }
+                          }
                         }}
                         className="px-2 py-2 text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors border-l border-slate-200"
                         title="Delete"
