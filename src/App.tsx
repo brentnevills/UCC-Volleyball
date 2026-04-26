@@ -873,24 +873,29 @@ export default function App() {
 
   const saveLineupAsPreset = async () => {
     if (!lineupPresetName.trim()) {
-      setErrorMsg("Please enter a name for the lineup preset.");
+      alert("Please enter a name for the lineup preset.");
       return;
     }
     const updatedLineups = {
       ...appData.savedLineups,
       [lineupPresetName]: { lineup, liberoId },
     };
-    if (isFirebaseAvailable && user) {
-      await setDoc(
-        doc(db, `${publicPath}/${activeTeam}/settings/core`),
-        { savedLineups: updatedLineups },
-        { merge: true }
-      );
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({ ...appData, savedLineups: updatedLineups });
+    try {
+      if (isFirebaseAvailable && user) {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/settings/core`),
+          { savedLineups: updatedLineups },
+          { merge: true }
+        );
+      } else if (!isFirebaseAvailable) {
+        writeLocalDb({ ...appData, savedLineups: updatedLineups });
+      }
+      setLineupPresetName("");
+      alert(`Lineup saved as "${lineupPresetName}"`);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save lineup");
     }
-    setLineupPresetName("");
-    setErrorMsg("");
   };
 
   const loadLineupPreset = (name) => {
@@ -1092,8 +1097,8 @@ export default function App() {
       setErrorMsg("Assign a player to all 6 starting positions.");
       return;
     }
-    if (!opponentName.trim()) {
-      setErrorMsg("Enter an opponent name.");
+    if (!opponentName.trim() || opponentName.trim().toLowerCase() === "practice") {
+      setErrorMsg("Please enter a valid opponent name (cannot be 'Practice').");
       return;
     }
     setErrorMsg("");
@@ -2110,6 +2115,15 @@ export default function App() {
     }
   };
 
+  const executeBatchedDeletions = async (docRefs) => {
+    // Process in batches of 400 to stay safely under Firestore's 500 limit
+    for (let i = 0; i < docRefs.length; i += 400) {
+      const batch = writeBatch(db);
+      docRefs.slice(i, i + 400).forEach(ref => batch.delete(ref));
+      await batch.commit();
+    }
+  };
+
   const handleDeleteEvent = async (eventId, isPracticeSessions = false) => {
     try {
       let matchesToDelete = [];
@@ -2124,35 +2138,24 @@ export default function App() {
 
       if (isFirebaseAvailable && user) {
         const teamId = activeTeam;
+        let refsToDelete = [];
         
-        // 1. Delete associated stats
-        const statsToDelete = appData.stats.filter(s => matchIds.includes(s.matchId));
-        if (statsToDelete.length > 0) {
-          for (let i = 0; i < statsToDelete.length; i += 500) {
-            const batch = writeBatch(db);
-            statsToDelete.slice(i, i + 500).forEach(s => {
-              batch.delete(doc(db, `${publicPath}/${teamId}/stats/${s.id}`));
-            });
-            await batch.commit();
-          }
-        }
-
-        // 2. Delete associated sets
-        const setsToDelete = appData.sets.filter(s => matchIds.includes(s.matchId));
-        if (setsToDelete.length > 0) {
-          const setBatch = writeBatch(db);
-          setsToDelete.forEach(s => {
-            setBatch.delete(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
-          });
-          await setBatch.commit();
-        }
-
-        // 3. Delete match records
-        const matchBatch = writeBatch(db);
-        matchIds.forEach(id => {
-          matchBatch.delete(doc(db, `${publicPath}/${teamId}/matches/${id}`));
+        // 1. Collect all stats
+        appData.stats.filter(s => matchIds.includes(s.matchId)).forEach(s => {
+          refsToDelete.push(doc(db, `${publicPath}/${teamId}/stats/${s.id}`));
         });
-        await matchBatch.commit();
+
+        // 2. Collect all sets
+        appData.sets.filter(s => matchIds.includes(s.matchId)).forEach(s => {
+          refsToDelete.push(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
+        });
+
+        // 3. Collect all matches
+        matchIds.forEach(id => {
+          refsToDelete.push(doc(db, `${publicPath}/${teamId}/matches/${id}`));
+        });
+
+        await executeBatchedDeletions(refsToDelete);
 
       } else {
         const newStats = appData.stats.filter(s => !matchIds.includes(s.matchId));
@@ -2187,32 +2190,22 @@ export default function App() {
     try {
       if (isFirebaseAvailable && user) {
         const teamId = activeTeam;
+        let refsToDelete = [];
         
-        // 1. Delete associated stats (filter locally then request deletes)
-        const statsToDelete = appData.stats.filter(s => s.matchId === matchId);
-        if (statsToDelete.length > 0) {
-          // Break into batches of 500 (Firestore limit)
-          for (let i = 0; i < statsToDelete.length; i += 500) {
-            const batch = writeBatch(db);
-            statsToDelete.slice(i, i + 500).forEach(s => {
-              batch.delete(doc(db, `${publicPath}/${teamId}/stats/${s.id}`));
-            });
-            await batch.commit();
-          }
-        }
+        // 1. Collect associated stats
+        appData.stats.filter(s => s.matchId === matchId).forEach(s => {
+          refsToDelete.push(doc(db, `${publicPath}/${teamId}/stats/${s.id}`));
+        });
 
-        // 2. Delete associated sets
-        const setsToDelete = appData.sets.filter(s => s.matchId === matchId);
-        if (setsToDelete.length > 0) {
-          const setBatch = writeBatch(db);
-          setsToDelete.forEach(s => {
-            setBatch.delete(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
-          });
-          await setBatch.commit();
-        }
+        // 2. Collect associated sets
+        appData.sets.filter(s => s.matchId === matchId).forEach(s => {
+          refsToDelete.push(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
+        });
 
-        // 3. Finally delete the match record itself
-        await deleteDoc(doc(db, `${publicPath}/${teamId}/matches/${matchId}`));
+        // 3. Collect the match record itself
+        refsToDelete.push(doc(db, `${publicPath}/${teamId}/matches/${matchId}`));
+        
+        await executeBatchedDeletions(refsToDelete);
       } else {
         const newStats = appData.stats.filter(s => s.matchId !== matchId);
         const newSets = appData.sets.filter(s => s.matchId !== matchId);
@@ -2234,7 +2227,7 @@ export default function App() {
       alert("Game and all associated stats deleted successfully.");
     } catch (e) {
       console.error("Delete Match Error:", e);
-      alert("Failed to delete game completely. " + e.message);
+      alert("Failed to delete match completely. " + e.message);
     }
   };
 
@@ -2778,7 +2771,7 @@ export default function App() {
           .map((m) => m.title)
       ),
     ];
-    const oppNames = Object.keys(appData.opponents);
+    const oppNames = Object.keys(appData.opponents).filter(n => n.toLowerCase() !== "practice");
 
     return (
       <div className="min-h-screen bg-slate-50 p-2 sm:p-6 md:p-10 font-sans flex flex-col items-center justify-start sm:justify-center">
