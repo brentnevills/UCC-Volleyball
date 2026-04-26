@@ -461,6 +461,7 @@ export default function App() {
   const [statsPath, setStatsPath] = useState([
     { level: "season", id: "all", name: "Season Totals" },
   ]);
+  const [expandedOppTeams, setExpandedOppTeams] = useState({});
 
   // -------------------------------------------------------------
   // INITIALIZATION (APP ICON & FIREBASE OR LOCAL FALLBACK)
@@ -534,6 +535,20 @@ export default function App() {
     return () => unsub();
   }, [user]);
 
+  // Role Recovery Mechanism
+  // This must run every time myTeams updates, otherwise if it's empty during initial load, we miss the role sync.
+  useEffect(() => {
+    if (!user || !isFirebaseAvailable || !activeTeam || myTeams.length === 0) return;
+    const existingTeam = myTeams.find(t => t.id === activeTeam);
+    if (existingTeam) {
+      setDoc(
+        doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
+        { uid: user.uid, joinedAt: serverTimestamp(), role: existingTeam.role },
+        { merge: true }
+      ).catch(e => console.log('Role sync ignored', e));
+    }
+  }, [user, activeTeam, myTeams]);
+
   // LOAD DATA BASED ON ACTIVE TEAM
   useEffect(() => {
     if (!activeTeam) return;
@@ -562,16 +577,6 @@ export default function App() {
     }
 
     if (!user) return;
-
-    // Role recovery mechanism: Ensure the teams/teamId/members/uid document matches our user profile
-    const existingTeam = myTeams.find(t => t.id === activeTeam);
-    if (existingTeam) {
-      setDoc(
-        doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
-        { role: existingTeam.role },
-        { merge: true }
-      ).catch(e => console.log('Role sync ignored', e));
-    }
 
     // Scoped Firebase Listeners
     const unsubSettings = onSnapshot(
@@ -5235,15 +5240,27 @@ export default function App() {
                         </td>
                       </tr>
                     ) : (
-                      Object.entries(opponentStats).map(([teamName, players]) => (
+                      Object.entries(opponentStats).map(([teamName, players]) => {
+                        const isExpanded = expandedOppTeams[teamName] || false;
+                        return (
                         <React.Fragment key={teamName}>
-                          <tr className="bg-slate-200/50">
-                            <td colSpan="8" className="p-2 sm:p-3 font-black text-slate-700 text-xs sm:text-sm uppercase tracking-widest flex items-center">
-                              <Shield size={14} className="mr-2 text-slate-500" />
-                              {teamName}
+                          <tr 
+                            className="bg-slate-200/50 cursor-pointer hover:bg-slate-300/50 transition-colors"
+                            onClick={() => setExpandedOppTeams(prev => ({...prev, [teamName]: !prev[teamName]}))}
+                          >
+                            <td colSpan="8" className="p-2 sm:p-3 font-black text-slate-700 text-xs sm:text-sm uppercase tracking-widest">
+                              <div className="flex items-center justify-between w-full">
+                                <div className="flex items-center">
+                                  <Shield size={14} className="mr-2 text-slate-500" />
+                                  {teamName}
+                                </div>
+                                <div className="text-slate-400">
+                                  {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                </div>
+                              </div>
                             </td>
                           </tr>
-                          {Object.entries(players).map(([id, p]) => {
+                          {isExpanded && Object.entries(players).map(([id, p]) => {
                             const passAvg =
                               p.passCount > 0
                                 ? (p.passSum / p.passCount).toFixed(2)
@@ -5303,7 +5320,8 @@ export default function App() {
                             );
                           })}
                         </React.Fragment>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
