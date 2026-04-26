@@ -563,20 +563,15 @@ export default function App() {
 
     if (!user) return;
 
-    // Join the team for Auth access (Ensure role is set for Security Rules)
+    // Role recovery mechanism: Ensure the teams/teamId/members/uid document matches our user profile
     const existingTeam = myTeams.find(t => t.id === activeTeam);
-    const roleToSet = existingTeam?.role || 'player';
-    
-    setDoc(
-      doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
-      { uid: user.uid, joinedAt: serverTimestamp(), role: roleToSet },
-      { merge: true }
-    ).catch(err => {
-      // If we get a permission error here, it's likely fine as we might already be a member
-      if (!err.message?.includes('insufficient permissions')) {
-        console.error("Background join failed:", err);
-      }
-    });
+    if (existingTeam) {
+      setDoc(
+        doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
+        { role: existingTeam.role },
+        { merge: true }
+      ).catch(e => console.log('Role sync ignored', e));
+    }
 
     // Scoped Firebase Listeners
     const unsubSettings = onSnapshot(
@@ -954,7 +949,13 @@ export default function App() {
         const batch = writeBatch(db);
         batch.set(doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`), newMatch);
         batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
-        await batch.commit();
+        try {
+          await batch.commit();
+        } catch(err) {
+          console.error("Practice start error", err);
+          alert("❌ Failed to start practice mode. Details: " + err.message);
+          return;
+        }
       } else if (!isFirebaseAvailable) {
         writeLocalDb({
           ...appData,
@@ -1075,7 +1076,13 @@ export default function App() {
         const batch = writeBatch(db);
         batch.set(doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`), newMatch);
         batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
-        await batch.commit();
+        try {
+          await batch.commit();
+        } catch(err) {
+          console.error("Practice start error", err);
+          alert("❌ Failed to start practice mode. Details: " + err.message);
+          return;
+        }
       } else if (!isFirebaseAvailable) {
         writeLocalDb({
           ...appData,
