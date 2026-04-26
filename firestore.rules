@@ -123,9 +123,9 @@ service cloud.firestore {
 
       match /stats/{statId} {
         allow read: if isSignedIn() && isTeamMember(teamId);
-        allow create, delete: if isSignedIn() && isCoach(teamId)
-          && (request.method == 'DELETE' || isValidStat(incoming()));
+        allow create: if isSignedIn() && isCoach(teamId) && isValidStat(incoming());
         allow update: if isSignedIn() && isCoach(teamId) && isValidStat(incoming());
+        allow delete: if isSignedIn() && isCoach(teamId);
       }
     }
   }

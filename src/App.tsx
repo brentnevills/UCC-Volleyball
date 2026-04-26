@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Download,
   Users,
@@ -462,6 +462,7 @@ export default function App() {
     { level: "season", id: "all", name: "Season Totals" },
   ]);
   const [expandedOppTeams, setExpandedOppTeams] = useState({});
+  const isProcessingPointRef = useRef(false);
 
   // -------------------------------------------------------------
   // INITIALIZATION (APP ICON & FIREBASE OR LOCAL FALLBACK)
@@ -1317,6 +1318,13 @@ export default function App() {
   };
 
   const recordStatAndCheckPoint = (playerId, category, metric, value = 1) => {
+    const isPointEnding = (category === "Attack" && (metric === "Kill" || metric === "Out" || metric === "Net" || metric === "Stuffed" || metric === "Error")) || (category === "Block" && metric === "Block");
+    if (isPointEnding && isProcessingPointRef.current) return;
+    if (isPointEnding) {
+      isProcessingPointRef.current = true;
+      setTimeout(() => { isProcessingPointRef.current = false; }, 500);
+    }
+    
     pushToHistory();
     logStat(playerId, category, metric, value);
     
@@ -1360,6 +1368,13 @@ export default function App() {
   };
 
   const recordOppStatAndCheckPoint = (oppId, category, metric, value = 1) => {
+    const isPointEnding = (category === "Attack" && (metric === "Kill" || metric === "Out" || metric === "Net" || metric === "Stuffed" || metric === "Error")) || (category === "Block" && metric === "Block");
+    if (isPointEnding && isProcessingPointRef.current) return;
+    if (isPointEnding) {
+      isProcessingPointRef.current = true;
+      setTimeout(() => { isProcessingPointRef.current = false; }, 500);
+    }
+
     pushToHistory();
     logStat(oppId, category, metric, value, true);
     
@@ -1418,6 +1433,10 @@ export default function App() {
   };
 
   const handlePoint = async (team, skipHistory = false) => {
+    if (isProcessingPointRef.current) return;
+    isProcessingPointRef.current = true;
+    setTimeout(() => { isProcessingPointRef.current = false; }, 500);
+
     if (!skipHistory) pushToHistory();
     setEndRallyVisible(false);
     setSelectedOppId(null);
@@ -1519,6 +1538,12 @@ export default function App() {
   };
 
   const handleServeStat = (metric, team) => {
+    if ((metric === "Ace" || metric === "Error") && isProcessingPointRef.current) return;
+    if (metric === "Ace" || metric === "Error") {
+      isProcessingPointRef.current = true;
+      setTimeout(() => { isProcessingPointRef.current = false; }, 500);
+    }
+
     pushToHistory();
     const serverId = team === "ucc" ? lineup[0] : oppLineup[0];
     const isOpp = team === "opp";
@@ -4384,17 +4409,23 @@ export default function App() {
               {aceReceiverPrompt === "opp" ? "Who Got Aced?" : "Who Passed 0?"}
             </h2>
             <div className="flex flex-col w-full max-w-sm gap-2 sm:gap-3">
-              {(aceReceiverPrompt === "opp" ? lineup : []).filter((id, i) => [0, 4, 5].includes(i)).map(id => {
-                const pInfo = appData.roster.find(p => p.id === id);
-                if (!pInfo) return null;
+              {(aceReceiverPrompt === "opp" ? lineup : oppLineup).filter((_, i) => [0, 1, 2, 3, 4, 5].includes(i)).map((id, index) => {
+                const isOpp = aceReceiverPrompt === "ucc";
+                let displayName = isOpp ? id : appData.roster.find(p => p.id === id)?.name;
+                let numDisplay = isOpp ? "" : `#${appData.roster.find(p => p.id === id)?.number}`;
+                
+                if (!isOpp && !displayName) return null;
+                // Exclude empty strings from opponents
+                if (isOpp && id.trim() === "") return null;
+                
                 return (
                   <button
-                    key={id}
+                    key={isOpp ? `opp_${id}_${index}` : id}
                     onClick={() => handleAceReceiverChoice(id)}
                     className="bg-slate-800 hover:bg-slate-700 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-lg shadow-xl active:scale-95 flex justify-center items-center gap-2 border border-slate-600"
                   >
-                    <span className="opacity-60">#{pInfo.number}</span>
-                    <span>{pInfo.name}</span>
+                    {!isOpp && <span className="opacity-60">{numDisplay}</span>}
+                    <span>{displayName}</span>
                   </button>
                 )
               })}
