@@ -6,6 +6,7 @@ import {
   Play,
   CheckCircle2,
   XCircle,
+  X,
   Menu,
   Activity,
   Shield,
@@ -440,6 +441,7 @@ export default function App() {
   const [newOppNumber, setNewOppNumber] = useState("");
   const [selectedOppId, setSelectedOppId] = useState(null);
   const [lateBlockPlayerId, setLateBlockPlayerId] = useState(null);
+  const [practiceStatPrompt, setPracticeStatPrompt] = useState(null);
   const [tempNote, setTempNote] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [setWinnerModal, setSetWinnerModal] = useState(null);
@@ -4700,24 +4702,95 @@ export default function App() {
                         <div><span className="font-bold text-slate-400">B:</span> {blkCount}</div>
                      </div>
                   </div>
-                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                     <button onClick={() => handlePracticeStat(p.id, "Pass", "Rating", 3)} className="bg-blue-100 text-blue-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Pass +</button>
-                     <button onClick={() => handlePracticeStat(p.id, "Serve", "Ace", 1)} className="bg-emerald-100 text-emerald-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Srv Ace</button>
-                     <button onClick={() => handlePracticeStat(p.id, "Attack", "Kill", 1)} className="bg-green-100 text-green-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Att Kill</button>
-                     <button onClick={() => handlePracticeStat(p.id, "Dig", "Dig", 1)} className="bg-indigo-100 text-indigo-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Dig</button>
-                     <button onClick={() => handlePracticeStat(p.id, "Block", "Block", 1)} className="bg-teal-100 text-teal-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Block</button>
-                     
-                     <button onClick={() => handlePracticeStat(p.id, "Pass", "Rating", 0)} className="bg-blue-50/50 text-blue-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-blue-100 text-opacity-80">Pass Err</button>
-                     <button onClick={() => handlePracticeStat(p.id, "Serve", "Miss - Net", 1)} className="bg-red-50 text-red-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-red-100 text-opacity-80">Srv Err</button>
-                     <button onClick={() => handlePracticeStat(p.id, "Attack", "Out", 1)} className="bg-red-50 text-red-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-red-100 text-opacity-80">Att Err</button>
-                     <button onClick={() => handlePracticeStat(p.id, "Dig", "Error", 1)} className="bg-red-50 text-red-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-red-100 text-opacity-80">Dig Err</button>
-                     <button onClick={() => handlePracticeStat(p.id, "Block", "Attempt", 1)} className="bg-slate-100 text-slate-600 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none border border-slate-200">Blk Tch</button>
-
+                  <div className="grid grid-cols-5 gap-2">
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Pass" })} className="bg-blue-100 text-blue-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Passes</button>
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Serve" })} className="bg-emerald-100 text-emerald-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Serves</button>
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Attack" })} className="bg-green-100 text-green-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Attacks</button>
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Dig" })} className="bg-indigo-100 text-indigo-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Digs</button>
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Block" })} className="bg-teal-100 text-teal-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Blocks</button>
                   </div>
                </div>
                );
             })}
          </div>
+
+         {practiceStatPrompt && (
+             <div className="absolute inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in">
+               <div className="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl overflow-hidden flex flex-col my-auto border border-[#0033A0]/20 max-h-[90vh]">
+                 <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-4 flex justify-between items-center text-white shrink-0">
+                   <div className="font-black text-xl tracking-widest uppercase flex items-center">
+                     <Activity size={20} className="mr-2" />
+                     {practiceStatPrompt.type}
+                   </div>
+                   <button onClick={() => setPracticeStatPrompt(null)} className="text-white/60 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors">
+                     <X size={24} />
+                   </button>
+                 </div>
+                 <div className="p-4 bg-slate-50 space-y-4 overflow-y-auto">
+                   <div className="text-center font-bold text-slate-700 text-lg mb-2">
+                      {appData.roster.find(r => r.id === practiceStatPrompt.playerId)?.name || "Unknown Player"}
+                   </div>
+                   {practiceStatPrompt.type === 'Pass' && (
+                      <div className="grid grid-cols-4 gap-2">
+                         {[3, 2, 1, 0].map(val => (
+                            <button key={val} onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Rating', val); setPracticeStatPrompt(null); }} className={`p-4 rounded-xl font-black text-2xl shadow-sm active:scale-95 transition-all ${val === 3 ? "bg-gradient-to-b from-green-400 to-green-500 text-white border border-green-500" : val === 0 ? "bg-gradient-to-b from-red-400 to-red-500 text-white border border-red-500" : "bg-white text-slate-700 border border-slate-200"}`}>{val}</button>
+                         ))}
+                      </div>
+                   )}
+                   {practiceStatPrompt.type === 'Serve' && (
+                      <div className="flex flex-col gap-2">
+                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Ace'); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">ACE</button>
+                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Attempt'); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">IN PLAY (ATTEMPT)</button>
+                         <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
+                            <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERROR TYPE <span className="h-px bg-slate-200 flex-1 ml-2"></span>
+                         </div>
+                         <div className="grid grid-cols-3 gap-2">
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Miss - Net'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold border border-red-100 shadow-sm active:scale-95 uppercase text-sm">Net</button>
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Miss - Long'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold border border-red-100 shadow-sm active:scale-95 uppercase text-sm">Long</button>
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Miss - Wide'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold border border-red-100 shadow-sm active:scale-95 uppercase text-sm">Wide</button>
+                         </div>
+                      </div>
+                   )}
+                   {practiceStatPrompt.type === 'Attack' && (
+                      <div className="flex flex-col gap-2">
+                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Kill'); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">KILL</button>
+                         <div className="grid grid-cols-2 gap-2 mt-2">
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Swing'); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20">SWING (IN PLAY)</button>
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Blocked'); setPracticeStatPrompt(null); }} className="bg-blue-50 text-blue-700 p-4 rounded-xl font-black text-sm sm:text-base border border-blue-200 shadow-sm active:scale-95 uppercase">BLOCKED (COVERED)</button>
+                         </div>
+                         <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
+                            <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERRORS <span className="h-px bg-slate-200 flex-1 ml-2"></span>
+                         </div>
+                         <div className="grid grid-cols-3 gap-2">
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Out'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"><span className="text-xl mb-1">↗️</span>Out</button>
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Net'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"><span className="text-xl mb-1">🥅</span>Net</button>
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Stuffed'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"><span className="text-xl mb-1">🧱</span>Stuffed</button>
+                         </div>
+                      </div>
+                   )}
+                   {practiceStatPrompt.type === 'Dig' && (
+                      <div className="grid grid-cols-2 gap-2">
+                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Dig'); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">DIG</button>
+                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Error'); setPracticeStatPrompt(null); }} className="bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center">DIG ERROR</button>
+                      </div>
+                   )}
+                   {practiceStatPrompt.type === 'Block' && (
+                      <div className="flex flex-col gap-2">
+                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Block'); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">STUFF BLOCK</button>
+                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Attempt'); setPracticeStatPrompt(null); }} className="bg-slate-200 text-slate-800 p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border border-slate-300 uppercase">TOUCH (ATTEMPT)</button>
+                         <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
+                            <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERRORS <span className="h-px bg-slate-200 flex-1 ml-2"></span>
+                         </div>
+                         <div className="grid grid-cols-2 gap-2">
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Late'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold uppercase border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center text-sm"><span className="text-xl mb-1">⏱️</span>Late / Missed</button>
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Net Viol'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold uppercase border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center text-sm"><span className="text-xl mb-1">🥅</span>Net Viol</button>
+                         </div>
+                      </div>
+                   )}
+                 </div>
+               </div>
+             </div>
+          )}
       </div>
     );
   }
