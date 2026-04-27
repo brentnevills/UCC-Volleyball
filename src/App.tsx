@@ -432,6 +432,7 @@ export default function App() {
   const [blockAssistPrompt, setBlockAssistPrompt] = useState(null);
   const [aceReceiverPrompt, setAceReceiverPrompt] = useState(null);
   const [pendingAceData, setPendingAceData] = useState(null);
+  const [selectedAceReceivers, setSelectedAceReceivers] = useState([]);
   const [endRallyVisible, setEndRallyVisible] = useState(false);
   const [subModalVisible, setSubModalVisible] = useState(false);
   const [showOppLineupPrompt, setShowOppLineupPrompt] = useState(false);
@@ -1056,7 +1057,7 @@ export default function App() {
 
   const startGame = async () => {
     enforceFullscreen();
-    if (matchFormat === "Open Drill (Grid)") {
+    if (matchType === "Practice" && matchFormat === "Open Drill (Grid)") {
       const matchId = Date.now().toString();
       const newMatch = {
         id: matchId,
@@ -1340,11 +1341,11 @@ export default function App() {
       const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
       if (metric === "Kill") {
         logStat(playerId, "Attack", swingMetric, 1);
-        if (rallyPhase !== "serve") handlePoint("ucc", true);
+        handlePoint("ucc", true);
       } else if (metric === "Out" || metric === "Net" || metric === "Stuffed") {
         logStat(playerId, "Attack", swingMetric, 1);
         logStat(playerId, "Attack", metric, 1); // Also log the specific error
-        if (rallyPhase !== "serve") handlePoint("opp", true);
+        handlePoint("opp", true);
       } else if (metric === "Swing" || metric === "Blocked") {
         logStat(playerId, "Attack", swingMetric, 1);
         if (metric === "Blocked") {
@@ -1354,10 +1355,10 @@ export default function App() {
     }
     if (category === "Block") {
       if (metric === "Block" || metric === "Stuffed") {
-         if (rallyPhase !== "serve") handlePoint("ucc", true);
+         handlePoint("ucc", true);
       }
       else if (metric === "Net Viol") {
-         if (rallyPhase !== "serve") handlePoint("opp", true);
+         handlePoint("opp", true);
       }
     }
     
@@ -1390,11 +1391,11 @@ export default function App() {
       const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
       if (metric === "Kill") {
         logStat(oppId, "Attack", swingMetric, 1, true);
-        if (rallyPhase !== "serve") handlePoint("opp", true);
+        handlePoint("opp", true);
       } else if (metric === "Out" || metric === "Net" || metric === "Stuffed") {
         logStat(oppId, "Attack", swingMetric, 1, true);
         logStat(oppId, "Attack", metric, 1, true);
-        if (rallyPhase !== "serve") handlePoint("ucc", true);
+        handlePoint("ucc", true);
       } else if (metric === "Swing" || metric === "Blocked") {
         logStat(oppId, "Attack", swingMetric, 1, true);
         if (metric === "Blocked") {
@@ -1405,10 +1406,10 @@ export default function App() {
 
     if (category === "Block") {
       if (metric === "Block" || metric === "Stuffed") {
-         if (rallyPhase !== "serve") handlePoint("opp", true);
+         handlePoint("opp", true);
       }
       else if (metric === "Net Viol") {
-         if (rallyPhase !== "serve") handlePoint("ucc", true);
+         handlePoint("ucc", true);
       }
     }
     
@@ -1560,19 +1561,36 @@ export default function App() {
     }
   };
 
-  const handleAceReceiverChoice = (receiverId) => {
+  const toggleAceReceiver = (receiverId) => {
+    if (selectedAceReceivers.includes(receiverId)) {
+      setSelectedAceReceivers(selectedAceReceivers.filter(id => id !== receiverId));
+    } else {
+      if (selectedAceReceivers.length < 2) {
+        setSelectedAceReceivers([...selectedAceReceivers, receiverId]);
+      }
+    }
+  };
+
+  const confirmAceReceivers = () => {
     const { serverId, team, isOpp } = pendingAceData;
-    
-    // Log the ace for the server
     logStat(serverId, "Serve", "Ace", 1, isOpp);
     
-    // Log the 0 pass for the receiver if one was selected
-    if (receiverId) {
+    selectedAceReceivers.forEach(receiverId => {
       logStat(receiverId, "Pass", "Rating", 0, !isOpp);
-    }
+    });
     
     setAceReceiverPrompt(null);
     setPendingAceData(null);
+    setSelectedAceReceivers([]);
+    handlePoint(team, true);
+  };
+
+  const skipAceReceivers = () => {
+    const { serverId, team, isOpp } = pendingAceData;
+    logStat(serverId, "Serve", "Ace", 1, isOpp);
+    setAceReceiverPrompt(null);
+    setPendingAceData(null);
+    setSelectedAceReceivers([]);
     handlePoint(team, true);
   };
 
@@ -2154,9 +2172,10 @@ export default function App() {
 
   const executeBatchedDeletions = async (docRefs) => {
     // Process in batches of 400 to stay safely under Firestore's 500 limit
-    for (let i = 0; i < docRefs.length; i += 400) {
+    const validRefs = docRefs.filter(ref => ref && ref.id && ref.id !== "undefined");
+    for (let i = 0; i < validRefs.length; i += 400) {
       const batch = writeBatch(db);
-      docRefs.slice(i, i + 400).forEach(ref => batch.delete(ref));
+      validRefs.slice(i, i + 400).forEach(ref => batch.delete(ref));
       await batch.commit();
     }
   };
@@ -2895,18 +2914,26 @@ export default function App() {
                   <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
                     Opponent Name
                   </label>
-                  <input
-                    list="opp-list"
-                    className="w-full p-3 sm:p-4 bg-white rounded-xl sm:rounded-2xl border border-slate-200 font-bold text-base sm:text-lg text-[#0033A0] focus:ring-2 focus:ring-[#0033A0] outline-none"
-                    value={opponentName}
-                    onChange={handleOpponentNameChange}
-                    placeholder="Enter name..."
-                  />
-                  <datalist id="opp-list">
-                    {oppNames.map((o) => (
-                      <option key={o} value={o} />
-                    ))}
-                  </datalist>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    {oppNames.length > 0 && (
+                      <select
+                        className="w-full sm:w-1/2 p-3 sm:p-4 bg-white rounded-xl sm:rounded-2xl border border-slate-200 font-bold text-base sm:text-lg text-[#0033A0] focus:ring-2 focus:ring-[#0033A0] outline-none cursor-pointer"
+                        value={Object.keys(appData.opponents).find(o => o.toLowerCase() === opponentName.toLowerCase()) || ""}
+                        onChange={(e) => handleOpponentNameChange(e)}
+                      >
+                        <option value="">-- Select Previous --</option>
+                        {oppNames.map((o) => (
+                          <option key={o} value={o}>{appData.opponents[o]?.teamName || o}</option>
+                        ))}
+                      </select>
+                    )}
+                    <input
+                      className={`p-3 sm:p-4 bg-white rounded-xl sm:rounded-2xl border border-slate-200 font-bold text-base sm:text-lg text-[#0033A0] focus:ring-2 focus:ring-[#0033A0] outline-none ${oppNames.length > 0 ? "w-full sm:w-1/2" : "w-full"}`}
+                      value={opponentName}
+                      onChange={handleOpponentNameChange}
+                      placeholder={oppNames.length > 0 ? "Or type new..." : "Enter name..."}
+                    />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
@@ -4405,33 +4432,47 @@ export default function App() {
               size={60}
               className="text-amber-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(245,158,11,0.5)] sm:w-20 sm:h-20"
             />
-            <h2 className="text-2xl sm:text-4xl font-black mb-8 sm:mb-10 text-center tracking-widest uppercase">
+            <h2 className="text-2xl sm:text-4xl font-black mb-4 sm:mb-6 text-center tracking-widest uppercase">
               {aceReceiverPrompt === "opp" ? "Who Got Aced?" : "Who Passed 0?"}
             </h2>
-            <div className="flex flex-col w-full max-w-sm gap-2 sm:gap-3">
+            <p className="text-slate-400 font-bold mb-6 sm:mb-8 text-center text-sm uppercase max-w-sm">
+              Select up to 2 players
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full max-w-sm mb-4">
               {(aceReceiverPrompt === "opp" ? lineup : oppLineup).filter((_, i) => [0, 1, 2, 3, 4, 5].includes(i)).map((id, index) => {
                 const isOpp = aceReceiverPrompt === "ucc";
                 let displayName = isOpp ? id : appData.roster.find(p => p.id === id)?.name;
                 let numDisplay = isOpp ? "" : `#${appData.roster.find(p => p.id === id)?.number}`;
                 
                 if (!isOpp && !displayName) return null;
-                // Exclude empty strings from opponents
                 if (isOpp && id.trim() === "") return null;
                 
+                const isSelected = selectedAceReceivers.includes(id);
+
                 return (
                   <button
                     key={isOpp ? `opp_${id}_${index}` : id}
-                    onClick={() => handleAceReceiverChoice(id)}
-                    className="bg-slate-800 hover:bg-slate-700 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-lg shadow-xl active:scale-95 flex justify-center items-center gap-2 border border-slate-600"
+                    onClick={() => toggleAceReceiver(id)}
+                    className={`${isSelected ? 'bg-amber-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'} py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base shadow-lg active:scale-95 flex flex-col justify-center items-center gap-1 border border-slate-600 transition-colors`}
                   >
-                    {!isOpp && <span className="opacity-60">{numDisplay}</span>}
-                    <span>{displayName}</span>
+                    {!isOpp && <span className={`opacity-60 text-[10px] ${isSelected ? 'text-amber-100' : ''}`}>{numDisplay}</span>}
+                    <span>{displayName.substring(0, 8)}</span>
                   </button>
                 )
               })}
+            </div>
+            
+            <div className="flex flex-col w-full max-w-sm gap-2">
               <button
-                onClick={() => handleAceReceiverChoice(null)}
-                className="mt-4 bg-slate-600 hover:bg-slate-500 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base border border-slate-500 shadow-sm active:scale-95"
+                onClick={confirmAceReceivers}
+                disabled={selectedAceReceivers.length === 0}
+                className="bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-500 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-lg border-t border-white/20 shadow-xl active:scale-95 transition-all"
+              >
+                CONFIRM SELECTION
+              </button>
+              <button
+                onClick={skipAceReceivers}
+                className="bg-slate-600 hover:bg-slate-500 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base border border-slate-500 shadow-sm active:scale-95"
               >
                 SKIP / UNKNOWN
               </button>
@@ -4441,6 +4482,7 @@ export default function App() {
               onClick={() => {
                 setAceReceiverPrompt(null);
                 setPendingAceData(null);
+                setSelectedAceReceivers([]);
               }}
               className="mt-6 sm:mt-8 text-slate-400 font-bold text-sm sm:text-lg hover:text-white px-6 py-2 sm:py-3 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors"
             >
