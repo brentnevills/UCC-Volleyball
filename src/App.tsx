@@ -1434,10 +1434,6 @@ export default function App() {
   };
 
   const handlePoint = async (team, skipHistory = false) => {
-    if (isProcessingPointRef.current) return;
-    isProcessingPointRef.current = true;
-    setTimeout(() => { isProcessingPointRef.current = false; }, 500);
-
     if (!skipHistory) pushToHistory();
     setEndRallyVisible(false);
     setSelectedOppId(null);
