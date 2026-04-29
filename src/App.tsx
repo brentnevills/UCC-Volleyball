@@ -191,7 +191,8 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
               if (s.metric === "Kill") pTeam.attKill += 1;
               if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Stuffed") pTeam.attErr += 1;
             } else if (s.category === "Block") {
-              if (s.metric === "Block" || s.metric === "Play On" || s.metric === "Stuffed") pTeam.blkStuff += (s.value || 1);
+              if (s.metric === "Play On") pTeam.blkCount += (s.value || 1);
+              if (s.metric === "Block" || s.metric === "Stuffed") pTeam.blkStuff += (s.value || 1);
               if (s.metric === "Late") pTeam.blkLate += (s.value || 1);
               if (s.metric === "Net Viol") pTeam.blkNet += (s.value || 1);
               if (s.metric === "Used") pTeam.blkUsed += (s.value || 1);
@@ -269,7 +270,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
                     <th className="p-3 font-black text-center border-l">DIGS (D-Err)</th>
                     <th className="p-3 font-black text-center border-l bg-slate-50">SWINGS (Att-K-Err)</th>
                     <th className="p-3 font-black text-center border-l text-green-600">KILL %</th>
-                    <th className="p-3 font-black text-center border-l bg-slate-50">BLOCKS (A-S-L-N-U)</th>
+                    <th className="p-3 font-black text-center border-l bg-slate-50">BLOCKS (Tot-Stf-Lt-Net-Usd)</th>
                     <th className="p-3 font-black text-center border-l">SERVES (Tot-A-Err)</th>
                   </tr>
                 </thead>
@@ -278,8 +279,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
                     const isTotal = p.name === "CAREER TOTAL";
                     const passAvg = p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "-";
                     const killPct = p.attCount > 0 ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%" : "0.0%";
-                    const blkTot = p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
-                    const blkLatePct = blkTot > 0 ? ((p.blkLate / blkTot) * 100).toFixed(0) + "%" : "0%";
+                    const blkTot = p.blkCount + p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
                     const srvTot = p.srvCount + p.srvAce + p.srvErr;
 
                     return (
@@ -1968,7 +1968,8 @@ export default function App() {
             p.attErr += 1;
           if (s.metric === "Blocked" || s.metric === "Stuffed") p.attBlk += 1;
         } else if (s.category === "Block") {
-          if (s.metric === "Block" || s.metric === "Play On" || s.metric === "Stuffed") p.blkStuff += (s.value || 1);
+          if (s.metric === "Play On") p.blkCount += (s.value || 1);
+          if (s.metric === "Block" || s.metric === "Stuffed") p.blkStuff += (s.value || 1);
           if (s.metric === "Late") p.blkLate += (s.value || 1);
           if (s.metric === "Net Viol") p.blkNet += (s.value || 1);
           if (s.metric === "Used") p.blkUsed += (s.value || 1);
@@ -1987,20 +1988,19 @@ export default function App() {
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
-    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,% Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
     Object.values(uccStats).forEach((p) => {
       const passAvg =
         p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
-      const blkTot = p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
-      const blkLatePct = blkTot > 0 ? ((p.blkLate / blkTot) * 100).toFixed(0) + "%" : "0%";
+      const blkTot = p.blkCount + p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
       const srvTot = p.srvCount + p.srvAce + p.srvErr;
       const killPct =
         p.attCount > 0
           ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
           : "0.0%";
       const srvPlusMinus = p.srvAce - p.srvErr;
-      csv += `"${p.number}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+      csv += `"${p.number}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
     });
 
     csv +=
@@ -5219,7 +5219,7 @@ export default function App() {
                         BLOCKS
                         <br />
                         <span className="opacity-70 font-bold tracking-normal">
-                          (Att-Blk-Lt-Net-Us)
+                          (Tot-Stf-Lt-Net-Usd)
                         </span>
                       </th>
                       <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
@@ -5248,11 +5248,11 @@ export default function App() {
                           ? (p.passSum / p.passCount).toFixed(2)
                           : "-";
                       const blkTot =
+                        p.blkCount +
                         p.blkStuff +
                         p.blkLate +
                         p.blkNet +
                         p.blkUsed;
-                      const blkLatePct = blkTot > 0 ? ((p.blkLate / blkTot) * 100).toFixed(0) + "%" : "0%";
                       const srvTot = p.srvCount + p.srvAce + p.srvErr;
                       const killPct =
                         p.attCount > 0
@@ -5317,13 +5317,13 @@ export default function App() {
                             {killPct}
                           </td>
                           <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell">
-                            {blkTot} (Tot) - <strong className="text-indigo-600">{p.blkStuff}</strong> - <span className="text-amber-600">{blkLatePct}</span> - {p.blkNet} - {p.blkUsed}
+                            <span className="font-bold">{blkTot}</span> - <strong className="text-indigo-600">{p.blkStuff}</strong> - <span className="text-amber-600">{p.blkLate}</span> - {p.blkNet} - {p.blkUsed}
                           </td>
                           <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden">
                             <div className="flex flex-col">
                               <span className="font-bold text-slate-700">{blkTot}</span>
                               <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold whitespace-nowrap bg-white px-1 py-0.5 rounded border border-slate-200 mt-1">
-                                {p.blkStuff} <span className="text-slate-300 mx-0.5">•</span> <span className="text-amber-600">{blkLatePct}</span> <span className="text-slate-300 mx-0.5">•</span> {p.blkNet} <span className="text-slate-300 mx-0.5">•</span> {p.blkUsed}
+                                {p.blkStuff} <span className="text-slate-300 mx-0.5">•</span> <span className="text-amber-600">{p.blkLate}</span> <span className="text-slate-300 mx-0.5">•</span> {p.blkNet} <span className="text-slate-300 mx-0.5">•</span> {p.blkUsed}
                               </span>
                             </div>
                           </td>
