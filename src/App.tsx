@@ -3099,7 +3099,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 sm:gap-3">
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 {[4, 3, 2, 5, 6, 1].map((pos) => {
                   const arrIdx = pos - 1;
                   return (
@@ -3821,9 +3821,9 @@ export default function App() {
 
         {/* UCC PLAYER ACTION MODAL */}
         {selectedPlayerId && selectedPlayerObj && (
-          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-2 sm:p-4 backdrop-blur-md animate-in fade-in duration-150 overflow-y-auto">
-            <div className="bg-white w-full max-w-sm sm:max-w-md rounded-2xl sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-[#0033A0]/20 my-auto max-h-[95vh]">
-              <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-3 sm:p-4 flex justify-between items-center text-white">
+          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex flex-col justify-end sm:items-center sm:justify-center p-0 sm:p-4 backdrop-blur-md animate-in fade-in duration-150 overflow-hidden">
+            <div className="bg-white w-full max-w-sm sm:max-w-md rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border-t border-l border-r sm:border border-[#0033A0]/20 max-h-[85vh] sm:max-h-[95vh]">
+              <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-3 sm:p-4 flex justify-between items-center text-white shrink-0">
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white text-[#0033A0] rounded-full flex items-center justify-center text-xl sm:text-2xl font-black shadow-inner">
                     {selectedPlayerObj.number}
@@ -3842,7 +3842,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="p-3 sm:p-4 space-y-3 sm:space-y-4 bg-slate-50">
+              <div className="p-3 sm:p-4 space-y-3 sm:space-y-4 bg-slate-50 overflow-y-auto w-full">
                 {rallyPhase === "receive" ? (
                   <div className="bg-blue-50 p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-blue-200 relative">
                     <span className="absolute -top-2.5 right-4 bg-[#0033A0] text-white text-[8px] sm:text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest shadow-sm">
@@ -4091,9 +4091,9 @@ export default function App() {
 
         {/* OPPONENT PLAYER ACTION MODAL */}
         {selectedOppId && (
-          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-2 sm:p-4 backdrop-blur-md animate-in fade-in duration-150 overflow-y-auto">
-            <div className="bg-slate-100 w-full max-w-sm sm:max-w-md rounded-2xl sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-slate-700/50 my-auto max-h-[95vh]">
-              <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-3 sm:p-4 flex justify-between items-center text-white">
+          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex flex-col justify-end sm:items-center sm:justify-center p-0 sm:p-4 backdrop-blur-md animate-in fade-in duration-150 overflow-hidden">
+            <div className="bg-slate-100 w-full max-w-sm sm:max-w-md rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-slate-700/50 max-h-[85vh] sm:max-h-[95vh]">
+              <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-3 sm:p-4 flex justify-between items-center text-white shrink-0">
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-600 rounded-full flex items-center justify-center text-xl sm:text-2xl font-black shadow-inner border border-white/20">
                     {selectedOppId}
@@ -4112,7 +4112,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="p-3 sm:p-4 space-y-3 sm:space-y-4">
+              <div className="p-3 sm:p-4 space-y-3 sm:space-y-4 overflow-y-auto w-full">
                 {rallyPhase === "opp_receive" ? (
                   <div className="bg-amber-50 p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-amber-200 relative mb-4">
                     <span className="absolute -top-2.5 right-4 bg-amber-500 text-white text-[8px] sm:text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest shadow-sm">
@@ -4734,12 +4734,12 @@ export default function App() {
                         <div><span className="font-bold text-slate-400">B:</span> {blkCount}</div>
                      </div>
                   </div>
-                  <div className="grid grid-cols-5 gap-2">
-                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Pass" })} className="bg-blue-100 text-blue-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Passes</button>
-                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Serve" })} className="bg-emerald-100 text-emerald-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Serves</button>
-                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Attack" })} className="bg-green-100 text-green-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Attacks</button>
-                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Dig" })} className="bg-indigo-100 text-indigo-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Digs</button>
-                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Block" })} className="bg-teal-100 text-teal-800 font-bold py-2 sm:py-3 rounded-lg text-sm active:scale-95 transition-all outline-none">Blocks</button>
+                  <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Pass" })} className="flex-1 bg-blue-100 text-blue-800 font-bold py-2 pb-1.5 sm:py-3 rounded-lg text-xs sm:text-sm active:scale-95 transition-all outline-none min-w-[60px]">Pass</button>
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Serve" })} className="flex-1 bg-emerald-100 text-emerald-800 font-bold py-2 pb-1.5 sm:py-3 rounded-lg text-xs sm:text-sm active:scale-95 transition-all outline-none min-w-[60px]">Serve</button>
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Attack" })} className="flex-1 bg-green-100 text-green-800 font-bold py-2 pb-1.5 sm:py-3 rounded-lg text-xs sm:text-sm active:scale-95 transition-all outline-none min-w-[60px]">Attack</button>
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Dig" })} className="flex-1 bg-indigo-100 text-indigo-800 font-bold py-2 pb-1.5 sm:py-3 rounded-lg text-xs sm:text-sm active:scale-95 transition-all outline-none min-w-[60px]">Dig</button>
+                     <button onClick={() => setPracticeStatPrompt({ playerId: p.id, type: "Block" })} className="flex-1 bg-teal-100 text-teal-800 font-bold py-2 pb-1.5 sm:py-3 rounded-lg text-xs sm:text-sm active:scale-95 transition-all outline-none min-w-[60px]">Block</button>
                   </div>
                </div>
                );
@@ -4747,8 +4747,8 @@ export default function App() {
          </div>
 
          {practiceStatPrompt && (
-             <div className="absolute inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in">
-               <div className="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl overflow-hidden flex flex-col my-auto border border-[#0033A0]/20 max-h-[90vh]">
+             <div className="absolute inset-0 bg-slate-900/80 z-[100] flex flex-col justify-end sm:items-center sm:justify-center p-0 sm:p-4 backdrop-blur-md animate-in fade-in overflow-hidden">
+               <div className="bg-white w-full max-w-sm rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col border-t border-l border-r sm:border border-[#0033A0]/20 max-h-[85vh] sm:max-h-[90vh]">
                  <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-4 flex justify-between items-center text-white shrink-0">
                    <div className="font-black text-xl tracking-widest uppercase flex items-center">
                      <Activity size={20} className="mr-2" />
