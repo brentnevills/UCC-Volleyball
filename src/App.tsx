@@ -448,6 +448,7 @@ export default function App() {
   const [careerPlayerName, setCareerPlayerName] = useState(null);
   const [careerPlayerBirthYear, setCareerPlayerBirthYear] = useState(null);
   const [statFilter, setStatFilter] = useState("all");
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showRetired, setShowRetired] = useState(false);
   const [compareMode, setCompareMode] = useState("players"); // "players" or "events"
   const [comparePlayer1, setComparePlayer1] = useState("");
@@ -647,6 +648,17 @@ export default function App() {
       unsubStats();
     };
   }, [user, activeTeam]);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    };
+  }, []);
 
   useEffect(() => {
     if (activeSetId && appData.sets.length > 0) {
@@ -1590,6 +1602,15 @@ export default function App() {
     setPendingAceData(null);
     setSelectedAceReceivers([]);
     handlePoint(team, true);
+  };
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
   };
 
   const handleBlockAssistChoice = (assistPlayerId) => {
@@ -2545,6 +2566,17 @@ export default function App() {
                     <button onClick={() => handleShareCode(appData.coachCode, 'Coach')} className="text-amber-400 hover:text-amber-300 font-bold uppercase tracking-widest text-[10px] ml-2">Share</button>
                  </div>
                  )}
+              </div>
+            )}
+            {deferredPrompt && (
+              <div className="mt-4 flex flex-col gap-2 w-full max-w-sm mx-auto">
+                 <button
+                   onClick={handleInstallApp}
+                   className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold uppercase tracking-widest px-4 py-3 rounded-full border border-indigo-400/50 shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                 >
+                   <Download size={16} />
+                   Install App
+                 </button>
               </div>
             )}
           </div>
