@@ -236,7 +236,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
   }, [playerName, playerBirthYear, myTeams]);
 
   return (
-    <div className="absolute inset-0 z-[100] bg-slate-900/90 backdrop-blur-md flex flex-col p-4 sm:p-12 overflow-hidden items-center justify-center">
+    <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-md flex flex-col p-4 sm:p-12 overflow-hidden items-center justify-center">
       <div className="bg-white max-w-5xl w-full rounded-3xl sm:rounded-[3rem] shadow-2xl flex flex-col max-h-[90vh] border border-white/20">
         <div className="bg-gradient-to-r from-indigo-700 to-indigo-900 p-6 sm:p-10 rounded-t-3xl sm:rounded-t-[3rem] text-white flex justify-between items-center shrink-0">
           <div>
@@ -2646,7 +2646,7 @@ export default function App() {
 
         {/* ROSTER MODAL FROM MENU */}
         {isRosterModalOpen && (
-          <div className="absolute inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-2 sm:p-4 backdrop-blur-md">
+          <div className="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-2 sm:p-4 backdrop-blur-md">
             <div className="bg-white rounded-2xl sm:rounded-[2rem] w-full max-w-xl h-[90vh] sm:h-[85vh] overflow-hidden shadow-2xl flex flex-col">
               <div className="bg-slate-800 p-4 sm:p-6 text-white flex justify-between items-center">
                 <h3 className="font-black text-lg sm:text-xl tracking-widest uppercase flex items-center">
@@ -3154,7 +3154,7 @@ export default function App() {
 
         {/* ROSTER MODAL */}
         {isRosterModalOpen && (
-          <div className="absolute inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-2 sm:p-4 backdrop-blur-md">
+          <div className="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-2 sm:p-4 backdrop-blur-md">
             <div className="bg-white rounded-2xl sm:rounded-[2rem] w-full max-w-xl h-[90vh] sm:h-[85vh] overflow-hidden shadow-2xl flex flex-col">
               <div className="bg-slate-800 p-4 sm:p-6 text-white flex justify-between items-center">
                 <h3 className="font-black text-lg sm:text-xl tracking-widest uppercase flex items-center">
@@ -3355,7 +3355,7 @@ export default function App() {
 
         {/* OPPONENT LINEUP MODAL */}
         {showOppLineupPrompt && (
-          <div className="absolute inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-4 backdrop-blur-md">
+          <div className="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-4 backdrop-blur-md">
             <div className="bg-white rounded-2xl sm:rounded-[2rem] w-full max-w-xl overflow-hidden shadow-2xl">
               <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-4 sm:p-6 text-white text-center relative border-b border-slate-700">
                 <h3 className="font-black text-xl sm:text-2xl tracking-widest uppercase">
@@ -3821,9 +3821,9 @@ export default function App() {
 
         {/* UCC PLAYER ACTION MODAL */}
         {selectedPlayerId && selectedPlayerObj && (
-          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex flex-col justify-end sm:items-center sm:justify-center p-0 sm:p-4 backdrop-blur-md animate-in fade-in duration-150 overflow-hidden">
-            <div className="bg-white w-full max-w-sm sm:max-w-md rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border-t border-l border-r sm:border border-[#0033A0]/20 max-h-[85vh] sm:max-h-[95vh]">
-              <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-3 sm:p-4 flex justify-between items-center text-white shrink-0">
+          <div className="fixed inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-4 sm:p-6 backdrop-blur-md animate-in fade-in duration-150 overflow-hidden">
+            <div className="bg-white w-full max-w-xl rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-[#0033A0]/20 max-h-[90vh]">
+              <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-4 sm:p-5 flex justify-between items-center text-white shrink-0">
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white text-[#0033A0] rounded-full flex items-center justify-center text-xl sm:text-2xl font-black shadow-inner">
                     {selectedPlayerObj.number}
@@ -4091,9 +4091,9 @@ export default function App() {
 
         {/* OPPONENT PLAYER ACTION MODAL */}
         {selectedOppId && (
-          <div className="absolute inset-0 bg-slate-900/80 z-[100] flex flex-col justify-end sm:items-center sm:justify-center p-0 sm:p-4 backdrop-blur-md animate-in fade-in duration-150 overflow-hidden">
-            <div className="bg-slate-100 w-full max-w-sm sm:max-w-md rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-slate-700/50 max-h-[85vh] sm:max-h-[95vh]">
-              <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-3 sm:p-4 flex justify-between items-center text-white shrink-0">
+          <div className="fixed inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-4 sm:p-6 backdrop-blur-md animate-in fade-in duration-150 overflow-hidden">
+            <div className="bg-slate-100 w-full max-w-xl rounded-[2rem] shadow-2xl overflow-hidden flex flex-col scale-in-center border border-slate-700/50 max-h-[90vh]">
+              <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-4 sm:p-5 flex justify-between items-center text-white shrink-0">
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-600 rounded-full flex items-center justify-center text-xl sm:text-2xl font-black shadow-inner border border-white/20">
                     {selectedOppId}
@@ -4331,7 +4331,7 @@ export default function App() {
         {/* OVERLAYS (Serve / Rally Winner) */}
         {servePromptVisible && !setWinnerModal && (
           <div
-            className={`absolute inset-0 z-40 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl ${
+            className={`fixed inset-0 z-[100] flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl ${
               serving === "ucc" ? "bg-[#001b5e]/90" : "bg-slate-900/90"
             }`}
           >
@@ -4379,7 +4379,7 @@ export default function App() {
         )}
 
         {serveErrorPrompt && !setWinnerModal && (
-          <div className="absolute inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+          <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
             <XCircle
               size={60}
               className="text-red-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(239,68,68,0.5)] sm:w-20 sm:h-20"
@@ -4411,7 +4411,7 @@ export default function App() {
         )}
 
         {blockAssistPrompt && !setWinnerModal && (
-          <div className="absolute inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+          <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
             <Shield
               size={60}
               className="text-green-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(34,197,94,0.5)] sm:w-20 sm:h-20"
@@ -4457,7 +4457,7 @@ export default function App() {
         )}
 
         {aceReceiverPrompt && !setWinnerModal && (
-          <div className="absolute inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl animate-in fade-in zoom-in-95">
+          <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl animate-in fade-in zoom-in-95">
             <Activity
               size={60}
               className="text-amber-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(245,158,11,0.5)] sm:w-20 sm:h-20"
@@ -4522,7 +4522,7 @@ export default function App() {
         )}
 
         {endRallyVisible && !setWinnerModal && (
-          <div className="absolute inset-0 bg-slate-900/95 z-40 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+          <div className="fixed inset-0 bg-slate-900/95 z-40 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-pulse drop-shadow-[0_0_30px_rgba(251,191,36,0.4)]">
               🏆
             </div>
@@ -4556,7 +4556,7 @@ export default function App() {
         )}
 
         {setWinnerModal && (
-          <div className="absolute inset-0 bg-slate-900/95 z-[60] flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-2xl">
+          <div className="fixed inset-0 bg-slate-900/95 z-[60] flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-2xl">
             <Trophy
               size={80}
               className={`mb-3 sm:mb-4 drop-shadow-[0_0_50px_rgba(255,255,255,0.2)] sm:w-[100px] sm:h-[100px] ${
@@ -4600,7 +4600,7 @@ export default function App() {
 
         {/* UCC SUB MODAL */}
         {subModalVisible && selectedPlayerObj && (
-          <div className="absolute inset-0 bg-slate-900/95 z-[110] flex flex-col p-4 sm:p-8 backdrop-blur-xl animate-in fade-in duration-200 justify-center">
+          <div className="fixed inset-0 bg-slate-900/95 z-[110] flex flex-col p-4 sm:p-8 backdrop-blur-xl animate-in fade-in duration-200 justify-center">
             <div className="bg-white rounded-[2.5rem] shadow-2xl flex flex-col overflow-hidden max-h-full max-w-md w-full mx-auto">
               <div className="flex justify-between items-center p-6 border-b border-slate-200 bg-slate-50">
                 <div>
@@ -4747,9 +4747,9 @@ export default function App() {
          </div>
 
          {practiceStatPrompt && (
-             <div className="absolute inset-0 bg-slate-900/80 z-[100] flex flex-col justify-end sm:items-center sm:justify-center p-0 sm:p-4 backdrop-blur-md animate-in fade-in overflow-hidden">
-               <div className="bg-white w-full max-w-sm rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl overflow-hidden flex flex-col border-t border-l border-r sm:border border-[#0033A0]/20 max-h-[85vh] sm:max-h-[90vh]">
-                 <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-4 flex justify-between items-center text-white shrink-0">
+             <div className="fixed inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-4 sm:p-6 backdrop-blur-md animate-in fade-in overflow-hidden">
+               <div className="bg-white w-full max-w-xl rounded-[2rem] shadow-2xl overflow-hidden flex flex-col border border-[#0033A0]/20 max-h-[90vh]">
+                 <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-4 sm:p-5 flex justify-between items-center text-white shrink-0">
                    <div className="font-black text-xl tracking-widest uppercase flex items-center">
                      <Activity size={20} className="mr-2" />
                      {practiceStatPrompt.type}
