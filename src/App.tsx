@@ -191,8 +191,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
               if (s.metric === "Kill") pTeam.attKill += 1;
               if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Stuffed") pTeam.attErr += 1;
             } else if (s.category === "Block") {
-              if (s.metric === "Attempt") pTeam.blkCount += (s.value || 1);
-              if (s.metric === "Block") pTeam.blkStuff += (s.value || 1);
+              if (s.metric === "Block" || s.metric === "Play On" || s.metric === "Stuffed") pTeam.blkStuff += (s.value || 1);
               if (s.metric === "Late") pTeam.blkLate += (s.value || 1);
               if (s.metric === "Net Viol") pTeam.blkNet += (s.value || 1);
               if (s.metric === "Used") pTeam.blkUsed += (s.value || 1);
@@ -279,7 +278,8 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
                     const isTotal = p.name === "CAREER TOTAL";
                     const passAvg = p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "-";
                     const killPct = p.attCount > 0 ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%" : "0.0%";
-                    const blkTot = p.blkCount + p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
+                    const blkTot = p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
+                    const blkLatePct = blkTot > 0 ? ((p.blkLate / blkTot) * 100).toFixed(0) + "%" : "0%";
                     const srvTot = p.srvCount + p.srvAce + p.srvErr;
 
                     return (
@@ -1968,8 +1968,7 @@ export default function App() {
             p.attErr += 1;
           if (s.metric === "Blocked" || s.metric === "Stuffed") p.attBlk += 1;
         } else if (s.category === "Block") {
-          if (s.metric === "Attempt") p.blkCount += (s.value || 1);
-          if (s.metric === "Block") p.blkStuff += (s.value || 1);
+          if (s.metric === "Block" || s.metric === "Play On" || s.metric === "Stuffed") p.blkStuff += (s.value || 1);
           if (s.metric === "Late") p.blkLate += (s.value || 1);
           if (s.metric === "Net Viol") p.blkNet += (s.value || 1);
           if (s.metric === "Used") p.blkUsed += (s.value || 1);
@@ -1988,12 +1987,13 @@ export default function App() {
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
-    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,% Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
     Object.values(uccStats).forEach((p) => {
       const passAvg =
         p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
-      const blkTot = p.blkCount + p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
+      const blkTot = p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
+      const blkLatePct = blkTot > 0 ? ((p.blkLate / blkTot) * 100).toFixed(0) + "%" : "0%";
       const srvTot = p.srvCount + p.srvAce + p.srvErr;
       const killPct =
         p.attCount > 0
@@ -3982,7 +3982,7 @@ export default function App() {
                     <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
                       <Shield size={12} className="mr-1 text-slate-500" /> Block
                     </h4>
-                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
+                  <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
                     <button
                       onClick={() => {
                         setBlockAssistPrompt({ playerId: selectedPlayerId, isOpp: false, step: "type" });
@@ -4005,18 +4005,6 @@ export default function App() {
                     >
                       <span className="text-xs sm:text-sm">BLOCK</span>
                       <span className="text-[8px] sm:text-[9px] opacity-75">(Play On)</span>
-                    </button>
-                    <button
-                      onClick={() =>
-                        recordStatAndCheckPoint(
-                          selectedPlayerId,
-                          "Block",
-                          "Attempt"
-                        )
-                      }
-                      className="bg-gradient-to-b from-slate-600 to-slate-700 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95"
-                    >
-                      TOUCH
                     </button>
                     <button
                       onClick={() =>
@@ -4709,7 +4697,7 @@ export default function App() {
                         dCount++;
                         if (s.metric === "Error") dErr++;
                      } else if (s.category === "Block" && s.metric === "Block") {
-                        blkCount++;
+                        blkCount += (s.value || 1);
                      }
                   }
                });
@@ -4808,8 +4796,10 @@ export default function App() {
                    )}
                    {practiceStatPrompt.type === 'Block' && (
                       <div className="flex flex-col gap-2">
-                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Block'); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">STUFF BLOCK</button>
-                         <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Attempt'); setPracticeStatPrompt(null); }} className="bg-slate-200 text-slate-800 p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border border-slate-300 uppercase">TOUCH (ATTEMPT)</button>
+                         <div className="grid grid-cols-2 gap-2">
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Block', 1); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">STUFF (SOLO)</button>
+                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Block', 0.5); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-teal-500 to-teal-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">HALF (ASSIST)</button>
+                         </div>
                          <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
                             <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERRORS <span className="h-px bg-slate-200 flex-1 ml-2"></span>
                          </div>
@@ -4859,21 +4849,21 @@ export default function App() {
       const playerStats = filteredStats.filter(s => s.playerId === playerId);
       let pSum = 0; let pCount = 0; let aCount = 0; let aKill = 0; let aErr = 0; let dCount = 0; let dErr = 0; let sCount = 0; let sAce = 0; let sErr = 0; let bTot = 0;
       playerStats.forEach(s => {
-        if (s.statType === "Pass") {
-          pCount++; pSum += (parseFloat(s.result) || 0);
-        } else if (s.statType === "Attack") {
-          aCount++;
-          if (s.result === "Kill") aKill++;
-          if (s.result === "Error" || s.result === "Blocked") aErr++;
-        } else if (s.statType === "Dig") {
-          dCount++;
-          if (s.result === "Error") dErr++;
-        } else if (s.statType === "Serve") {
-          sCount++;
-          if (s.result === "Ace") sAce++;
-          if (s.result === "Error") sErr++;
-        } else if (s.statType === "Block" && s.result === "Block") {
-          bTot++;
+        if (s.category === "Pass") {
+          pCount++; pSum += (s.value || 0);
+        } else if (s.category === "Attack") {
+          if (["Swing", "Swing Front", "Swing Back", "Blocked", "Stuffed", "Out", "Net", "Out/Net", "Kill"].includes(s.metric)) aCount++;
+          if (s.metric === "Kill") aKill++;
+          if (["Out", "Net", "Out/Net", "Stuffed"].includes(s.metric)) aErr++;
+        } else if (s.category === "Dig") {
+          if (s.metric === "Dig") dCount++;
+          if (s.metric === "Error") dErr++;
+        } else if (s.category === "Serve") {
+          if (s.metric === "Attempt" || s.metric === "Ace" || s.metric?.includes("Miss")) sCount++;
+          if (s.metric === "Ace") sAce++;
+          if (s.metric?.includes("Miss")) sErr++;
+        } else if (s.category === "Block" && (s.metric === "Block" || s.metric === "Play On" || s.metric === "Stuffed")) {
+          bTot += (s.value || 1);
         }
       });
       return {
@@ -5258,11 +5248,11 @@ export default function App() {
                           ? (p.passSum / p.passCount).toFixed(2)
                           : "-";
                       const blkTot =
-                        p.blkCount +
                         p.blkStuff +
                         p.blkLate +
                         p.blkNet +
                         p.blkUsed;
+                      const blkLatePct = blkTot > 0 ? ((p.blkLate / blkTot) * 100).toFixed(0) + "%" : "0%";
                       const srvTot = p.srvCount + p.srvAce + p.srvErr;
                       const killPct =
                         p.attCount > 0
@@ -5326,9 +5316,16 @@ export default function App() {
                           <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30">
                             {killPct}
                           </td>
-                          <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap">
-                            {blkTot}-{p.blkStuff}-{p.blkLate}-{p.blkNet}-
-                            {p.blkUsed}
+                          <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell">
+                            {blkTot} (Tot) - <strong className="text-indigo-600">{p.blkStuff}</strong> - <span className="text-amber-600">{blkLatePct}</span> - {p.blkNet} - {p.blkUsed}
+                          </td>
+                          <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-slate-700">{blkTot}</span>
+                              <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold whitespace-nowrap bg-white px-1 py-0.5 rounded border border-slate-200 mt-1">
+                                {p.blkStuff} <span className="text-slate-300 mx-0.5">•</span> <span className="text-amber-600">{blkLatePct}</span> <span className="text-slate-300 mx-0.5">•</span> {p.blkNet} <span className="text-slate-300 mx-0.5">•</span> {p.blkUsed}
+                              </span>
+                            </div>
                           </td>
                           <td className="p-2 sm:p-3 border-l border-slate-100 text-center">
                             <span className="font-bold text-slate-600">
