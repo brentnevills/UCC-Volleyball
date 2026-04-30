@@ -279,7 +279,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
                     const isTotal = p.name === "CAREER TOTAL";
                     const passAvg = p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "-";
                     const killPct = p.attCount > 0 ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%" : "0.0%";
-                    const blkTot = p.blkCount + p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
+                    const blkTot = p.blkCount + p.blkStuff;
                     const srvTot = p.srvCount + p.srvAce + p.srvErr;
 
                     return (
@@ -1057,11 +1057,13 @@ export default function App() {
         }
       }
       
-      // Update local state proactively
-      setAppData(prev => ({
-        ...prev,
-        matches: prev.matches.map(m => m.id === activeMatch.id ? { ...m, isLive: false } : m)
-      }));
+      const newMatches = appData.matches.map(m => m.id === activeMatch.id ? { ...m, isLive: false } : m);
+      
+      if (!isFirebaseAvailable) {
+        writeLocalDb({ ...appData, matches: newMatches });
+      } else {
+        setAppData(prev => ({ ...prev, matches: newMatches }));
+      }
 
       setActiveMatch(null);
       setActiveSetId(null);
@@ -1305,12 +1307,6 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
 
-    // Late block UI feedback
-    if (category === "Block" && metric === "Late") {
-      setLateBlockPlayerId(playerId);
-      setTimeout(() => setLateBlockPlayerId(null), 1000);
-    }
-
     // Optimistic local update for responsiveness
     setAppData(prev => ({
       ...prev,
@@ -1332,8 +1328,32 @@ export default function App() {
     }
   };
 
+  const handleBlockAction = (playerId, blockMetric) => {
+    if (blockMetric === "Late") {
+      if (lateBlockPlayerId === playerId) {
+        setLateBlockPlayerId(null);
+        recordStatAndCheckPoint(playerId, "Block", "Late");
+        setSelectedPlayerId(null);
+      } else {
+        setLateBlockPlayerId(playerId);
+      }
+    } else {
+      if (lateBlockPlayerId === playerId) {
+        logStat(playerId, "Block", "Late");
+        setLateBlockPlayerId(null);
+      }
+
+      if (blockMetric === "Stuff") {
+        setBlockAssistPrompt({ playerId, isOpp: false, step: "type" });
+        setSelectedPlayerId(null);
+      } else {
+        recordStatAndCheckPoint(playerId, "Block", blockMetric);
+      }
+    }
+  };
+
   const recordStatAndCheckPoint = (playerId, category, metric, value = 1) => {
-    const isPointEnding = (category === "Attack" && (metric === "Kill" || metric === "Out" || metric === "Net" || metric === "Stuffed" || metric === "Error")) || (category === "Block" && metric === "Block");
+    const isPointEnding = (category === "Attack" && (metric === "Kill" || metric === "Out" || metric === "Net" || metric === "Stuffed" || metric === "Error")) || (category === "Block" && (metric === "Block" || metric === "Stuffed"));
     if (isPointEnding && isProcessingPointRef.current) return;
     if (isPointEnding) {
       isProcessingPointRef.current = true;
@@ -1346,8 +1366,7 @@ export default function App() {
     const currentLineupIdx = lineup.indexOf(playerId);
     const isBackRow = [0, 4, 5].includes(currentLineupIdx) || playerId === liberoId;
 
-    // Only close modal if it's NOT a 'Late' block
-    if (!(category === "Block" && metric === "Late")) {
+    if (category !== "Block") {
       setSelectedPlayerId(null);
     }
 
@@ -1383,7 +1402,7 @@ export default function App() {
   };
 
   const recordOppStatAndCheckPoint = (oppId, category, metric, value = 1) => {
-    const isPointEnding = (category === "Attack" && (metric === "Kill" || metric === "Out" || metric === "Net" || metric === "Stuffed" || metric === "Error")) || (category === "Block" && metric === "Block");
+    const isPointEnding = (category === "Attack" && (metric === "Kill" || metric === "Out" || metric === "Net" || metric === "Stuffed" || metric === "Error")) || (category === "Block" && (metric === "Block" || metric === "Stuffed"));
     if (isPointEnding && isProcessingPointRef.current) return;
     if (isPointEnding) {
       isProcessingPointRef.current = true;
@@ -1396,8 +1415,7 @@ export default function App() {
     const currentLineupIdx = oppLineup.indexOf(oppId);
     const isBackRow = [0, 4, 5].includes(currentLineupIdx) || oppId === oppLiberoId;
 
-    // Only close modal if it's NOT a 'Late' block (for symmetry)
-    if (!(category === "Block" && metric === "Late")) {
+    if (category !== "Block") {
       setSelectedOppId(null);
     }
 
@@ -1993,7 +2011,7 @@ export default function App() {
     Object.values(uccStats).forEach((p) => {
       const passAvg =
         p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
-      const blkTot = p.blkCount + p.blkStuff + p.blkLate + p.blkNet + p.blkUsed;
+      const blkTot = p.blkCount + p.blkStuff;
       const srvTot = p.srvCount + p.srvAce + p.srvErr;
       const killPct =
         p.attCount > 0
@@ -3984,36 +4002,21 @@ export default function App() {
                     </h4>
                   <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
                     <button
-                      onClick={() => {
-                        setBlockAssistPrompt({ playerId: selectedPlayerId, isOpp: false, step: "type" });
-                        setSelectedPlayerId(null);
-                      }}
+                      onClick={() => handleBlockAction(selectedPlayerId, "Stuff")}
                       className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 flex flex-col items-center justify-center leading-tight"
                     >
                       <span className="text-xs sm:text-sm">STUFF</span>
                       <span className="text-[8px] sm:text-[9px] opacity-75">(Point)</span>
                     </button>
                     <button
-                      onClick={() =>
-                        recordStatAndCheckPoint(
-                          selectedPlayerId,
-                          "Block",
-                          "Play On"
-                        )
-                      }
+                      onClick={() => handleBlockAction(selectedPlayerId, "Play On")}
                       className="bg-gradient-to-b from-teal-500 to-teal-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 flex flex-col items-center justify-center leading-tight"
                     >
                       <span className="text-xs sm:text-sm">BLOCK</span>
                       <span className="text-[8px] sm:text-[9px] opacity-75">(Play On)</span>
                     </button>
                     <button
-                      onClick={() =>
-                        recordStatAndCheckPoint(
-                          selectedPlayerId,
-                          "Block",
-                          "Used"
-                        )
-                      }
+                      onClick={() => handleBlockAction(selectedPlayerId, "Used")}
                       className="bg-gradient-to-b from-slate-400 to-slate-500 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95"
                     >
                       USED
@@ -4021,25 +4024,13 @@ export default function App() {
                   </div>
                   <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
                     <button
-                      onClick={() =>
-                        recordStatAndCheckPoint(
-                          selectedPlayerId,
-                          "Block",
-                          "Late"
-                        )
-                      }
+                      onClick={() => handleBlockAction(selectedPlayerId, "Late")}
                       className={lateBlockPlayerId === selectedPlayerId ? "bg-amber-400 text-amber-950 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-amber-500 active:scale-95 uppercase tracking-wider transition-colors shadow-inner" : "bg-slate-100 text-slate-600 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-slate-200 active:scale-95 uppercase tracking-wider transition-colors"}
                     >
                       Late
                     </button>
                     <button
-                      onClick={() =>
-                        recordStatAndCheckPoint(
-                          selectedPlayerId,
-                          "Block",
-                          "Net Viol"
-                        )
-                      }
+                      onClick={() => handleBlockAction(selectedPlayerId, "Net Viol")}
                       className="bg-slate-100 text-slate-600 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-slate-200 active:scale-95 uppercase tracking-wider"
                     >
                       Net Viol
@@ -5247,12 +5238,7 @@ export default function App() {
                         p.passCount > 0
                           ? (p.passSum / p.passCount).toFixed(2)
                           : "-";
-                      const blkTot =
-                        p.blkCount +
-                        p.blkStuff +
-                        p.blkLate +
-                        p.blkNet +
-                        p.blkUsed;
+                      const blkTot = p.blkCount + p.blkStuff;
                       const srvTot = p.srvCount + p.srvAce + p.srvErr;
                       const killPct =
                         p.attCount > 0
