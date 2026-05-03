@@ -191,8 +191,8 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
               if (s.metric === "Kill") pTeam.attKill += 1;
               if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Stuffed") pTeam.attErr += 1;
             } else if (s.category === "Block") {
-              if (s.metric === "Play On") pTeam.blkCount += (s.value || 1);
-              if (s.metric === "Block" || s.metric === "Stuffed") pTeam.blkStuff += (s.value || 1);
+              if (s.metric === "Play On" || s.metric === "Touch") pTeam.blkCount += (s.value || 1);
+              if (s.metric === "Block" || s.metric === "Stuffed" || s.metric === "Stuff") pTeam.blkStuff += (s.value || 1);
               if (s.metric === "Late") pTeam.blkLate += (s.value || 1);
               if (s.metric === "Net Viol") pTeam.blkNet += (s.value || 1);
               if (s.metric === "Used") pTeam.blkUsed += (s.value || 1);
@@ -270,7 +270,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
                     <th className="p-3 font-black text-center border-l">DIGS (D-Err)</th>
                     <th className="p-3 font-black text-center border-l bg-slate-50">SWINGS (Att-K-Err)</th>
                     <th className="p-3 font-black text-center border-l text-green-600">KILL %</th>
-                    <th className="p-3 font-black text-center border-l bg-slate-50">BLOCKS (Tot-Stf-Lt-Net-Usd)</th>
+                    <th className="p-3 font-black text-center border-l bg-slate-50">BLOCKS (Tot(Stf)-Lt-Net-Usd)</th>
                     <th className="p-3 font-black text-center border-l">SERVES (Tot-A-Err)</th>
                   </tr>
                 </thead>
@@ -301,8 +301,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
                             {killPct}
                          </td>
                          <td className="p-3 text-center border-l bg-slate-50/30 relative group whitespace-nowrap">
-                            <span className="font-bold">{blkTot}</span> - 
-                            <strong className="text-indigo-600 text-base mx-1">{p.blkStuff}</strong> - 
+                            <span className="font-bold">{blkTot}</span>(<strong className="text-indigo-600 text-base">{p.blkStuff}</strong>) - 
                             <span>{p.blkLate}</span> - <span>{p.blkNet}</span> - <span>{p.blkUsed}</span>
                          </td>
                          <td className="p-3 text-center border-l whitespace-nowrap">
@@ -441,7 +440,12 @@ export default function App() {
   const [newOppNumber, setNewOppNumber] = useState("");
   const [selectedOppId, setSelectedOppId] = useState(null);
   const [lateBlockPlayerId, setLateBlockPlayerId] = useState(null);
-  const [practiceStatPrompt, setPracticeStatPrompt] = useState(null);
+  const [statPrompt, setStatPrompt] = useState<{playerId: string, type: string, isOpp: boolean, step?: string, latePressed?: boolean} | null>(null);
+  const [practiceStatPrompt, setPracticeStatPrompt] = useState<{playerId: string, type: string, step?: string, latePressed?: boolean} | null>(null);
+  const [showPositioning, setShowPositioning] = useState(false);
+  const [viewOppStats, setViewOppStats] = useState(false);
+  const [subPairs, setSubPairs] = useState<{ [key: string]: string }>({});
+  const [pendingAutoSub, setPendingAutoSub] = useState<{outId: string, inId: string} | null>(null);
   const [tempNote, setTempNote] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [setWinnerModal, setSetWinnerModal] = useState(null);
@@ -1065,9 +1069,9 @@ export default function App() {
         setAppData(prev => ({ ...prev, matches: newMatches }));
       }
 
+      viewStatsWithCurrentMatch();
       setActiveMatch(null);
       setActiveSetId(null);
-      setView("menu");
     }
   };
 
@@ -1353,13 +1357,6 @@ export default function App() {
   };
 
   const recordStatAndCheckPoint = (playerId, category, metric, value = 1) => {
-    const isPointEnding = (category === "Attack" && (metric === "Kill" || metric === "Out" || metric === "Net" || metric === "Stuffed" || metric === "Error")) || (category === "Block" && (metric === "Block" || metric === "Stuffed"));
-    if (isPointEnding && isProcessingPointRef.current) return;
-    if (isPointEnding) {
-      isProcessingPointRef.current = true;
-      setTimeout(() => { isProcessingPointRef.current = false; }, 500);
-    }
-    
     pushToHistory();
     logStat(playerId, category, metric, value);
     
@@ -1374,24 +1371,14 @@ export default function App() {
       const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
       if (metric === "Kill") {
         logStat(playerId, "Attack", swingMetric, 1);
-        handlePoint("ucc", true);
       } else if (metric === "Out" || metric === "Net" || metric === "Stuffed") {
         logStat(playerId, "Attack", swingMetric, 1);
         logStat(playerId, "Attack", metric, 1); // Also log the specific error
-        handlePoint("opp", true);
       } else if (metric === "Swing" || metric === "Blocked") {
         logStat(playerId, "Attack", swingMetric, 1);
         if (metric === "Blocked") {
            logStat(playerId, "Attack", "Blocked", 1);
         }
-      }
-    }
-    if (category === "Block") {
-      if (metric === "Block" || metric === "Stuffed") {
-         handlePoint("ucc", true);
-      }
-      else if (metric === "Net Viol") {
-         handlePoint("opp", true);
       }
     }
     
@@ -1402,13 +1389,6 @@ export default function App() {
   };
 
   const recordOppStatAndCheckPoint = (oppId, category, metric, value = 1) => {
-    const isPointEnding = (category === "Attack" && (metric === "Kill" || metric === "Out" || metric === "Net" || metric === "Stuffed" || metric === "Error")) || (category === "Block" && (metric === "Block" || metric === "Stuffed"));
-    if (isPointEnding && isProcessingPointRef.current) return;
-    if (isPointEnding) {
-      isProcessingPointRef.current = true;
-      setTimeout(() => { isProcessingPointRef.current = false; }, 500);
-    }
-
     pushToHistory();
     logStat(oppId, category, metric, value, true);
     
@@ -1423,11 +1403,9 @@ export default function App() {
       const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
       if (metric === "Kill") {
         logStat(oppId, "Attack", swingMetric, 1, true);
-        handlePoint("opp", true);
       } else if (metric === "Out" || metric === "Net" || metric === "Stuffed") {
         logStat(oppId, "Attack", swingMetric, 1, true);
         logStat(oppId, "Attack", metric, 1, true);
-        handlePoint("ucc", true);
       } else if (metric === "Swing" || metric === "Blocked") {
         logStat(oppId, "Attack", swingMetric, 1, true);
         if (metric === "Blocked") {
@@ -1436,15 +1414,6 @@ export default function App() {
       }
     }
 
-    if (category === "Block") {
-      if (metric === "Block" || metric === "Stuffed") {
-         handlePoint("opp", true);
-      }
-      else if (metric === "Net Viol") {
-         handlePoint("ucc", true);
-      }
-    }
-    
     // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
     if (rallyPhase === "receive" || rallyPhase === "opp_receive" || category === "Pass") {
       changeRallyPhase("play");
@@ -1690,6 +1659,11 @@ export default function App() {
       updateSetState({ lineup: newLineup });
       setSelectedPlayerId(benchPlayerId);
       setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+
+      const newPairs = { ...subPairs };
+      newPairs[selectedPlayerId] = benchPlayerId;
+      newPairs[benchPlayerId] = selectedPlayerId;
+      setSubPairs(newPairs);
     }
     setSubModalVisible(false);
     setSelectedPlayerId(null);
@@ -1986,8 +1960,8 @@ export default function App() {
             p.attErr += 1;
           if (s.metric === "Blocked" || s.metric === "Stuffed") p.attBlk += 1;
         } else if (s.category === "Block") {
-          if (s.metric === "Play On") p.blkCount += (s.value || 1);
-          if (s.metric === "Block" || s.metric === "Stuffed") p.blkStuff += (s.value || 1);
+          if (s.metric === "Play On" || s.metric === "Touch") p.blkCount += (s.value || 1);
+          if (s.metric === "Block" || s.metric === "Stuffed" || s.metric === "Stuff") p.blkStuff += (s.value || 1);
           if (s.metric === "Late") p.blkLate += (s.value || 1);
           if (s.metric === "Net Viol") p.blkNet += (s.value || 1);
           if (s.metric === "Used") p.blkUsed += (s.value || 1);
@@ -3448,6 +3422,16 @@ export default function App() {
   }
 
   if (view === "game") {
+    const handleGameStat = (playerId, category, metric, value = 1) => {
+      if (statPrompt?.isOpp) {
+        // use recordOppStatAndCheckPoint for opponents
+        // Opponent categories are mostly Attack & Serve errors previously, but we can log anything via standard func
+        recordOppStatAndCheckPoint(playerId, category, metric);
+      } else {
+        recordStatAndCheckPoint(playerId, category, metric, value);
+      }
+    };
+
     return (
       <div className="fixed inset-0 bg-slate-900 flex flex-col landscape:flex-row font-sans select-none overflow-hidden">
         {/* HEADER / SCOREBOARD */}
@@ -3583,21 +3567,29 @@ export default function App() {
           </div>
         </header>
 
-        {/* FULL SCREEN COURT */}
-        <div className="flex-1 flex items-center justify-center relative bg-slate-900 shadow-inner p-2 sm:p-4 md:p-6 landscape:p-2 overflow-hidden min-h-0 landscape:min-w-0">
-
-          {/* Background Logo */}
-          <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
-            <img
-              src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
-              alt="Lancers Logo bg"
-              className="h-[300px] w-[300px] sm:h-[500px] sm:w-[500px] object-contain"
-            />
+        {/* NEW COLLAPSIBLE COURT AND TABLE VIEW */}
+        <div className="flex-1 flex flex-col relative bg-slate-100 overflow-hidden min-h-0 landscape:min-w-0">
+          
+          <div className="p-2 sm:p-4 flex items-center justify-between bg-white border-b border-slate-200 shrink-0">
+             <button onClick={() => setShowPositioning(true)} className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors">
+                Show Court
+             </button>
+             <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
+                <button onClick={() => setViewOppStats(false)} className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all ${!viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}>Lancers</button>
+                <button onClick={() => setViewOppStats(true)} className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all ${viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}>{opponentName}</button>
+             </div>
           </div>
 
-          {/* COURT CONTAINER */}
-          <div className="w-full max-w-[600px] landscape:max-w-none landscape:w-auto landscape:aspect-[1/2] h-full bg-[#c28e60] p-1.5 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-lg flex flex-col border-2 sm:border-4 border-slate-800 mx-auto">
-            <div className="flex-1 bg-gradient-to-b from-[#e3b587] to-[#d6a575] border-2 sm:border-[6px] border-white relative flex flex-col shadow-inner">
+          {showPositioning && (
+             <div className="fixed inset-0 z-[150] bg-slate-900/80 backdrop-blur-md flex flex-col justify-center items-center p-4">
+               <div className="bg-slate-100 p-4 rounded-[2rem] shadow-2xl relative w-full max-w-[500px]">
+                 <button onClick={() => setShowPositioning(false)} className="absolute top-2 right-2 text-slate-500 hover:text-slate-800 shrink-0 p-2 z-10 bg-white rounded-full shadow-sm">
+                   <X size={20} />
+                 </button>
+                 <div className="text-center font-black uppercase text-slate-500 mb-2 tracking-widest text-sm">Court Positioning</div>
+                {/* COURT CONTAINER */}
+                <div className="w-full max-w-[400px] bg-[#c28e60] p-1.5 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-lg flex flex-col border-2 border-slate-800 mx-auto aspect-[1/2]">
+                  <div className="flex-1 bg-gradient-to-b from-[#e3b587] to-[#d6a575] border-2 border-white relative flex flex-col shadow-inner">
               {/* OPPONENT SIDE */}
               <div className="flex-1 relative flex flex-col justify-between p-1 sm:p-4 border-b-2 sm:border-b-4 border-white/80">
                 <div className="absolute bottom-[33.33%] left-0 w-full border-t-[2px] sm:border-t-[3px] border-white/60 shadow-[0_2px_4px_rgba(0,0,0,0.1)]"></div>
@@ -3772,6 +3764,69 @@ export default function App() {
 
             </div>
           </div>
+               </div>
+             </div>
+          )}
+
+          <div className="flex-1 overflow-auto p-2 sm:p-4 w-full">
+             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-5xl mx-auto overflow-x-auto">
+                 <table className="w-full text-left border-collapse min-w-[600px]">
+                   <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                         {!viewOppStats && <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-20">Sub</th>}
+                         <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black">Player</th>
+                         <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">Pass</th>
+                         <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">Attack</th>
+                         <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">Block</th>
+                         <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">Dig</th>
+                      </tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-100">
+                      {(!viewOppStats ? [...lineup, liberoId] : oppLineup).filter((id) => id && id !== liberoSwappedOutId).sort((a,b) => {
+                         if (viewOppStats) return 0;
+                         const numA = parseInt(appData.roster.find((r) => r.id === a)?.number || "0", 10);
+                         const numB = parseInt(appData.roster.find((r) => r.id === b)?.number || "0", 10);
+                         return numA - numB;
+                      }).map((id, index) => {
+                         const pName = !viewOppStats 
+                            ? appData.roster.find((r) => r.id === id)?.name || id
+                            : id;
+                         const pNum = !viewOppStats 
+                            ? appData.roster.find((r) => r.id === id)?.number || "-"
+                            : "";
+                         return (
+                            <tr key={index} className="hover:bg-slate-50/50 transition-colors">
+                               {!viewOppStats && (
+                                   <td className="p-1.5 pt-2 flex items-center justify-center">
+                                     <button onClick={() => {
+                                        if (subPairs[id]) {
+                                             setPendingAutoSub({ outId: id, inId: subPairs[id] });
+                                        } else {
+                                             setSelectedPlayerId(id);
+                                             setSubModalVisible(true);
+                                        }
+                                     }} className="w-full py-2 px-1 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center border border-slate-200 shadow-sm">
+                                        <ArrowRightLeft size={12} className="mr-1" /> {subPairs[id] ? "Auto Sub" : "Sub"}
+                                     </button>
+                                   </td>
+                               )}
+                               <td className="p-3">
+                                  <div className="font-bold text-slate-700 capitalize flex items-center gap-2">
+                                     {!viewOppStats && <span className="w-6 h-6 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-xs shrink-0">{pNum}</span>}
+                                     <span className="truncate">{pName}</span>
+                                  </div>
+                               </td>
+                               <td className="p-1.5"><button onClick={() => setStatPrompt({playerId: id, type: 'Pass', isOpp: viewOppStats})} className="w-full py-2 px-1 bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-blue-100">Pass</button></td>
+                               <td className="p-1.5"><button onClick={() => setStatPrompt({playerId: id, type: 'Attack', isOpp: viewOppStats})} className="w-full py-2 px-1 bg-green-50 hover:bg-green-100 text-green-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-green-100">Attack</button></td>
+                               <td className="p-1.5"><button onClick={() => setStatPrompt({playerId: id, type: 'Block', isOpp: viewOppStats})} className="w-full py-2 px-1 bg-orange-50 hover:bg-orange-100 text-orange-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-orange-100">Block</button></td>
+                               <td className="p-1.5"><button onClick={() => setStatPrompt({playerId: id, type: 'Dig', isOpp: viewOppStats})} className="w-full py-2 px-1 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-amber-100">Dig</button></td>
+                            </tr>
+                         )
+                      })}
+                   </tbody>
+                </table>
+             </div>
+          </div>
         </div>
 
         {/* STICKY BOTTOM BAR (Controls) */}
@@ -3836,6 +3891,120 @@ export default function App() {
         {/* --------------------------------------------------------- */}
         {/* POPUPS (MODALS) */}
         {/* --------------------------------------------------------- */}
+
+        {statPrompt && (
+             <div className="fixed inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-4 sm:p-6 backdrop-blur-md animate-in fade-in overflow-hidden">
+               <div className="bg-white w-full max-w-xl rounded-[2rem] shadow-2xl overflow-hidden flex flex-col border border-[#0033A0]/20 max-h-[90vh]">
+                 <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-4 sm:p-5 flex justify-between items-center text-white shrink-0">
+                   <div className="font-black text-xl tracking-widest uppercase flex items-center">
+                     <Activity size={20} className="mr-2" />
+                     {statPrompt.type}
+                   </div>
+                   <button onClick={() => setStatPrompt(null)} className="text-white/60 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors">
+                     <X size={24} />
+                   </button>
+                 </div>
+                 <div className="p-4 bg-slate-50 space-y-4 overflow-y-auto">
+                   <div className="text-center font-bold text-slate-700 text-lg mb-2">
+                      {(!statPrompt.isOpp ? appData.roster.find(r => r.id === statPrompt.playerId)?.name : statPrompt.playerId) || "Unknown Player"}
+                   </div>
+                   {statPrompt.type === 'Pass' && (
+                      <div className="grid grid-cols-4 gap-2">
+                         {[3, 2, 1, 0].map(val => (
+                            <button key={val} onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Rating', val); setStatPrompt(null); }} className={`p-4 rounded-xl font-black text-2xl shadow-sm active:scale-95 transition-all ${val === 3 ? "bg-gradient-to-b from-green-400 to-green-500 text-white border border-green-500" : val === 0 ? "bg-gradient-to-b from-red-400 to-red-500 text-white border border-red-500" : "bg-white text-slate-700 border border-slate-200"}`}>{val}</button>
+                         ))}
+                         <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Error', 1); setStatPrompt(null); }} className="col-span-4 bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center">PASS ERROR</button>
+                      </div>
+                   )}
+                   {statPrompt.type === 'Serve' && (
+                      <div className="flex flex-col gap-2">
+                         <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Ace'); setStatPrompt(null); }} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">ACE</button>
+                         <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Attempt'); setStatPrompt(null); }} className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">IN PLAY (ATTEMPT)</button>
+                         <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
+                            <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERROR TYPE <span className="h-px bg-slate-200 flex-1 ml-2"></span>
+                         </div>
+                         <div className="grid grid-cols-3 gap-2">
+                            <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Miss - Net'); setStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold border border-red-100 shadow-sm active:scale-95 uppercase text-sm">Net</button>
+                            <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Miss - Long'); setStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold border border-red-100 shadow-sm active:scale-95 uppercase text-sm">Long</button>
+                            <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Miss - Wide'); setStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold border border-red-100 shadow-sm active:scale-95 uppercase text-sm">Wide</button>
+                         </div>
+                      </div>
+                   )}
+                   {statPrompt.type === 'Attack' && (
+                      <div className="flex flex-col gap-2">
+                         <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Kill'); setStatPrompt(null); }} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">KILL</button>
+                         <div className="grid grid-cols-2 gap-2 mt-2">
+                            <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Swing'); setStatPrompt(null); }} className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20">SWING (IN PLAY)</button>
+                            <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Blocked'); setStatPrompt(null); }} className="bg-blue-50 text-blue-700 p-4 rounded-xl font-black text-sm sm:text-base border border-blue-200 shadow-sm active:scale-95 uppercase">BLOCKED (COVERED)</button>
+                         </div>
+                         <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
+                            <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERRORS <span className="h-px bg-slate-200 flex-1 ml-2"></span>
+                         </div>
+                         <div className="grid grid-cols-3 gap-2">
+                            <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Out'); setStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"><span className="text-xl mb-1">↗️</span>Out</button>
+                            <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Net'); setStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"><span className="text-xl mb-1">🥅</span>Net</button>
+                            <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Stuffed'); setStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"><span className="text-xl mb-1">🧱</span>Stuffed</button>
+                         </div>
+                      </div>
+                   )}
+                   {statPrompt.type === 'Dig' && (
+                      <div className="grid grid-cols-2 gap-2">
+                         <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Dig'); setStatPrompt(null); }} className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20">DIG</button>
+                         <button onClick={() => { handleGameStat(statPrompt.playerId, statPrompt.type, 'Error'); setStatPrompt(null); }} className="bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center">DIG ERROR</button>
+                      </div>
+                   )}
+                   {statPrompt.type === 'Block' && !statPrompt.step && (
+                      <div className="flex flex-col gap-2">
+                         <div className="grid grid-cols-2 gap-2">
+                            <button onClick={() => setStatPrompt({...statPrompt, step: 'Stuff'})} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">STUFF</button>
+                            <button onClick={() => setStatPrompt({...statPrompt, step: 'Touch'})} className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">BLOCK (TOUCH)</button>
+                         </div>
+                         <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
+                            <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERRORS & NOTES <span className="h-px bg-slate-200 flex-1 ml-2"></span>
+                         </div>
+                         <div className="grid grid-cols-3 gap-2">
+                            <button onClick={() => {
+                              if (statPrompt.latePressed) {
+                                handleGameStat(statPrompt.playerId, statPrompt.type, 'Late');
+                                setStatPrompt(null);
+                              } else {
+                                setStatPrompt({...statPrompt, latePressed: true});
+                              }
+                            }} className={statPrompt.latePressed ? "bg-amber-400 text-amber-950 p-3 rounded-xl font-bold uppercase shadow-inner active:scale-95 flex items-center justify-center text-sm border-2 border-amber-500" : "bg-slate-50 text-slate-600 p-3 rounded-xl font-bold uppercase border border-slate-200 shadow-sm active:scale-95 flex items-center justify-center text-sm"}>LATE</button>
+                            <button onClick={() => {
+                              if (statPrompt.latePressed) handleGameStat(statPrompt.playerId, statPrompt.type, 'Late');
+                              handleGameStat(statPrompt.playerId, statPrompt.type, 'Used');
+                              setStatPrompt(null);
+                            }} className="bg-slate-50 text-slate-600 p-3 rounded-xl font-bold border border-slate-200 shadow-sm active:scale-95 flex items-center justify-center text-sm">USED</button>
+                            <button onClick={() => {
+                              if (statPrompt.latePressed) handleGameStat(statPrompt.playerId, statPrompt.type, 'Late');
+                              handleGameStat(statPrompt.playerId, statPrompt.type, 'Net Viol');
+                              setStatPrompt(null);
+                            }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold uppercase border border-red-100 shadow-sm active:scale-95 flex items-center justify-center text-sm overflow-hidden whitespace-nowrap overflow-ellipsis">NET VIOL</button>
+                         </div>
+                      </div>
+                   )}
+                   {statPrompt.type === 'Block' && statPrompt.step && (
+                      <div className="flex flex-col gap-2">
+                         <div className="font-bold text-center text-slate-500 uppercase tracking-widest">{statPrompt.step}: Solo or Half?</div>
+                         <div className="grid grid-cols-2 gap-2">
+                            <button onClick={() => {
+                              if (statPrompt.latePressed) handleGameStat(statPrompt.playerId, statPrompt.type, 'Late');
+                              handleGameStat(statPrompt.playerId, statPrompt.type, statPrompt.step, 1);
+                              setStatPrompt(null);
+                            }} className="bg-gradient-to-b from-indigo-500 to-indigo-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">SOLO</button>
+                            <button onClick={() => {
+                              if (statPrompt.latePressed) handleGameStat(statPrompt.playerId, statPrompt.type, 'Late');
+                              handleGameStat(statPrompt.playerId, statPrompt.type, statPrompt.step, 0.5);
+                              setStatPrompt(null);
+                            }} className="bg-gradient-to-b from-teal-500 to-teal-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">HALF</button>
+                         </div>
+                      </div>
+                   )}
+                 </div>
+               </div>
+             </div>
+          )}
 
         {/* UCC PLAYER ACTION MODAL */}
         {selectedPlayerId && selectedPlayerObj && (
@@ -4577,6 +4746,59 @@ export default function App() {
           </div>
         )}
 
+        {/* PENDING AUTO SUB MODAL */}
+        {pendingAutoSub && (
+          <div className="fixed inset-0 bg-slate-900/80 z-[120] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-[2rem] p-6 max-w-sm w-full shadow-2xl flex flex-col items-center text-center">
+              <ArrowRightLeft className="w-16 h-16 text-indigo-500 mb-4 bg-indigo-50 rounded-full p-3" />
+              <h2 className="text-xl sm:text-2xl font-black text-slate-800 mb-2 uppercase tracking-widest">
+                Confirm Sub
+              </h2>
+              <p className="text-slate-600 font-bold mb-6">
+                Switch <span className="text-indigo-600">{appData.roster.find(r => r.id === pendingAutoSub.outId)?.name || pendingAutoSub.outId}</span> for <span className="text-indigo-600">{appData.roster.find(r => r.id === pendingAutoSub.inId)?.name || pendingAutoSub.inId}</span>?
+              </p>
+              <div className="flex flex-col gap-3 w-full">
+                <button
+                  onClick={() => {
+                    const { outId, inId } = pendingAutoSub;
+                    pushToHistory();
+                    const ldx = lineup.indexOf(outId);
+                    if (ldx !== -1) {
+                        const newLineup = [...lineup];
+                        newLineup[ldx] = inId;
+                        setLineup(newLineup);
+                        updateSetState({ lineup: newLineup });
+                        setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+                    } else if (outId === liberoId && liberoSwappedOutId) {
+                      // Handling libero if they subbed weirdly, ignore for now
+                    }
+                    setPendingAutoSub(null);
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-xl shadow-lg shadow-indigo-600/30 transition-all uppercase tracking-widest text-lg w-full"
+                >
+                  Yes
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedPlayerId(pendingAutoSub.outId);
+                    setPendingAutoSub(null);
+                    setSubModalVisible(true);
+                  }}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-4 rounded-xl transition-all uppercase tracking-widest text-sm w-full"
+                >
+                  Different Player
+                </button>
+                <button
+                  onClick={() => setPendingAutoSub(null)}
+                  className="mt-2 text-slate-400 font-bold text-sm hover:text-slate-600 uppercase tracking-widest transition-colors w-full py-2"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* UCC SUB MODAL */}
         {subModalVisible && selectedPlayerObj && (
           <div className="fixed inset-0 bg-slate-900/95 z-[110] flex flex-col p-4 sm:p-8 backdrop-blur-xl animate-in fade-in duration-200 justify-center">
@@ -4647,8 +4869,21 @@ export default function App() {
                   <Undo size={18} className="mr-1 hidden sm:block" /> UNDO
                </button>
                <button
-                  onClick={() => {
+                  onClick={async () => {
                      if (confirm("End open practice?")) {
+                        if (isFirebaseAvailable && user && activeTeam) {
+                          try {
+                            await setDoc(doc(db, `${publicPath}/${activeTeam}/matches/${activeMatch.id}`), { isLive: false }, { merge: true });
+                          } catch (e) {
+                            console.error("Failed to mark match complete", e);
+                          }
+                        }
+                        const newMatches = appData.matches.map(m => m.id === activeMatch.id ? { ...m, isLive: false } : m);
+                        if (!isFirebaseAvailable) {
+                          writeLocalDb({ ...appData, matches: newMatches });
+                        } else {
+                          setAppData(prev => ({ ...prev, matches: newMatches }));
+                        }
                         setView("stats");
                         setActiveMatch(null);
                         setActiveSetId(null);
@@ -4687,7 +4922,7 @@ export default function App() {
                      } else if (s.category === "Dig") {
                         dCount++;
                         if (s.metric === "Error") dErr++;
-                     } else if (s.category === "Block" && s.metric === "Block") {
+                     } else if (s.category === "Block" && (s.metric === "Block" || s.metric === "Play On" || s.metric === "Stuffed" || s.metric === "Stuff" || s.metric === "Touch")) {
                         blkCount += (s.value || 1);
                      }
                   }
@@ -4785,18 +5020,51 @@ export default function App() {
                          <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Error'); setPracticeStatPrompt(null); }} className="bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center">DIG ERROR</button>
                       </div>
                    )}
-                   {practiceStatPrompt.type === 'Block' && (
+                   {practiceStatPrompt.type === 'Block' && !practiceStatPrompt.step && (
                       <div className="flex flex-col gap-2">
                          <div className="grid grid-cols-2 gap-2">
-                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Block', 1); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">STUFF (SOLO)</button>
-                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Block', 0.5); setPracticeStatPrompt(null); }} className="bg-gradient-to-b from-teal-500 to-teal-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">HALF (ASSIST)</button>
+                            <button onClick={() => setPracticeStatPrompt({...practiceStatPrompt, step: 'Stuff'})} className="bg-gradient-to-b from-green-500 to-green-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">STUFF</button>
+                            <button onClick={() => setPracticeStatPrompt({...practiceStatPrompt, step: 'Touch'})} className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">BLOCK (TOUCH)</button>
                          </div>
                          <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
-                            <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERRORS <span className="h-px bg-slate-200 flex-1 ml-2"></span>
+                            <span className="h-px bg-slate-200 flex-1 mr-2"></span> ERRORS & NOTES <span className="h-px bg-slate-200 flex-1 ml-2"></span>
                          </div>
+                         <div className="grid grid-cols-3 gap-2">
+                            <button onClick={() => {
+                              if (practiceStatPrompt.latePressed) {
+                                handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Late');
+                                setPracticeStatPrompt(null);
+                              } else {
+                                setPracticeStatPrompt({...practiceStatPrompt, latePressed: true});
+                              }
+                            }} className={practiceStatPrompt.latePressed ? "bg-amber-400 text-amber-950 p-3 rounded-xl font-bold uppercase shadow-inner active:scale-95 flex items-center justify-center text-sm border-2 border-amber-500" : "bg-slate-50 text-slate-600 p-3 rounded-xl font-bold uppercase border border-slate-200 shadow-sm active:scale-95 flex items-center justify-center text-sm"}>LATE</button>
+                            <button onClick={() => {
+                              if (practiceStatPrompt.latePressed) handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Late');
+                              handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Used');
+                              setPracticeStatPrompt(null);
+                            }} className="bg-slate-50 text-slate-600 p-3 rounded-xl font-bold border border-slate-200 shadow-sm active:scale-95 flex items-center justify-center text-sm">USED</button>
+                            <button onClick={() => {
+                              if (practiceStatPrompt.latePressed) handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Late');
+                              handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Net Viol');
+                              setPracticeStatPrompt(null);
+                            }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold uppercase border border-red-100 shadow-sm active:scale-95 flex items-center justify-center text-sm overflow-hidden whitespace-nowrap overflow-ellipsis">NET VIOL</button>
+                         </div>
+                      </div>
+                   )}
+                   {practiceStatPrompt.type === 'Block' && practiceStatPrompt.step && (
+                      <div className="flex flex-col gap-2">
+                         <div className="font-bold text-center text-slate-500 uppercase tracking-widest">{practiceStatPrompt.step}: Solo or Half?</div>
                          <div className="grid grid-cols-2 gap-2">
-                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Late'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold uppercase border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center text-sm"><span className="text-xl mb-1">⏱️</span>Late / Missed</button>
-                            <button onClick={() => { handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Net Viol'); setPracticeStatPrompt(null); }} className="bg-red-50 text-red-600 p-3 rounded-xl font-bold uppercase border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center text-sm"><span className="text-xl mb-1">🥅</span>Net Viol</button>
+                            <button onClick={() => {
+                              if (practiceStatPrompt.latePressed) handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Late');
+                              handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, practiceStatPrompt.step, 1);
+                              setPracticeStatPrompt(null);
+                            }} className="bg-gradient-to-b from-indigo-500 to-indigo-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">SOLO</button>
+                            <button onClick={() => {
+                              if (practiceStatPrompt.latePressed) handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, 'Late');
+                              handlePracticeStat(practiceStatPrompt.playerId, practiceStatPrompt.type, practiceStatPrompt.step, 0.5);
+                              setPracticeStatPrompt(null);
+                            }} className="bg-gradient-to-b from-teal-500 to-teal-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20">HALF</button>
                          </div>
                       </div>
                    )}
@@ -4853,7 +5121,7 @@ export default function App() {
           if (s.metric === "Attempt" || s.metric === "Ace" || s.metric?.includes("Miss")) sCount++;
           if (s.metric === "Ace") sAce++;
           if (s.metric?.includes("Miss")) sErr++;
-        } else if (s.category === "Block" && (s.metric === "Block" || s.metric === "Play On" || s.metric === "Stuffed")) {
+        } else if (s.category === "Block" && (s.metric === "Block" || s.metric === "Play On" || s.metric === "Stuffed" || s.metric === "Stuff" || s.metric === "Touch")) {
           bTot += (s.value || 1);
         }
       });
@@ -5210,7 +5478,7 @@ export default function App() {
                         BLOCKS
                         <br />
                         <span className="opacity-70 font-bold tracking-normal">
-                          (Tot-Stf-Lt-Net-Usd)
+                          (Tot(Stf)-Lt-Net-Usd)
                         </span>
                       </th>
                       <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
@@ -5303,13 +5571,12 @@ export default function App() {
                             {killPct}
                           </td>
                           <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell">
-                            <span className="font-bold">{blkTot}</span> - <strong className="text-indigo-600">{p.blkStuff}</strong> - <span className="text-amber-600">{p.blkLate}</span> - {p.blkNet} - {p.blkUsed}
+                            <span className="font-bold">{blkTot}</span>(<strong className="text-indigo-600">{p.blkStuff}</strong>) - <span className="text-amber-600">{p.blkLate}</span> - {p.blkNet} - {p.blkUsed}
                           </td>
                           <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden">
                             <div className="flex flex-col">
-                              <span className="font-bold text-slate-700">{blkTot}</span>
                               <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold whitespace-nowrap bg-white px-1 py-0.5 rounded border border-slate-200 mt-1">
-                                {p.blkStuff} <span className="text-slate-300 mx-0.5">•</span> <span className="text-amber-600">{p.blkLate}</span> <span className="text-slate-300 mx-0.5">•</span> {p.blkNet} <span className="text-slate-300 mx-0.5">•</span> {p.blkUsed}
+                                <span className="font-bold text-slate-700">{blkTot}</span>({p.blkStuff}) <span className="text-slate-300 mx-0.5">•</span> <span className="text-amber-600">{p.blkLate}</span> <span className="text-slate-300 mx-0.5">•</span> {p.blkNet} <span className="text-slate-300 mx-0.5">•</span> {p.blkUsed}
                               </span>
                             </div>
                           </td>
