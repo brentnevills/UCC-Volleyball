@@ -126,7 +126,7 @@ const getEventDetails = (match) => {
   };
 };
 
-const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => {
+const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [careerList, setCareerList] = useState([]);
 
@@ -150,13 +150,8 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
           if (!setSnap.exists()) continue;
           const r = setSnap.data().roster || [];
           
-          // Match by name AND birthYear (if both have birthYear)
-          const playerMatch = r.find(p => {
-             const nameMatch = p.name.toLowerCase() === playerName.toLowerCase();
-             // Only enforce birthYear match if both the incoming player and the roster player have it defined
-             const birthMatch = (!playerBirthYear || !p.birthYear) ? true : p.birthYear === playerBirthYear;
-             return nameMatch && birthMatch;
-          });
+          // Match by name
+          const playerMatch = r.find(p => p.name.toLowerCase() === playerName.toLowerCase());
           
           if (!playerMatch) continue;
 
@@ -233,7 +228,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
     if (playerName && myTeams.length > 0) {
       load();
     }
-  }, [playerName, playerBirthYear, myTeams]);
+  }, [playerName, myTeams]);
 
   return (
     <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-md flex flex-col p-4 sm:p-12 overflow-hidden items-center justify-center">
@@ -241,7 +236,7 @@ const CareerStatsModal = ({ playerName, playerBirthYear, myTeams, onClose }) => 
         <div className="bg-gradient-to-r from-indigo-700 to-indigo-900 p-6 sm:p-10 rounded-t-3xl sm:rounded-t-[3rem] text-white flex justify-between items-center shrink-0">
           <div>
             <h2 className="text-2xl sm:text-4xl font-black tracking-widest uppercase flex items-center">
-               PROFILE: {playerName} {playerBirthYear ? `(${playerBirthYear})` : ''}
+               PROFILE: {playerName}
             </h2>
             <p className="text-indigo-200 mt-2 font-bold tracking-widest text-sm uppercase">Global Career Stats</p>
           </div>
@@ -389,7 +384,6 @@ export default function App() {
   // Setup State
   const [newPlayerName, setNewPlayerName] = useState("");
   const [newPlayerNum, setNewPlayerNum] = useState("");
-  const [newPlayerBirthYear, setNewPlayerBirthYear] = useState("");
   const [opponentName, setOpponentName] = useState("");
   const [rosterPresetName, setRosterPresetName] = useState("");
   const [lineupPresetName, setLineupPresetName] = useState("");
@@ -450,7 +444,6 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [setWinnerModal, setSetWinnerModal] = useState(null);
   const [careerPlayerName, setCareerPlayerName] = useState(null);
-  const [careerPlayerBirthYear, setCareerPlayerBirthYear] = useState(null);
   const [statFilter, setStatFilter] = useState("all");
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [showRetired, setShowRetired] = useState(false);
@@ -742,16 +735,11 @@ export default function App() {
   };
 
   const addPlayer = async () => {
-    if (newPlayerName && newPlayerNum && newPlayerBirthYear) {
-      if (!/^\d{4}$/.test(newPlayerBirthYear)) {
-          alert("Please enter a valid 4-digit birth year.");
-          return;
-      }
+    if (newPlayerName && newPlayerNum) {
       const newPlayer = {
         id: Date.now().toString(),
         name: newPlayerName,
         number: newPlayerNum,
-        birthYear: newPlayerBirthYear,
         isRetired: false,
       };
       if (isFirebaseAvailable && user) {
@@ -766,9 +754,8 @@ export default function App() {
       }
       setNewPlayerName("");
       setNewPlayerNum("");
-      setNewPlayerBirthYear("");
     } else {
-        alert("Please fill in Name, Number, and Birth Year (YYYY).");
+        alert("Please fill in Name and Number.");
     }
   };
 
@@ -1069,9 +1056,9 @@ export default function App() {
         setAppData(prev => ({ ...prev, matches: newMatches }));
       }
 
-      viewStatsWithCurrentMatch();
       setActiveMatch(null);
       setActiveSetId(null);
+      setView("menu");
     }
   };
 
@@ -1879,7 +1866,6 @@ export default function App() {
       uccData[p.id] = {
         name: p.name,
         number: p.number,
-        birthYear: p.birthYear || null,
         isRetired: p.isRetired || false,
         passSum: 0,
         passCount: 0,
@@ -2741,26 +2727,8 @@ export default function App() {
                       inputMode="numeric"
                       pattern="[0-9]*"
                     />
-                    <input
-                      placeholder="Birth Year (YYYY)"
-                      className="w-24 sm:w-32 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base text-center hidden sm:block"
-                      value={newPlayerBirthYear}
-                      onChange={(e) => setNewPlayerBirthYear(e.target.value)}
-                      maxLength={4}
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                    />
                   </div>
                   <div className="flex flex-1 gap-2">
-                    <input
-                      placeholder="Birth YYYY"
-                      className="w-24 p-2 rounded-lg border border-slate-200 outline-none font-bold text-slate-700 text-sm text-center sm:hidden"
-                      value={newPlayerBirthYear}
-                      onChange={(e) => setNewPlayerBirthYear(e.target.value)}
-                      maxLength={4}
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                    />
                     <input
                       placeholder="Player Name"
                       className="flex-1 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base"
@@ -3249,26 +3217,8 @@ export default function App() {
                       inputMode="numeric"
                       pattern="[0-9]*"
                     />
-                    <input
-                      placeholder="Birth Year (YYYY)"
-                      className="w-24 sm:w-32 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base text-center hidden sm:block"
-                      value={newPlayerBirthYear}
-                      onChange={(e) => setNewPlayerBirthYear(e.target.value)}
-                      maxLength={4}
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                    />
                   </div>
                   <div className="flex flex-1 gap-2">
-                    <input
-                      placeholder="Birth YYYY"
-                      className="w-24 p-2 rounded-lg border border-slate-200 outline-none font-bold text-slate-700 text-sm text-center sm:hidden"
-                      value={newPlayerBirthYear}
-                      onChange={(e) => setNewPlayerBirthYear(e.target.value)}
-                      maxLength={4}
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                    />
                     <input
                       placeholder="Player Name"
                       className="flex-1 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-slate-200 outline-none font-bold text-slate-700 text-sm sm:text-base"
@@ -3806,7 +3756,7 @@ export default function App() {
                                              setSubModalVisible(true);
                                         }
                                      }} className="w-full py-2 px-1 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center border border-slate-200 shadow-sm">
-                                        <ArrowRightLeft size={12} className="mr-1" /> {subPairs[id] ? "Auto Sub" : "Sub"}
+                                        <ArrowRightLeft size={12} className="mr-1" /> Sub
                                      </button>
                                    </td>
                                )}
@@ -5517,10 +5467,7 @@ export default function App() {
                       return (
                         <tr
                           key={p.number}
-                          onClick={() => {
-                            setCareerPlayerName(p.name);
-                            setCareerPlayerBirthYear(p.birthYear || null);
-                          }}
+                          onClick={() => setCareerPlayerName(p.name)}
                           className="hover:bg-blue-50/50 text-[10px] sm:text-xs cursor-pointer transition-colors"
                           title="Click to view full Career Stats across all teams"
                         >
@@ -5756,12 +5703,8 @@ export default function App() {
         {careerPlayerName && (
           <CareerStatsModal 
              playerName={careerPlayerName} 
-             playerBirthYear={careerPlayerBirthYear}
              myTeams={myTeams} 
-             onClose={() => {
-                 setCareerPlayerName(null);
-                 setCareerPlayerBirthYear(null);
-             }} 
+             onClose={() => setCareerPlayerName(null)} 
           />
         )}
       </div>
