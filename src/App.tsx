@@ -1163,7 +1163,22 @@ export default function App() {
     }
   };
 
+  const [isJoinLiveModalOpen, setIsJoinLiveModalOpen] = useState(false);
+
   const joinLiveMatch = () => {
+    const sortedMatches = [...appData.matches].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    );
+    const liveMatches = sortedMatches.filter((m) => m.isLive === true);
+    if (liveMatches.length === 0) {
+      alert("No recent live matches found.");
+      return;
+    }
+    setIsJoinLiveModalOpen(true);
+  };
+
+  const confirmJoinLiveMatch = () => {
+    setIsJoinLiveModalOpen(false);
     enforceFullscreen();
     const sortedMatches = [...appData.matches].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
@@ -3220,6 +3235,63 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* JOIN LIVE MATCH STATS MODAL */}
+        {isJoinLiveModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center p-4 backdrop-blur-md">
+            <div className="bg-white rounded-2xl sm:rounded-[2rem] w-full max-w-md overflow-hidden shadow-2xl flex flex-col">
+              <div className="bg-gradient-to-r from-green-500 to-green-600 p-4 sm:p-6 text-white flex justify-between items-center">
+                <h3 className="font-black text-lg sm:text-xl tracking-widest uppercase flex items-center">
+                  <Database className="mr-2" size={20} /> Stat Tracking
+                </h3>
+                <button
+                  onClick={() => setIsJoinLiveModalOpen(false)}
+                  className="text-green-100 hover:text-white transition-colors bg-green-700/50 p-2 rounded-full"
+                >
+                  <XCircle size={20} />
+                </button>
+              </div>
+              <div className="p-6 bg-slate-50 flex flex-col space-y-4">
+                <p className="text-sm font-bold text-slate-600">
+                  Select which statistics you want to track on your device
+                  before joining the live match.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  {Object.keys(trackedCategories).map((cat) => (
+                    <div
+                      key={cat}
+                      className="flex items-center justify-between bg-white p-3 rounded-xl border border-slate-200 shadow-sm"
+                    >
+                      <label className="text-xs font-bold text-slate-700 tracking-wider">
+                        {cat}
+                      </label>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={trackedCategories[cat]}
+                          onChange={(e) =>
+                            setTrackedCategories((prev) => ({
+                              ...prev,
+                              [cat]: e.target.checked,
+                            }))
+                          }
+                        />
+                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={confirmJoinLiveMatch}
+                  className="w-full bg-green-500 text-white p-4 rounded-xl font-black text-lg tracking-widest hover:bg-green-600 transition-all uppercase shadow-lg mt-4"
+                >
+                  Join Match
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -3425,6 +3497,44 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200">
+              <h2 className="text-base sm:text-lg font-black text-slate-800 tracking-widest uppercase mb-3 sm:mb-4 flex items-center">
+                <Database className="mr-2 text-[#0033A0]" size={18} /> Stat
+                Tracking Options
+              </h2>
+              <p className="text-xs text-slate-500 mb-4 font-medium">
+                Select which statistics you want to track on your device during
+                this match.
+              </p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                {Object.keys(trackedCategories).map((cat) => (
+                  <div
+                    key={cat}
+                    className="flex items-center justify-between bg-white p-2 sm:p-3 rounded-xl border border-slate-200 shadow-sm"
+                  >
+                    <label className="text-[10px] sm:text-xs font-bold text-slate-700 tracking-wider">
+                      {cat}
+                    </label>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={trackedCategories[cat]}
+                        onChange={(e) =>
+                          setTrackedCategories((prev) => ({
+                            ...prev,
+                            [cat]: e.target.checked,
+                          }))
+                        }
+                      />
+                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0033A0]"></div>
+                    </label>
+                  </div>
+                ))}
               </div>
             </div>
 
