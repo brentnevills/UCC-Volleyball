@@ -28,6 +28,7 @@ import {
   LogOut,
   Trash2,
   Maximize,
+  Minimize,
   Eye,
   EyeOff,
 } from "lucide-react";
@@ -406,33 +407,101 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
 };
 
 export default function App() {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const doc = document as any;
+      const isDocFull = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      setIsFullscreen(isDocFull);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
+
+    // Initial check
+    handleFullscreenChange();
+
+    // Auto-enforce fullscreen on first user gestures
+    const autoFullscreenHandler = () => {
+      enforceFullscreen();
+    };
+    window.addEventListener("click", autoFullscreenHandler);
+    window.addEventListener("touchend", autoFullscreenHandler);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+      window.removeEventListener("click", autoFullscreenHandler);
+      window.removeEventListener("touchend", autoFullscreenHandler);
+    };
+  }, []);
+
   const enforceFullscreen = () => {
     try {
+      const doc = document as any;
       const docElm = document.documentElement as any;
-      if (!document.fullscreenElement && !docElm.webkitFullscreenElement) {
+      const isFull = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      if (!isFull) {
         if (docElm.requestFullscreen) {
           docElm.requestFullscreen().catch(() => {});
         } else if (docElm.webkitRequestFullscreen) {
           docElm.webkitRequestFullscreen();
+        } else if (docElm.mozRequestFullScreen) {
+          docElm.mozRequestFullScreen();
+        } else if (docElm.msRequestFullscreen) {
+          docElm.msRequestFullscreen();
         }
       }
     } catch (e) {}
   };
 
-  const toggleFullscreen = () => {
+  const toggleFullscreen = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
     try {
+      const doc = document as any;
       const docElm = document.documentElement as any;
-      if (!document.fullscreenElement && !docElm.webkitFullscreenElement) {
+      const isFull = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      if (!isFull) {
         if (docElm.requestFullscreen) {
           docElm.requestFullscreen().catch(() => {});
         } else if (docElm.webkitRequestFullscreen) {
           docElm.webkitRequestFullscreen();
+        } else if (docElm.mozRequestFullScreen) {
+          docElm.mozRequestFullScreen();
+        } else if (docElm.msRequestFullscreen) {
+          docElm.msRequestFullscreen();
         }
       } else {
-        if (document.exitFullscreen) {
-          document.exitFullscreen().catch(() => {});
-        } else if ((document as any).webkitExitFullscreen) {
-          (document as any).webkitExitFullscreen();
+        if (doc.exitFullscreen) {
+          doc.exitFullscreen().catch(() => {});
+        } else if (doc.webkitExitFullscreen) {
+          doc.webkitExitFullscreen();
+        } else if (doc.mozCancelFullScreen) {
+          doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          doc.msExitFullscreen();
         }
       }
     } catch (e) {}
@@ -2895,6 +2964,17 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center"></div>
 
+        <button
+          onClick={toggleFullscreen}
+          className="absolute top-6 right-6 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm z-20"
+          title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+        >
+          {isFullscreen ? <Minimize size={20} className="sm:mr-2" /> : <Maximize size={20} className="sm:mr-2" />}
+          <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
+            {isFullscreen ? "Exit Full" : "Full Screen"}
+          </span>
+        </button>
+
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
           <div className="mb-8 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
             <img
@@ -3032,6 +3112,17 @@ export default function App() {
         <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center"></div>
 
         <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-[2rem] sm:rounded-[3rem] shadow-2xl p-6 sm:p-12 max-w-3xl w-full relative z-10 flex flex-col items-center">
+          <button
+            onClick={toggleFullscreen}
+            className="absolute top-6 left-6 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm"
+            title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+          >
+            {isFullscreen ? <Minimize size={20} className="sm:mr-2" /> : <Maximize size={20} className="sm:mr-2" />}
+            <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
+              {isFullscreen ? "Exit Full" : "Full Screen"}
+            </span>
+          </button>
+
           <button
             onClick={() => {
               setActiveTeam(null);
@@ -3483,6 +3574,14 @@ export default function App() {
               </div>
             </div>
             <div className="flex gap-2">
+              <button
+                onClick={toggleFullscreen}
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
+                title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+              >
+                {isFullscreen ? <Minimize className="mr-1.5 sm:mr-2" size={16} /> : <Maximize className="mr-1.5 sm:mr-2" size={16} />}
+                <span className="hidden sm:inline">{isFullscreen ? "EXIT FULL" : "FULL SCREEN"}</span>
+              </button>
               <button
                 onClick={() => setIsRosterModalOpen(true)}
                 className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
@@ -4151,9 +4250,9 @@ export default function App() {
               <button
                 onClick={toggleFullscreen}
                 className="absolute left-2 sm:-left-8 landscape:absolute landscape:top-0 landscape:left-0 text-white/50 hover:text-white p-1"
-                title="Toggle Fullscreen"
+                title={isFullscreen ? "Exit Fullscreen" : "Toggle Fullscreen"}
               >
-                <Maximize size={14} />
+                {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
               </button>
               <span className="text-[7px] sm:text-[9px] font-black text-amber-400 tracking-[0.1em] sm:tracking-[0.2em] uppercase bg-amber-400/10 px-1.5 sm:px-2 py-0.5 rounded-full text-center flex items-center sm:flex-col whitespace-nowrap ml-6 sm:ml-0">
                 <span className="mr-2 sm:mr-0">
@@ -6038,6 +6137,14 @@ export default function App() {
           </h1>
           <div className="flex gap-2">
             <button
+              onClick={toggleFullscreen}
+              className="bg-slate-800 text-white px-3 sm:px-4 py-2 rounded-lg font-bold hover:bg-slate-700 transition-colors flex items-center border border-white/10"
+              title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+            >
+              {isFullscreen ? <Minimize size={18} className="sm:mr-1" /> : <Maximize size={18} className="sm:mr-1" />}
+              <span className="hidden sm:inline">{isFullscreen ? "EXIT FULL" : "FULL SCREEN"}</span>
+            </button>
+            <button
               onClick={handleUndo}
               className="bg-slate-700 text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-600 transition-colors flex items-center"
             >
@@ -6800,12 +6907,22 @@ export default function App() {
               />{" "}
               Compare Stats
             </h1>
-            <button
-              onClick={() => setView("stats")}
-              className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs"
-            >
-              Back
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={toggleFullscreen}
+                className="bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs flex items-center border border-white/20"
+                title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+              >
+                {isFullscreen ? <Minimize size={14} className="sm:mr-1" /> : <Maximize size={14} className="sm:mr-1" />}
+                <span className="hidden sm:inline">{isFullscreen ? "Exit Full" : "Full Screen"}</span>
+              </button>
+              <button
+                onClick={() => setView("stats")}
+                className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs"
+              >
+                Back
+              </button>
+            </div>
           </div>
 
           <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
@@ -7147,6 +7264,14 @@ export default function App() {
               </div>
             </div>
             <div className="flex space-x-2 w-full sm:w-auto">
+              <button
+                onClick={toggleFullscreen}
+                className="flex-1 sm:flex-none bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20"
+                title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+              >
+                {isFullscreen ? <Minimize className="mr-1 sm:mr-1.5" size={14} /> : <Maximize className="mr-1 sm:mr-1.5" size={14} />}
+                <span className="hidden sm:inline">{isFullscreen ? "Exit Full" : "Full"}</span>
+              </button>
               <button
                 onClick={() => setView("compare")}
                 className="flex-1 sm:flex-none bg-indigo-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"

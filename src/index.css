@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
-html, body {
+html, body, #root {
   overscroll-behavior-y: none;
+  min-height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
