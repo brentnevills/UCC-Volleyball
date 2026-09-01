@@ -28,7 +28,12 @@ import {
   LogOut,
   Trash2,
   Maximize,
+  Eye,
+  EyeOff,
 } from "lucide-react";
+
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 // Firebase Imports
 import { initializeApp } from "firebase/app";
@@ -530,6 +535,7 @@ export default function App() {
     step?: string;
     latePressed?: boolean;
   } | null>(null);
+  const [hiddenPracticePlayers, setHiddenPracticePlayers] = useState<string[]>([]);
   const [showPositioning, setShowPositioning] = useState(false);
   const [viewOppStats, setViewOppStats] = useState(false);
   const [subPairs, setSubPairs] = useState<{ [key: string]: string }>({});
@@ -555,9 +561,10 @@ export default function App() {
   );
   const [trackedCategories, setTrackedCategories] = useState(() => {
     const saved = localStorage.getItem("ucc_tracked_categories");
+    const defaults = { Pass: true, Serve: true, Attack: true, Block: true, Dig: true };
     return saved
-      ? JSON.parse(saved)
-      : { Pass: true, Attack: true, Block: true, Dig: true };
+      ? { ...defaults, ...JSON.parse(saved) }
+      : defaults;
   });
 
   useEffect(() => {
@@ -876,11 +883,25 @@ export default function App() {
   };
 
   const addPlayer = async () => {
-    if (newPlayerName && newPlayerNum) {
+    if (newPlayerName) {
+      let finalName = newPlayerName.trim();
+      const existingNames = appData.roster.map(p => p.name.toLowerCase());
+      
+      if (existingNames.includes(finalName.toLowerCase())) {
+        const initials = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        for (let i = 0; i < initials.length; i++) {
+          const testName = `${finalName} ${initials[i]}.`;
+          if (!existingNames.includes(testName.toLowerCase())) {
+            finalName = testName;
+            break;
+          }
+        }
+      }
+
       const newPlayer = {
         id: Date.now().toString(),
-        name: newPlayerName,
-        number: newPlayerNum,
+        name: finalName,
+        number: newPlayerNum || "",
         isRetired: false,
       };
       if (isFirebaseAvailable && user) {
@@ -2281,7 +2302,7 @@ export default function App() {
           ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
           : "0.0%";
       const srvPlusMinus = p.srvAce - p.srvErr;
-      csv += `"${p.number}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+      csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
     });
 
     csv +=
@@ -2307,6 +2328,141 @@ export default function App() {
     )}_${new Date().toLocaleDateString().replace(/\//g, "-")}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
+  };
+
+  const exportPDF = () => {
+    const currentTeam = myTeams.find((t) => t.id === activeTeam);
+    const teamName = currentTeam
+      ? currentTeam.name.replace(/\s+/g, "_")
+      : "Team";
+    const filename = `Lancers_${teamName}_${currentNav.name.replace(
+      /[^a-z0-9]/gi,
+      "_"
+    )}_${new Date().toLocaleDateString().replace(/\//g, "-")}.pdf`;
+
+    const doc = new jsPDF({ orientation: "landscape" });
+    const title = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}`;
+    doc.text(title, 14, 15);
+
+    const head = [
+      [
+        "Number",
+        "Name",
+        "Pass Avg",
+        "Passes",
+        "Digs",
+        "Dig Errors",
+        "Swings",
+        "Swings (Front)",
+        "Swings (Back)",
+        "Kills",
+        "Kill %",
+        "Att Errors",
+        "Att Blocked",
+        "Blocks",
+        "Blk Stuffs",
+        "Blk Late",
+        "Blk Net",
+        "Blk Used",
+        "Serves",
+        "Aces",
+        "Serve Errors",
+        "Serve +/-",
+      ],
+    ];
+
+    const body = Object.values(uccStats).map((p) => {
+      const passAvg =
+        p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
+      const blkTot = p.blkCount + p.blkStuff;
+      const srvTot = p.srvCount + p.srvAce + p.srvErr;
+      const killPct =
+        p.attCount > 0
+          ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+          : "0.0%";
+      const srvPlusMinus = p.srvAce - p.srvErr;
+
+      return [
+        p.number || "",
+        p.name,
+        passAvg,
+        p.passCount,
+        p.digCount,
+        p.digErr,
+        p.attCount,
+        p.attCountFront,
+        p.attCountBack,
+        p.attKill,
+        killPct,
+        p.attErr,
+        p.attBlk,
+        blkTot,
+        p.blkStuff,
+        p.blkLate,
+        p.blkNet,
+        p.blkUsed,
+        srvTot,
+        p.srvAce,
+        p.srvErr,
+        srvPlusMinus,
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 20,
+      head: head,
+      body: body,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [0, 51, 160] },
+    });
+
+    const finalY = doc.lastAutoTable.finalY || 20;
+    doc.text("OPPONENT STATS", 14, finalY + 10);
+
+    const oppHead = [
+      [
+        "ID",
+        "Pass Avg",
+        "Passes",
+        "Swings",
+        "Kills",
+        "Kill %",
+        "Aces",
+        "Serve Errors",
+        "Serve +/-",
+      ],
+    ];
+    const oppBody = Object.entries(opponentStats).map(([id, p]) => {
+      const passAvg =
+        p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
+      const killPct =
+        p.attCount > 0
+          ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+          : "0.0%";
+      const srvPlusMinus = p.srvAce - p.srvErr;
+
+      return [
+        id,
+        passAvg,
+        p.passCount,
+        p.attCount,
+        p.attKill,
+        killPct,
+        p.srvAce,
+        p.srvErr,
+        srvPlusMinus,
+      ];
+    });
+
+    autoTable(doc, {
+      startY: finalY + 15,
+      head: oppHead,
+      body: oppBody,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [51, 65, 85] },
+    });
+
+    doc.save(filename);
   };
 
   const benchPlayers = appData.roster.filter(
@@ -3205,11 +3361,7 @@ export default function App() {
                           <span className="font-bold text-slate-700 text-sm sm:text-base truncate">
                             {p.name} {p.isRetired && "(Retired)"}
                           </span>
-                          {p.birthYear && (
-                            <span className="text-[10px] text-slate-400 font-bold tracking-widest">
-                              {p.birthYear}
-                            </span>
-                          )}
+                          
                         </div>
                       </div>
                       <div className="flex items-center space-x-1 shrink-0">
@@ -3596,7 +3748,7 @@ export default function App() {
                       .filter((p) => showRetired || !p.isRetired)
                       .map((p) => (
                         <option key={p.id} value={p.id}>
-                          #{p.number} {p.name}
+                          {p.number ? `#${p.number} ` : ""}{p.name}
                         </option>
                       ))}
                   </select>
@@ -3643,7 +3795,7 @@ export default function App() {
                                 lineup.includes(p.id) && lineup[arrIdx] !== p.id
                               }
                             >
-                              #{p.number} {p.name}
+                              {p.number ? `#${p.number} ` : ""}{p.name}
                             </option>
                           ))}
                       </select>
@@ -3825,11 +3977,7 @@ export default function App() {
                           <span className="font-bold text-slate-700 text-sm sm:text-base truncate">
                             {p.name} {p.isRetired && "(Retired)"}
                           </span>
-                          {p.birthYear && (
-                            <span className="text-[10px] text-slate-400 font-bold tracking-widest">
-                              {p.birthYear}
-                            </span>
-                          )}
+                          
                         </div>
                       </div>
                       <div className="flex items-center space-x-1 shrink-0">
@@ -4319,6 +4467,11 @@ export default function App() {
                         Pass
                       </th>
                     )}
+                    {trackedCategories.Serve && (
+                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                        Serve
+                      </th>
+                    )}
                     {trackedCategories.Attack && (
                       <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
                         Attack
@@ -4394,62 +4547,86 @@ export default function App() {
                               <span className="truncate">{pName}</span>
                             </div>
                           </td>
-                          <td className="p-1.5">
-                            <button
-                              onClick={() =>
-                                setStatPrompt({
-                                  playerId: id,
-                                  type: "Pass",
-                                  isOpp: viewOppStats,
-                                })
-                              }
-                              className="w-full py-2 px-1 bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-blue-100"
-                            >
-                              Pass
-                            </button>
-                          </td>
-                          <td className="p-1.5">
-                            <button
-                              onClick={() =>
-                                setStatPrompt({
-                                  playerId: id,
-                                  type: "Attack",
-                                  isOpp: viewOppStats,
-                                })
-                              }
-                              className="w-full py-2 px-1 bg-green-50 hover:bg-green-100 text-green-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-green-100"
-                            >
-                              Attack
-                            </button>
-                          </td>
-                          <td className="p-1.5">
-                            <button
-                              onClick={() =>
-                                setStatPrompt({
-                                  playerId: id,
-                                  type: "Block",
-                                  isOpp: viewOppStats,
-                                })
-                              }
-                              className="w-full py-2 px-1 bg-orange-50 hover:bg-orange-100 text-orange-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-orange-100"
-                            >
-                              Block
-                            </button>
-                          </td>
-                          <td className="p-1.5">
-                            <button
-                              onClick={() =>
-                                setStatPrompt({
-                                  playerId: id,
-                                  type: "Dig",
-                                  isOpp: viewOppStats,
-                                })
-                              }
-                              className="w-full py-2 px-1 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-amber-100"
-                            >
-                              Dig
-                            </button>
-                          </td>
+                          {trackedCategories.Pass && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Pass",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-blue-100"
+                              >
+                                Pass
+                              </button>
+                            </td>
+                          )}
+                          {trackedCategories.Serve && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Serve",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100"
+                              >
+                                Serve
+                              </button>
+                            </td>
+                          )}
+                          {trackedCategories.Attack && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Attack",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-green-50 hover:bg-green-100 text-green-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-green-100"
+                              >
+                                Attack
+                              </button>
+                            </td>
+                          )}
+                          {trackedCategories.Block && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Block",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-orange-50 hover:bg-orange-100 text-orange-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-orange-100"
+                              >
+                                Block
+                              </button>
+                            </td>
+                          )}
+                          {trackedCategories.Dig && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Dig",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-amber-100"
+                              >
+                                Dig
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -5831,7 +6008,7 @@ export default function App() {
                     >
                       <div className="flex items-center space-x-4">
                         <span className="text-2xl font-black text-[#0033A0]">
-                          #{p.number}
+                          {p.number ? `#${p.number}` : ""}
                         </span>
                         <span className="text-lg font-black">{p.name}</span>
                       </div>
@@ -5905,7 +6082,7 @@ export default function App() {
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
           {sortedRoster
-            .filter((p) => !p.isRetired)
+            .filter((p) => !p.isRetired && !hiddenPracticePlayers.includes(p.id))
             .map((p) => {
               // Compute quick stats for this player in this practice session
               let pCount = 0,
@@ -5965,13 +6142,20 @@ export default function App() {
                   className="bg-white p-4 rounded-xl shadow-sm border border-slate-200"
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
-                    <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-3 w-full sm:w-auto">
                       <div className="w-10 h-10 rounded-full bg-blue-50 text-[#0033A0] font-black flex items-center justify-center text-lg shrink-0">
-                        {p.number}
+                        {p.number || "-"}
                       </div>
-                      <span className="font-bold text-slate-800 text-lg leading-tight">
+                      <span className="font-bold text-slate-800 text-lg leading-tight flex-1">
                         {p.name}
                       </span>
+                      <button
+                        onClick={() => setHiddenPracticePlayers(prev => [...prev, p.id])}
+                        className="text-slate-400 hover:text-slate-600 p-1 bg-slate-50 rounded-full active:scale-95 transition-all ml-auto sm:ml-0"
+                        title="Hide Player"
+                      >
+                        <EyeOff size={18} />
+                      </button>
                     </div>
                     <div className="flex bg-slate-50 p-2 rounded-lg text-xs font-mono text-slate-600 gap-3 border border-slate-100 overflow-x-auto whitespace-nowrap scrollbar-hide shrink-0">
                       <div>
@@ -6044,6 +6228,32 @@ export default function App() {
                 </div>
               );
             })}
+
+          {hiddenPracticePlayers.length > 0 && (
+            <div className="mt-8 border-t border-slate-200 pt-6">
+              <h3 className="font-bold text-slate-500 mb-3 uppercase tracking-widest text-xs flex items-center">
+                <EyeOff className="mr-2 text-slate-400" size={14} /> Hidden Players
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {sortedRoster
+                  .filter((p) => hiddenPracticePlayers.includes(p.id))
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() =>
+                        setHiddenPracticePlayers((prev) =>
+                          prev.filter((id) => id !== p.id)
+                        )
+                      }
+                      className="bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg text-sm font-bold flex items-center hover:bg-slate-300 transition-colors"
+                    >
+                      {p.number ? `#${p.number} ` : ""}{p.name}
+                      <Eye className="ml-2" size={14} />
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {practiceStatPrompt && (
@@ -6949,6 +7159,12 @@ export default function App() {
               >
                 <Download className="mr-1 sm:mr-1.5" size={14} /> CSV
               </button>
+              <button
+                onClick={exportPDF}
+                className="flex-1 sm:flex-none bg-red-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+              >
+                <FileText className="mr-1 sm:mr-1.5" size={14} /> PDF
+              </button>
               {activeMatch ? (
                 <button
                   onClick={() => setView("game")}
@@ -7155,7 +7371,7 @@ export default function App() {
                           const searchLower = statFilter.toLowerCase();
                           return (
                             p.name.toLowerCase().includes(searchLower) ||
-                            p.number.toString().includes(searchLower)
+                            (p.number || "").toString().includes(searchLower)
                           );
                         }
                         return true;
@@ -7175,7 +7391,7 @@ export default function App() {
 
                         return (
                           <tr
-                            key={p.number}
+                            key={p.id}
                             onClick={() => setCareerPlayerName(p.name)}
                             className="hover:bg-blue-50/50 text-[10px] sm:text-xs cursor-pointer transition-colors"
                             title="Click to view full Career Stats across all teams"
@@ -7183,7 +7399,7 @@ export default function App() {
                             <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400">
                               <div className="flex items-center space-x-1 sm:space-x-2">
                                 <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#0033A0]/10 text-[#0033A0] font-black flex items-center justify-center text-[9px] sm:text-[10px]">
-                                  {p.number}
+                                  {p.number || "-"}
                                 </span>
                                 <span className="font-bold text-indigo-700 underline truncate max-w-[80px] sm:max-w-none">
                                   {p.name}
