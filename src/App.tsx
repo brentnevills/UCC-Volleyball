@@ -31,6 +31,12 @@ import {
   Minimize,
   Eye,
   EyeOff,
+  Share2,
+  Smartphone,
+  Laptop,
+  Sparkles,
+  Info,
+  Edit3,
 } from "lucide-react";
 
 import jsPDF from "jspdf";
@@ -618,7 +624,11 @@ export default function App() {
   const [setWinnerModal, setSetWinnerModal] = useState(null);
   const [careerPlayerName, setCareerPlayerName] = useState(null);
   const [statFilter, setStatFilter] = useState("all");
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isAppInstalled, setIsAppInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [installModalTab, setInstallModalTab] = useState<"auto" | "ios" | "android" | "desktop">("auto");
   const [showRetired, setShowRetired] = useState(false);
   const [compareMode, setCompareMode] = useState("players"); // "players" or "events"
   const [comparePlayer1, setComparePlayer1] = useState("");
@@ -841,16 +851,38 @@ export default function App() {
   }, [user, activeTeam]);
 
   useEffect(() => {
+    // Detect standalone mode (already installed)
+    const isStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as any).standalone === true;
+    setIsAppInstalled(isStandalone);
+
+    // Detect iOS devices
+    const ua = window.navigator.userAgent.toLowerCase();
+    const isIOSDevice =
+      /iphone|ipad|ipod/.test(ua) ||
+      (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
+    setIsIOS(isIOSDevice);
+
     const handleBeforeInstallPrompt = (e: any) => {
       e.preventDefault();
       setDeferredPrompt(e);
     };
+
+    const handleAppInstalled = () => {
+      setIsAppInstalled(true);
+      setDeferredPrompt(null);
+    };
+
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
     return () => {
       window.removeEventListener(
         "beforeinstallprompt",
         handleBeforeInstallPrompt,
       );
+      window.removeEventListener("appinstalled", handleAppInstalled);
     };
   }, []);
 
@@ -1904,12 +1936,24 @@ export default function App() {
     handlePoint(team, true);
   };
 
-  const handleInstallApp = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === "accepted") {
-      setDeferredPrompt(null);
+  const handleInstallApp = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    if (deferredPrompt) {
+      try {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === "accepted") {
+          setIsAppInstalled(true);
+          setDeferredPrompt(null);
+          setShowInstallModal(false);
+        }
+      } catch (err) {
+        setShowInstallModal(true);
+      }
+    } else {
+      setShowInstallModal(true);
     }
   };
 
@@ -2686,6 +2730,40 @@ export default function App() {
     }
   };
 
+  const handleRenameTeam = async (teamId, currentName) => {
+    const newName = prompt("Enter new team name:", currentName);
+    if (!newName || !newName.trim() || newName.trim() === currentName) return;
+    const finalName = newName.trim();
+    const updatedTeams = myTeams.map((t) =>
+      t.id === teamId ? { ...t, name: finalName } : t,
+    );
+    setMyTeams(updatedTeams);
+
+    try {
+      if (isFirebaseAvailable && user) {
+        const batch = writeBatch(db);
+        batch.set(
+          doc(db, "users", user.uid),
+          { teams: updatedTeams },
+          { merge: true },
+        );
+        batch.set(
+          doc(db, `${publicPath}/${teamId}`),
+          { name: finalName },
+          { merge: true },
+        );
+        batch.set(
+          doc(db, `${publicPath}/${teamId}/settings/core`),
+          { teamName: finalName },
+          { merge: true },
+        );
+        await batch.commit();
+      }
+    } catch (e) {
+      console.error("Failed to rename team:", e);
+    }
+  };
+
   const handleDeleteTeam = async (teamId) => {
     const team = myTeams.find((t) => t.id === teamId);
     if (!team) return;
@@ -2919,6 +2997,251 @@ export default function App() {
   // RENDERERS
   // -------------------------------------------------------------
 
+  const renderInstallModal = () => {
+    if (!showInstallModal) return null;
+    const ua = typeof window !== "undefined" ? window.navigator.userAgent.toLowerCase() : "";
+    const isAndroidDevice = /android/.test(ua);
+    const activeTab =
+      installModalTab === "auto"
+        ? isIOS
+          ? "ios"
+          : isAndroidDevice
+            ? "android"
+            : "desktop"
+        : installModalTab;
+
+    return (
+      <div
+        className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[99999] font-sans"
+        onClick={() => setShowInstallModal(false)}
+      >
+        <div
+          className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 text-white shadow-2xl relative overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-500 via-indigo-500 to-amber-400" />
+
+          {/* Header */}
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center space-x-3">
+              <div className="h-12 w-12 rounded-2xl bg-blue-600/30 border border-blue-500/40 p-2 flex items-center justify-center shadow-inner">
+                <img
+                  src={`${import.meta.env.BASE_URL}lancer-logo.png`}
+                  alt="Logo"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-contain"
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              </div>
+              <div>
+                <h3 className="text-lg sm:text-xl font-black uppercase tracking-wider text-white">
+                  Download & Install App
+                </h3>
+                <p className="text-xs text-slate-400 font-medium">
+                  {isAppInstalled
+                    ? "App is already installed on your device"
+                    : "Save Lancer Volleyball to your home screen or desktop"}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowInstallModal(false)}
+              className="text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 p-2 rounded-full transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Direct 1-Click Install if prompt available */}
+          {deferredPrompt && (
+            <div className="mb-5 bg-gradient-to-r from-indigo-900/60 to-blue-900/60 border border-indigo-500/40 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <Sparkles size={16} className="text-amber-400" /> 1-Click Install Available
+                </div>
+                <div className="text-xs text-slate-300">
+                  Click below to install directly onto your device
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    if (outcome === "accepted") {
+                      setIsAppInstalled(true);
+                      setDeferredPrompt(null);
+                      setShowInstallModal(false);
+                    }
+                  } catch (e) {}
+                }}
+                className="w-full sm:w-auto bg-indigo-500 hover:bg-indigo-400 text-white font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 whitespace-nowrap"
+              >
+                <Download size={16} /> Install Now
+              </button>
+            </div>
+          )}
+
+          {/* Platform Selector Tabs */}
+          <div className="flex bg-slate-800/80 p-1 rounded-xl mb-4 border border-slate-700/60">
+            <button
+              onClick={() => setInstallModalTab("ios")}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                activeTab === "ios"
+                  ? "bg-indigo-600 text-white shadow-md"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Smartphone size={14} /> iPhone / iPad
+            </button>
+            <button
+              onClick={() => setInstallModalTab("android")}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                activeTab === "android"
+                  ? "bg-indigo-600 text-white shadow-md"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Smartphone size={14} /> Android
+            </button>
+            <button
+              onClick={() => setInstallModalTab("desktop")}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                activeTab === "desktop"
+                  ? "bg-indigo-600 text-white shadow-md"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Laptop size={14} /> PC / Mac
+            </button>
+          </div>
+
+          {/* Tab Instructions Content */}
+          <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 sm:p-5 mb-5 space-y-3">
+            {activeTab === "ios" && (
+              <div className="space-y-3 text-sm">
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-blue-500/20 text-blue-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    1
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Open in Safari</span>
+                    <p className="text-xs text-slate-400">
+                      Make sure you are browsing this app in Apple Safari on your iPhone or iPad.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-blue-500/20 text-blue-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    2
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Tap the Share button</span>
+                    <p className="text-xs text-slate-400">
+                      Tap the <span className="inline-flex items-center text-blue-400 font-bold"><Share2 size={12} className="mx-1 inline" /> Share</span> icon at the bottom of Safari (or top right on iPad).
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-blue-500/20 text-blue-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    3
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Select "Add to Home Screen"</span>
+                    <p className="text-xs text-slate-400">
+                      Scroll down the list, tap <span className="inline-flex items-center text-white font-bold"><PlusCircle size={12} className="mx-1 inline" /> Add to Home Screen</span>, then tap <strong>Add</strong>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "android" && (
+              <div className="space-y-3 text-sm">
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    1
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Open in Chrome</span>
+                    <p className="text-xs text-slate-400">
+                      Open this app in Google Chrome on your Android phone or tablet.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    2
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Tap 3 Dots Menu (⋮)</span>
+                    <p className="text-xs text-slate-400">
+                      Tap the 3 dots in the top-right corner of Google Chrome.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    3
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Tap "Install app" or "Add to Home screen"</span>
+                    <p className="text-xs text-slate-400">
+                      Tap <strong>Install</strong> to add the Lancer Volleyball app directly to your home screen!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "desktop" && (
+              <div className="space-y-3 text-sm">
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-indigo-500/20 text-indigo-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    1
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Look for the Install Icon</span>
+                    <p className="text-xs text-slate-400">
+                      In Chrome, Edge, or Brave, look for the <Download size={12} className="inline mx-1 text-indigo-400" /> icon on the right side of the address/URL bar.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-indigo-500/20 text-indigo-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    2
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Click "Install Lancer Volleyball"</span>
+                    <p className="text-xs text-slate-400">
+                      Click Install to run the tracker as a native standalone app with full screen capability and offline support!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Footer info & Done button */}
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] text-slate-400 flex items-center gap-1">
+              <CheckCircle2 size={13} className="text-green-400" />
+              <span>Full offline support & instant loading</span>
+            </div>
+            <button
+              onClick={() => setShowInstallModal(false)}
+              className="bg-white/10 hover:bg-white/20 text-white text-xs font-bold uppercase tracking-wider px-5 py-2.5 rounded-xl transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   if (loadingAuth) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-6 text-center">
@@ -2964,21 +3287,33 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center"></div>
 
-        <button
-          onClick={toggleFullscreen}
-          className="absolute top-6 right-6 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm z-20"
-          title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
-        >
-          {isFullscreen ? <Minimize size={20} className="sm:mr-2" /> : <Maximize size={20} className="sm:mr-2" />}
-          <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
-            {isFullscreen ? "Exit Full" : "Full Screen"}
-          </span>
-        </button>
+        <div className="absolute top-6 right-6 flex items-center gap-2 z-20">
+          <button
+            onClick={handleInstallApp}
+            className="text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm"
+            title="Download App"
+          >
+            <Download size={20} className="sm:mr-2" />
+            <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
+              Download App
+            </span>
+          </button>
+          <button
+            onClick={toggleFullscreen}
+            className="text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm"
+            title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+          >
+            {isFullscreen ? <Minimize size={20} className="sm:mr-2" /> : <Maximize size={20} className="sm:mr-2" />}
+            <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
+              {isFullscreen ? "Exit Full" : "Full Screen"}
+            </span>
+          </button>
+        </div>
 
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
           <div className="mb-8 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
             <img
-              src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
+              src={`${import.meta.env.BASE_URL}lancer-logo.png`}
               alt="Lancers Logo"
               referrerPolicy="no-referrer"
               className="h-full w-full object-contain absolute inset-0 z-10"
@@ -3017,16 +3352,30 @@ export default function App() {
                       {team.role}
                     </span>
                   </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteTeam(team.id);
-                    }}
-                    className="absolute top-4 right-4 p-2 text-white/40 hover:text-red-400 bg-black/10 hover:bg-black/30 rounded-full transition-all group-hover:opacity-100 sm:opacity-0"
-                    title="Delete/Leave Team"
-                  >
-                    <Trash2 size={18} />
-                  </button>
+                  <div className="absolute top-4 right-4 flex items-center gap-1 transition-all group-hover:opacity-100 sm:opacity-0">
+                    {team.role === "coach" && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRenameTeam(team.id, team.name);
+                        }}
+                        className="p-2 text-white/70 hover:text-white bg-black/20 hover:bg-black/40 rounded-full transition-all"
+                        title="Rename Team"
+                      >
+                        <Edit3 size={16} />
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteTeam(team.id);
+                      }}
+                      className="p-2 text-white/40 hover:text-red-400 bg-black/20 hover:bg-black/40 rounded-full transition-all"
+                      title="Delete/Leave Team"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
               ))}
             {user && myTeams.length === 0 && (
@@ -3098,6 +3447,7 @@ export default function App() {
             )}
           </div>
         </div>
+        {renderInstallModal()}
       </div>
     );
   }
@@ -3112,16 +3462,28 @@ export default function App() {
         <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center"></div>
 
         <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-[2rem] sm:rounded-[3rem] shadow-2xl p-6 sm:p-12 max-w-3xl w-full relative z-10 flex flex-col items-center">
-          <button
-            onClick={toggleFullscreen}
-            className="absolute top-6 left-6 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm"
-            title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
-          >
-            {isFullscreen ? <Minimize size={20} className="sm:mr-2" /> : <Maximize size={20} className="sm:mr-2" />}
-            <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
-              {isFullscreen ? "Exit Full" : "Full Screen"}
-            </span>
-          </button>
+          <div className="absolute top-6 left-6 flex items-center gap-2">
+            <button
+              onClick={toggleFullscreen}
+              className="text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm"
+              title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+            >
+              {isFullscreen ? <Minimize size={20} className="sm:mr-2" /> : <Maximize size={20} className="sm:mr-2" />}
+              <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
+                {isFullscreen ? "Exit Full" : "Full Screen"}
+              </span>
+            </button>
+            <button
+              onClick={handleInstallApp}
+              className="text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 p-3 rounded-full transition-colors flex items-center shadow-sm"
+              title="Download App"
+            >
+              <Download size={20} className="sm:mr-2" />
+              <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
+                Download App
+              </span>
+            </button>
+          </div>
 
           <button
             onClick={() => {
@@ -3140,7 +3502,7 @@ export default function App() {
           <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
             <div className="mb-4 sm:mb-6 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
               <img
-                src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
+                src={`${import.meta.env.BASE_URL}lancer-logo.png`}
                 alt="Lancers Logo"
                 referrerPolicy="no-referrer"
                 className="h-full w-full object-contain absolute inset-0 z-10"
@@ -3209,17 +3571,15 @@ export default function App() {
                 )}
               </div>
             )}
-            {deferredPrompt && (
-              <div className="mt-4 flex flex-col gap-2 w-full max-w-sm mx-auto">
-                <button
-                  onClick={handleInstallApp}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold uppercase tracking-widest px-4 py-3 rounded-full border border-indigo-400/50 shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
-                >
-                  <Download size={16} />
-                  Install App
-                </button>
-              </div>
-            )}
+            <div className="mt-4 flex flex-col gap-2 w-full max-w-sm mx-auto">
+              <button
+                onClick={handleInstallApp}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold uppercase tracking-widest px-4 py-3 rounded-full border border-indigo-400/50 shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <Download size={16} />
+                {isAppInstalled ? "App Installed (Guide)" : "Download App"}
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
@@ -3437,25 +3797,38 @@ export default function App() {
                       key={p.id}
                       className={`flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-sm border ${p.isRetired ? "border-amber-200 opacity-60" : "border-slate-200"}`}
                     >
-                      <div className="flex items-center space-x-2 sm:space-x-3 flex-1">
+                      <div className="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0">
                         <input
                           type="number"
                           inputMode="numeric"
                           pattern="[0-9]*"
-                          value={p.number}
+                          placeholder="#"
+                          value={p.number ?? ""}
                           onChange={(e) =>
                             updatePlayer(p.id, { number: e.target.value })
                           }
-                          className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base border-none text-center outline-none focus:ring-2 focus:ring-[#0033A0] p-0"
+                          title="Jersey Number (optional)"
+                          className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base border border-blue-100 text-center outline-none focus:ring-2 focus:ring-[#0033A0] p-0 shrink-0"
                         />
-                        <div className="flex flex-col min-w-0 flex-1">
-                          <span className="font-bold text-slate-700 text-sm sm:text-base truncate">
-                            {p.name} {p.isRetired && "(Retired)"}
-                          </span>
-                          
+                        <div className="flex items-center min-w-0 flex-1 gap-2">
+                          <input
+                            type="text"
+                            value={p.name}
+                            onChange={(e) =>
+                              updatePlayer(p.id, { name: e.target.value })
+                            }
+                            placeholder="Player Name"
+                            className="font-bold text-slate-800 text-sm sm:text-base bg-slate-50/60 hover:bg-slate-100 focus:bg-white border border-slate-200 hover:border-slate-300 focus:border-[#0033A0] rounded-lg px-2.5 py-1.5 outline-none transition-all flex-1 min-w-0"
+                            title="Click to edit player name"
+                          />
+                          {p.isRetired && (
+                            <span className="text-[10px] sm:text-xs font-black uppercase text-amber-700 bg-amber-100/80 px-2 py-1 rounded-md shrink-0 border border-amber-300">
+                              Retired
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center space-x-1 shrink-0">
+                      <div className="flex items-center space-x-1 shrink-0 ml-2">
                         <button
                           onClick={() =>
                             updatePlayer(p.id, { isRetired: !p.isRetired })
@@ -3558,7 +3931,7 @@ export default function App() {
             <div className="flex items-center space-x-3 sm:space-x-4">
               <div className="hidden sm:flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative">
                 <img
-                  src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
+                  src={`${import.meta.env.BASE_URL}lancer-logo.png`}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
@@ -3574,6 +3947,14 @@ export default function App() {
               </div>
             </div>
             <div className="flex gap-2">
+              <button
+                onClick={handleInstallApp}
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
+                title="Download App"
+              >
+                <Download className="mr-1.5 sm:mr-2" size={16} />
+                <span className="hidden sm:inline">DOWNLOAD APP</span>
+              </button>
               <button
                 onClick={toggleFullscreen}
                 className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
@@ -4061,25 +4442,38 @@ export default function App() {
                       key={p.id}
                       className={`flex justify-between items-center bg-white p-2 sm:p-3 rounded-lg sm:rounded-xl shadow-sm border ${p.isRetired ? "border-amber-200 opacity-60" : "border-slate-200"}`}
                     >
-                      <div className="flex items-center space-x-2 sm:space-x-3 flex-1">
+                      <div className="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0">
                         <input
                           type="number"
                           inputMode="numeric"
                           pattern="[0-9]*"
-                          value={p.number}
+                          placeholder="#"
+                          value={p.number ?? ""}
                           onChange={(e) =>
                             updatePlayer(p.id, { number: e.target.value })
                           }
-                          className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base border-none text-center outline-none focus:ring-2 focus:ring-[#0033A0] p-0"
+                          title="Jersey Number (optional)"
+                          className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-50 flex items-center justify-center font-black text-[#0033A0] text-xs sm:text-base border border-blue-100 text-center outline-none focus:ring-2 focus:ring-[#0033A0] p-0 shrink-0"
                         />
-                        <div className="flex flex-col min-w-0 flex-1">
-                          <span className="font-bold text-slate-700 text-sm sm:text-base truncate">
-                            {p.name} {p.isRetired && "(Retired)"}
-                          </span>
-                          
+                        <div className="flex items-center min-w-0 flex-1 gap-2">
+                          <input
+                            type="text"
+                            value={p.name}
+                            onChange={(e) =>
+                              updatePlayer(p.id, { name: e.target.value })
+                            }
+                            placeholder="Player Name"
+                            className="font-bold text-slate-800 text-sm sm:text-base bg-slate-50/60 hover:bg-slate-100 focus:bg-white border border-slate-200 hover:border-slate-300 focus:border-[#0033A0] rounded-lg px-2.5 py-1.5 outline-none transition-all flex-1 min-w-0"
+                            title="Click to edit player name"
+                          />
+                          {p.isRetired && (
+                            <span className="text-[10px] sm:text-xs font-black uppercase text-amber-700 bg-amber-100/80 px-2 py-1 rounded-md shrink-0 border border-amber-300">
+                              Retired
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center space-x-1 shrink-0">
+                      <div className="flex items-center space-x-1 shrink-0 ml-2">
                         <button
                           onClick={() =>
                             updatePlayer(p.id, { isRetired: !p.isRetired })
@@ -4176,6 +4570,7 @@ export default function App() {
             </div>
           </div>
         )}
+        {renderInstallModal()}
       </div>
     );
   }
@@ -4199,7 +4594,7 @@ export default function App() {
             <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
               <div className="hidden md:flex items-center justify-center h-12 w-12 overflow-hidden relative">
                 <img
-                  src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
+                  src={`${import.meta.env.BASE_URL}lancer-logo.png`}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
@@ -6119,6 +6514,7 @@ export default function App() {
             </div>
           </div>
         )}
+        {renderInstallModal()}
       </div>
     );
   }
@@ -6136,6 +6532,14 @@ export default function App() {
             <Activity className="mr-2 text-blue-400" size={24} /> Open Practice
           </h1>
           <div className="flex gap-2">
+            <button
+              onClick={handleInstallApp}
+              className="bg-slate-800 text-white px-3 sm:px-4 py-2 rounded-lg font-bold hover:bg-slate-700 transition-colors flex items-center border border-white/10"
+              title="Download App"
+            >
+              <Download size={18} className="sm:mr-1" />
+              <span className="hidden sm:inline">DOWNLOAD</span>
+            </button>
             <button
               onClick={toggleFullscreen}
               className="bg-slate-800 text-white px-3 sm:px-4 py-2 rounded-lg font-bold hover:bg-slate-700 transition-colors flex items-center border border-white/10"
@@ -6909,6 +7313,14 @@ export default function App() {
             </h1>
             <div className="flex gap-2">
               <button
+                onClick={handleInstallApp}
+                className="bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs flex items-center border border-white/20"
+                title="Download App"
+              >
+                <Download size={14} className="sm:mr-1" />
+                <span className="hidden sm:inline">App</span>
+              </button>
+              <button
                 onClick={toggleFullscreen}
                 className="bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs flex items-center border border-white/20"
                 title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
@@ -7231,6 +7643,7 @@ export default function App() {
             )}
           </div>
         </div>
+        {renderInstallModal()}
       </div>
     );
   }
@@ -7248,7 +7661,7 @@ export default function App() {
             <div className="flex items-center w-full sm:w-auto">
               <div className="mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative">
                 <img
-                  src={`${import.meta.env.BASE_URL}LancerVolleyballLogo.png`}
+                  src={`${import.meta.env.BASE_URL}lancer-logo.png`}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
@@ -7264,6 +7677,14 @@ export default function App() {
               </div>
             </div>
             <div className="flex space-x-2 w-full sm:w-auto">
+              <button
+                onClick={handleInstallApp}
+                className="flex-1 sm:flex-none bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20"
+                title="Download App"
+              >
+                <Download className="mr-1 sm:mr-1.5" size={14} />
+                <span className="hidden sm:inline">App</span>
+              </button>
               <button
                 onClick={toggleFullscreen}
                 className="flex-1 sm:flex-none bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20"
@@ -7806,6 +8227,7 @@ export default function App() {
             onClose={() => setCareerPlayerName(null)}
           />
         )}
+        {renderInstallModal()}
       </div>
     );
   }

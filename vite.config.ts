@@ -17,24 +17,35 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['LancerVolleyballLogo.jpg', 'LancerVolleyballLogo.png'],
+        includeAssets: ['lancer-logo.png'],
         manifest: {
+          id: '/',
           name: 'Lancer Volleyball',
-          short_name: 'Lancer VB',
-          description: 'Lancer Volleyball Tracker',
+          short_name: 'UCC Vball',
+          description: 'UCC Lancers Volleyball Dashboard',
           theme_color: '#0033A0',
+          background_color: '#0033A0',
+          display: 'standalone',
+          start_url: './',
+          scope: './',
           icons: [
             {
-              src: 'LancerVolleyballLogo.png',
+              src: 'lancer-logo.png',
               sizes: '192x192',
-              type: 'image/png'
+              type: 'image/png',
+              purpose: 'any'
             },
             {
-              src: 'LancerVolleyballLogo.png',
+              src: 'lancer-logo.png',
               sizes: '512x512',
-              type: 'image/png'
+              type: 'image/png',
+              purpose: 'any'
             }
           ]
+        },
+        devOptions: {
+          enabled: true,
+          type: 'module'
         }
       })
     ],
