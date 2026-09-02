@@ -2673,13 +2673,61 @@ export default function App() {
       : "Team";
     let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
-    const visiblePlayers = Object.values(uccStats).filter((p) => {
-      if (hiddenPlayerIds.includes(p.id)) return false;
+    const allPlayers = Object.values(uccStats).filter((p) => {
       if (!showRetired && p.isRetired) return false;
       return true;
     });
 
+    const visiblePlayers = allPlayers.filter((p) => {
+      if (hiddenPlayerIds.includes(p.id)) return false;
+      return true;
+    });
+
+    const hasHiddenPlayers = allPlayers.some((p) => hiddenPlayerIds.includes(p.id));
+
     const teamTot = {
+      passCount: 0,
+      passSum: 0,
+      digCount: 0,
+      digErr: 0,
+      attCount: 0,
+      attCountFront: 0,
+      attCountBack: 0,
+      attKill: 0,
+      attErr: 0,
+      attBlk: 0,
+      blkCount: 0,
+      blkStuff: 0,
+      blkLate: 0,
+      blkNet: 0,
+      blkUsed: 0,
+      srvCount: 0,
+      srvAce: 0,
+      srvErr: 0,
+    };
+
+    allPlayers.forEach((p) => {
+      teamTot.passCount += p.passCount || 0;
+      teamTot.passSum += p.passSum || 0;
+      teamTot.digCount += p.digCount || 0;
+      teamTot.digErr += p.digErr || 0;
+      teamTot.attCount += p.attCount || 0;
+      teamTot.attCountFront += p.attCountFront || 0;
+      teamTot.attCountBack += p.attCountBack || 0;
+      teamTot.attKill += p.attKill || 0;
+      teamTot.attErr += p.attErr || 0;
+      teamTot.attBlk += p.attBlk || 0;
+      teamTot.blkCount += p.blkCount || 0;
+      teamTot.blkStuff += p.blkStuff || 0;
+      teamTot.blkLate += p.blkLate || 0;
+      teamTot.blkNet += p.blkNet || 0;
+      teamTot.blkUsed += p.blkUsed || 0;
+      teamTot.srvCount += p.srvCount || 0;
+      teamTot.srvAce += p.srvAce || 0;
+      teamTot.srvErr += p.srvErr || 0;
+    });
+
+    const shownTot = {
       passCount: 0,
       passSum: 0,
       digCount: 0,
@@ -2711,27 +2759,41 @@ export default function App() {
           : "0.0%";
       const srvPlusMinus = p.srvAce - p.srvErr;
 
-      teamTot.passCount += p.passCount || 0;
-      teamTot.passSum += p.passSum || 0;
-      teamTot.digCount += p.digCount || 0;
-      teamTot.digErr += p.digErr || 0;
-      teamTot.attCount += p.attCount || 0;
-      teamTot.attCountFront += p.attCountFront || 0;
-      teamTot.attCountBack += p.attCountBack || 0;
-      teamTot.attKill += p.attKill || 0;
-      teamTot.attErr += p.attErr || 0;
-      teamTot.attBlk += p.attBlk || 0;
-      teamTot.blkCount += p.blkCount || 0;
-      teamTot.blkStuff += p.blkStuff || 0;
-      teamTot.blkLate += p.blkLate || 0;
-      teamTot.blkNet += p.blkNet || 0;
-      teamTot.blkUsed += p.blkUsed || 0;
-      teamTot.srvCount += p.srvCount || 0;
-      teamTot.srvAce += p.srvAce || 0;
-      teamTot.srvErr += p.srvErr || 0;
+      shownTot.passCount += p.passCount || 0;
+      shownTot.passSum += p.passSum || 0;
+      shownTot.digCount += p.digCount || 0;
+      shownTot.digErr += p.digErr || 0;
+      shownTot.attCount += p.attCount || 0;
+      shownTot.attCountFront += p.attCountFront || 0;
+      shownTot.attCountBack += p.attCountBack || 0;
+      shownTot.attKill += p.attKill || 0;
+      shownTot.attErr += p.attErr || 0;
+      shownTot.attBlk += p.attBlk || 0;
+      shownTot.blkCount += p.blkCount || 0;
+      shownTot.blkStuff += p.blkStuff || 0;
+      shownTot.blkLate += p.blkLate || 0;
+      shownTot.blkNet += p.blkNet || 0;
+      shownTot.blkUsed += p.blkUsed || 0;
+      shownTot.srvCount += p.srvCount || 0;
+      shownTot.srvAce += p.srvAce || 0;
+      shownTot.srvErr += p.srvErr || 0;
 
       csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
     });
+
+    if (hasHiddenPlayers) {
+      const shownPassAvg =
+        shownTot.passCount > 0 ? (shownTot.passSum / shownTot.passCount).toFixed(2) : "0.00";
+      const shownBlkTot = shownTot.blkCount + shownTot.blkStuff;
+      const shownSrvTot = shownTot.srvCount + shownTot.srvAce + shownTot.srvErr;
+      const shownKillPct =
+        shownTot.attCount > 0
+          ? ((shownTot.attKill / shownTot.attCount) * 100).toFixed(1) + "%"
+          : "0.0%";
+      const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
+
+      csv += `"","SHOWN PLAYERS (AVG & TOT)",${shownPassAvg},${shownTot.passCount},${shownTot.digCount},${shownTot.digErr},${shownTot.attCount},${shownTot.attCountFront},${shownTot.attCountBack},${shownTot.attKill},${shownKillPct},${shownTot.attErr},${shownTot.attBlk},${shownBlkTot},${shownTot.blkStuff},${shownTot.blkLate},${shownTot.blkNet},${shownTot.blkUsed},${shownSrvTot},${shownTot.srvAce},${shownTot.srvErr},${shownSrvPlusMinus}\n`;
+    }
 
     const totPassAvg =
       teamTot.passCount > 0 ? (teamTot.passSum / teamTot.passCount).toFixed(2) : "0.00";
@@ -2743,7 +2805,7 @@ export default function App() {
         : "0.0%";
     const totSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
 
-    csv += `"","TEAM TOTALS",${totPassAvg},${teamTot.passCount},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},${teamTot.attBlk},${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus}\n`;
+    csv += `"","TEAM TOTALS (WHOLE TEAM)",${totPassAvg},${teamTot.passCount},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},${teamTot.attBlk},${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus}\n`;
 
     csv +=
       "\nOPPONENT STATS\nID,Aces,Serve Errors,Serve +/-,Swings,Kills,Kill %,Pass Avg,Passes\n";
@@ -2825,13 +2887,61 @@ export default function App() {
       ],
     ];
 
-    const visiblePlayers = Object.values(uccStats).filter((p) => {
-      if (hiddenPlayerIds.includes(p.id)) return false;
+    const allPlayers = Object.values(uccStats).filter((p) => {
       if (!showRetired && p.isRetired) return false;
       return true;
     });
 
+    const visiblePlayers = allPlayers.filter((p) => {
+      if (hiddenPlayerIds.includes(p.id)) return false;
+      return true;
+    });
+
+    const hasHiddenPlayers = allPlayers.some((p) => hiddenPlayerIds.includes(p.id));
+
     const teamTot = {
+      passCount: 0,
+      passSum: 0,
+      digCount: 0,
+      digErr: 0,
+      attCount: 0,
+      attCountFront: 0,
+      attCountBack: 0,
+      attKill: 0,
+      attErr: 0,
+      attBlk: 0,
+      blkCount: 0,
+      blkStuff: 0,
+      blkLate: 0,
+      blkNet: 0,
+      blkUsed: 0,
+      srvCount: 0,
+      srvAce: 0,
+      srvErr: 0,
+    };
+
+    allPlayers.forEach((p) => {
+      teamTot.passCount += p.passCount || 0;
+      teamTot.passSum += p.passSum || 0;
+      teamTot.digCount += p.digCount || 0;
+      teamTot.digErr += p.digErr || 0;
+      teamTot.attCount += p.attCount || 0;
+      teamTot.attCountFront += p.attCountFront || 0;
+      teamTot.attCountBack += p.attCountBack || 0;
+      teamTot.attKill += p.attKill || 0;
+      teamTot.attErr += p.attErr || 0;
+      teamTot.attBlk += p.attBlk || 0;
+      teamTot.blkCount += p.blkCount || 0;
+      teamTot.blkStuff += p.blkStuff || 0;
+      teamTot.blkLate += p.blkLate || 0;
+      teamTot.blkNet += p.blkNet || 0;
+      teamTot.blkUsed += p.blkUsed || 0;
+      teamTot.srvCount += p.srvCount || 0;
+      teamTot.srvAce += p.srvAce || 0;
+      teamTot.srvErr += p.srvErr || 0;
+    });
+
+    const shownTot = {
       passCount: 0,
       passSum: 0,
       digCount: 0,
@@ -2863,24 +2973,24 @@ export default function App() {
           : "0.0%";
       const srvPlusMinus = p.srvAce - p.srvErr;
 
-      teamTot.passCount += p.passCount || 0;
-      teamTot.passSum += p.passSum || 0;
-      teamTot.digCount += p.digCount || 0;
-      teamTot.digErr += p.digErr || 0;
-      teamTot.attCount += p.attCount || 0;
-      teamTot.attCountFront += p.attCountFront || 0;
-      teamTot.attCountBack += p.attCountBack || 0;
-      teamTot.attKill += p.attKill || 0;
-      teamTot.attErr += p.attErr || 0;
-      teamTot.attBlk += p.attBlk || 0;
-      teamTot.blkCount += p.blkCount || 0;
-      teamTot.blkStuff += p.blkStuff || 0;
-      teamTot.blkLate += p.blkLate || 0;
-      teamTot.blkNet += p.blkNet || 0;
-      teamTot.blkUsed += p.blkUsed || 0;
-      teamTot.srvCount += p.srvCount || 0;
-      teamTot.srvAce += p.srvAce || 0;
-      teamTot.srvErr += p.srvErr || 0;
+      shownTot.passCount += p.passCount || 0;
+      shownTot.passSum += p.passSum || 0;
+      shownTot.digCount += p.digCount || 0;
+      shownTot.digErr += p.digErr || 0;
+      shownTot.attCount += p.attCount || 0;
+      shownTot.attCountFront += p.attCountFront || 0;
+      shownTot.attCountBack += p.attCountBack || 0;
+      shownTot.attKill += p.attKill || 0;
+      shownTot.attErr += p.attErr || 0;
+      shownTot.attBlk += p.attBlk || 0;
+      shownTot.blkCount += p.blkCount || 0;
+      shownTot.blkStuff += p.blkStuff || 0;
+      shownTot.blkLate += p.blkLate || 0;
+      shownTot.blkNet += p.blkNet || 0;
+      shownTot.blkUsed += p.blkUsed || 0;
+      shownTot.srvCount += p.srvCount || 0;
+      shownTot.srvAce += p.srvAce || 0;
+      shownTot.srvErr += p.srvErr || 0;
 
       return [
         p.number || "",
@@ -2918,32 +3028,69 @@ export default function App() {
         : "0.0%";
     const totSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
 
-    const foot = [
-      [
-        "TEAM",
-        "TOTALS",
-        totPassAvg,
-        teamTot.passCount,
-        teamTot.digCount,
-        teamTot.digErr,
-        teamTot.attCount,
-        teamTot.attCountFront,
-        teamTot.attCountBack,
-        teamTot.attKill,
-        totKillPct,
-        teamTot.attErr,
-        teamTot.attBlk,
-        totBlkTot,
-        teamTot.blkStuff,
-        teamTot.blkLate,
-        teamTot.blkNet,
-        teamTot.blkUsed,
-        totSrvTot,
-        teamTot.srvAce,
-        teamTot.srvErr,
-        totSrvPlusMinus,
-      ],
-    ];
+    const foot: any[] = [];
+
+    if (hasHiddenPlayers) {
+      const shownPassAvg =
+        shownTot.passCount > 0 ? (shownTot.passSum / shownTot.passCount).toFixed(2) : "0.00";
+      const shownBlkTot = shownTot.blkCount + shownTot.blkStuff;
+      const shownSrvTot = shownTot.srvCount + shownTot.srvAce + shownTot.srvErr;
+      const shownKillPct =
+        shownTot.attCount > 0
+          ? ((shownTot.attKill / shownTot.attCount) * 100).toFixed(1) + "%"
+          : "0.0%";
+      const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
+
+      foot.push([
+        "SHOWN",
+        "PLAYERS (AVG)",
+        shownPassAvg,
+        shownTot.passCount,
+        shownTot.digCount,
+        shownTot.digErr,
+        shownTot.attCount,
+        shownTot.attCountFront,
+        shownTot.attCountBack,
+        shownTot.attKill,
+        shownKillPct,
+        shownTot.attErr,
+        shownTot.attBlk,
+        shownBlkTot,
+        shownTot.blkStuff,
+        shownTot.blkLate,
+        shownTot.blkNet,
+        shownTot.blkUsed,
+        shownSrvTot,
+        shownTot.srvAce,
+        shownTot.srvErr,
+        shownSrvPlusMinus,
+      ]);
+    }
+
+    foot.push([
+      "TEAM",
+      "TOTALS (ALL)",
+      totPassAvg,
+      teamTot.passCount,
+      teamTot.digCount,
+      teamTot.digErr,
+      teamTot.attCount,
+      teamTot.attCountFront,
+      teamTot.attCountBack,
+      teamTot.attKill,
+      totKillPct,
+      teamTot.attErr,
+      teamTot.attBlk,
+      totBlkTot,
+      teamTot.blkStuff,
+      teamTot.blkLate,
+      teamTot.blkNet,
+      teamTot.blkUsed,
+      totSrvTot,
+      teamTot.srvAce,
+      teamTot.srvErr,
+      totSrvPlusMinus,
+    ]);
 
     autoTable(doc, {
       startY: 20,
@@ -8473,8 +8620,7 @@ export default function App() {
                   <span>
                     <strong>{hiddenPlayerIds.length}</strong> player
                     {hiddenPlayerIds.length !== 1 ? "s" : ""} hidden. Hidden
-                    players are excluded from this table, the Team row, and the
-                    PDF export.
+                    players' rows are removed. <strong>Team Totals</strong> reflect the whole team average, while <strong>Shown Players (Avg)</strong> reflects only visible players.
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -8496,9 +8642,13 @@ export default function App() {
 
             {/* Main Lancers Stats Table */}
             {(() => {
-              const visibleUccPlayers = Object.values(uccStats).filter((p) => {
-                if (hiddenPlayerIds.includes(p.id)) return false;
+              const allUccPlayers = Object.values(uccStats).filter((p) => {
                 if (!showRetired && p.isRetired) return false;
+                return true;
+              });
+
+              const visibleUccPlayers = allUccPlayers.filter((p) => {
+                if (hiddenPlayerIds.includes(p.id)) return false;
                 if (statFilter !== "all" && statFilter !== "") {
                   const searchLower = statFilter.toLowerCase();
                   return (
@@ -8509,7 +8659,10 @@ export default function App() {
                 return true;
               });
 
-              const teamTot = visibleUccPlayers.reduce(
+              const hasHiddenPlayers = allUccPlayers.some((p) => hiddenPlayerIds.includes(p.id));
+
+              // Whole Team Totals & Averages
+              const teamTot = allUccPlayers.reduce(
                 (acc, p) => {
                   acc.passCount += p.passCount || 0;
                   acc.passSum += p.passSum || 0;
@@ -8544,7 +8697,7 @@ export default function App() {
                   return acc;
                 },
                 {
-                  name: "Team Totals",
+                  name: "Team Totals (Whole Team)",
                   number: "ALL",
                   passCount: 0,
                   passSum: 0,
@@ -8592,6 +8745,91 @@ export default function App() {
                     "%"
                   : "0.0%";
               const teamSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
+
+              // Shown Players Totals & Averages (Visible Subset)
+              const shownTot = visibleUccPlayers.reduce(
+                (acc, p) => {
+                  acc.passCount += p.passCount || 0;
+                  acc.passSum += p.passSum || 0;
+                  acc.pass3 += p.pass3 || 0;
+                  acc.pass2 += p.pass2 || 0;
+                  acc.pass1 += p.pass1 || 0;
+                  acc.pass0 += p.pass0 || 0;
+                  acc.digCount += p.digCount || 0;
+                  acc.digErr += p.digErr || 0;
+                  acc.attCount += p.attCount || 0;
+                  acc.attCountFront += p.attCountFront || 0;
+                  acc.attCountBack += p.attCountBack || 0;
+                  acc.attKill += p.attKill || 0;
+                  acc.attErr += p.attErr || 0;
+                  acc.attErrNet += p.attErrNet || 0;
+                  acc.attErrOut += p.attErrOut || 0;
+                  acc.attErrStuffed += p.attErrStuffed || 0;
+                  acc.attBlk += p.attBlk || 0;
+                  acc.blkCount += p.blkCount || 0;
+                  acc.blkStuff += p.blkStuff || 0;
+                  acc.blkLate += p.blkLate || 0;
+                  acc.blkNet += p.blkNet || 0;
+                  acc.blkUsed += p.blkUsed || 0;
+                  acc.srvCount += p.srvCount || 0;
+                  acc.srvAce += p.srvAce || 0;
+                  acc.srvErr += p.srvErr || 0;
+                  acc.srvErrNet += p.srvErrNet || 0;
+                  acc.srvErrWide += p.srvErrWide || 0;
+                  acc.srvErrLong += p.srvErrLong || 0;
+                  acc.srvErrFoot += p.srvErrFoot || 0;
+                  acc.srvErrOther += p.srvErrOther || 0;
+                  return acc;
+                },
+                {
+                  name: "Shown Players (Avg & Tot)",
+                  number: "SHOWN",
+                  passCount: 0,
+                  passSum: 0,
+                  pass3: 0,
+                  pass2: 0,
+                  pass1: 0,
+                  pass0: 0,
+                  digCount: 0,
+                  digErr: 0,
+                  attCount: 0,
+                  attCountFront: 0,
+                  attCountBack: 0,
+                  attKill: 0,
+                  attErr: 0,
+                  attErrNet: 0,
+                  attErrOut: 0,
+                  attErrStuffed: 0,
+                  attBlk: 0,
+                  blkCount: 0,
+                  blkStuff: 0,
+                  blkLate: 0,
+                  blkNet: 0,
+                  blkUsed: 0,
+                  srvCount: 0,
+                  srvAce: 0,
+                  srvErr: 0,
+                  srvErrNet: 0,
+                  srvErrWide: 0,
+                  srvErrLong: 0,
+                  srvErrFoot: 0,
+                  srvErrOther: 0,
+                }
+              );
+
+              const shownPassAvg =
+                shownTot.passCount > 0
+                  ? (shownTot.passSum / shownTot.passCount).toFixed(2)
+                  : "-";
+              const shownBlkTot = shownTot.blkCount + shownTot.blkStuff;
+              const shownSrvTot =
+                shownTot.srvCount + shownTot.srvAce + shownTot.srvErr;
+              const shownKillPct =
+                shownTot.attCount > 0
+                  ? ((shownTot.attKill / shownTot.attCount) * 100).toFixed(1) +
+                    "%"
+                  : "0.0%";
+              const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
               return (
                 <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
@@ -8726,7 +8964,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {/* TOP STICKY TEAM TOTALS ROW */}
+                        {/* TOP STICKY TEAM TOTALS ROW (WHOLE TEAM) */}
                         <tr className="bg-gradient-to-r from-blue-950 via-[#002B7A] to-blue-950 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-blue-400">
                           <td
                             onClick={() =>
@@ -8749,7 +8987,7 @@ export default function App() {
                                   TEAM TOTALS
                                 </span>
                                 <span className="text-[9px] text-blue-200 font-medium">
-                                  {visibleUccPlayers.length} active player{visibleUccPlayers.length !== 1 ? "s" : ""}
+                                  {allUccPlayers.length} total roster player{allUccPlayers.length !== 1 ? "s" : ""}
                                 </span>
                               </div>
                             </div>
@@ -8927,6 +9165,210 @@ export default function App() {
                             </span>
                           </td>
                         </tr>
+
+                        {/* TOP STICKY SHOWN PLAYERS ROW (IF PLAYERS HIDDEN) */}
+                        {hasHiddenPlayers && (
+                          <tr className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-indigo-400">
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "pass",
+                                  titleContext: "Shown Players Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 sticky left-0 bg-slate-900 text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-indigo-400 cursor-pointer hover:bg-slate-800 transition-colors"
+                              title="Click for Shown Players breakdown"
+                            >
+                              <div className="flex items-center space-x-1.5 sm:space-x-2">
+                                <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
+                                  <Eye size={11} className="text-slate-950" />
+                                </span>
+                                <div className="flex flex-col">
+                                  <span className="font-black text-indigo-300 uppercase tracking-widest text-xs">
+                                    SHOWN PLAYERS (AVG)
+                                  </span>
+                                  <span className="text-[9px] text-indigo-200 font-medium">
+                                    {visibleUccPlayers.length} of {allUccPlayers.length} visible
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                            {/* PASSING */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "pass",
+                                  titleContext: "Shown Players Passing Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/40 cursor-pointer hover:bg-indigo-800/50 transition-colors"
+                              title="Click to view Shown Players Passing breakdown"
+                            >
+                              <span className="text-sm sm:text-base text-indigo-300">
+                                {shownPassAvg}
+                              </span>{" "}
+                              <span className="text-[9px] sm:text-[10px] text-indigo-200 font-bold ml-0.5 sm:ml-1">
+                                ({shownTot.passCount})
+                              </span>
+                            </td>
+                            {/* DIGS */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "dig",
+                                  titleContext: "Shown Players Dig Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              title="Click to view Shown Players Dig breakdown"
+                            >
+                              <span className="text-indigo-300 font-black text-sm">
+                                {shownTot.digCount}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-red-300 font-bold">
+                                {shownTot.digErr}
+                              </span>
+                            </td>
+                            {/* SWINGS */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "attack",
+                                  titleContext: "Shown Players Attack Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                              title="Click to view Shown Players Attack breakdown"
+                            >
+                              <span className="font-black text-white">
+                                {shownTot.attCount}
+                              </span>{" "}
+                              <span className="text-[9px] text-indigo-200 font-medium">
+                                ({shownTot.attCountFront}/{shownTot.attCountBack})
+                              </span>
+                              <br />
+                              <span className="text-emerald-300 font-black text-sm">
+                                {shownTot.attKill}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-red-300 font-bold text-xs">
+                                {shownTot.attErr}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-amber-300 font-bold text-xs">
+                                {shownTot.attBlk}
+                              </span>
+                            </td>
+                            {/* KILL % */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "attack",
+                                  titleContext: "Shown Players Attack Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                              title="Click to view Shown Players Attack breakdown"
+                            >
+                              {shownKillPct}
+                            </td>
+                            {/* BLOCKS */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "block",
+                                  titleContext: "Shown Players Block Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                              title="Click to view Shown Players Block breakdown"
+                            >
+                              <span className="font-black text-white">
+                                {shownBlkTot}
+                              </span>
+                              <span className="text-indigo-200 font-bold">
+                                ({shownTot.blkStuff})
+                              </span>{" "}
+                              -{" "}
+                              <span className="text-amber-300">
+                                {shownTot.blkLate}
+                              </span>{" "}
+                              -{" "}
+                              <span className="text-white">
+                                {shownTot.blkNet}
+                              </span>{" "}
+                              -{" "}
+                              <span className="text-white">
+                                {shownTot.blkUsed}
+                              </span>
+                            </td>
+                            {/* SERVES */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "serve",
+                                  titleContext: "Shown Players Serve Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors"
+                              title="Click to view Shown Players Serve breakdown"
+                            >
+                              <span className="font-black text-white">
+                                {shownSrvTot}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-emerald-300 font-black text-sm">
+                                {shownTot.srvAce}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-red-300 font-bold">
+                                {shownTot.srvErr}
+                              </span>
+                            </td>
+                            {/* SRV +/- */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "serve",
+                                  titleContext: "Shown Players Serve Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                              title="Click to view Shown Players Serve breakdown"
+                            >
+                              <span
+                                className={
+                                  shownSrvPlusMinus > 0
+                                    ? "text-emerald-300"
+                                    : shownSrvPlusMinus < 0
+                                      ? "text-red-300"
+                                      : "text-slate-300"
+                                }
+                              >
+                                {shownSrvPlusMinus > 0
+                                  ? `+${shownSrvPlusMinus}`
+                                  : shownSrvPlusMinus}
+                              </span>
+                            </td>
+                          </tr>
+                        )}
 
                         {visibleUccPlayers.length === 0 ? (
                           <tr>
@@ -9202,8 +9644,202 @@ export default function App() {
                         )}
                       </tbody>
 
-                      {/* TEAM TOTALS ROW */}
+                      {/* TEAM TOTALS & SHOWN PLAYERS FOOTER */}
                       <tfoot className="border-t-2 border-[#0033A0] shadow-md">
+                        {/* SHOWN PLAYERS ROW (IF PLAYERS ARE HIDDEN) */}
+                        {hasHiddenPlayers && (
+                          <tr className="bg-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b border-indigo-500/30">
+                            <td className="p-2.5 sm:p-3 sticky left-0 bg-slate-900 text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-indigo-400">
+                              <div className="flex items-center space-x-1.5 sm:space-x-2">
+                                <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
+                                  <Eye size={11} className="text-slate-950" />
+                                </span>
+                                <div className="flex flex-col">
+                                  <span className="font-black text-indigo-300 uppercase tracking-widest text-xs">
+                                    SHOWN PLAYERS (AVG)
+                                  </span>
+                                  <span className="text-[9px] text-indigo-200 font-medium">
+                                    {visibleUccPlayers.length} shown
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                            {/* PASSING */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "pass",
+                                  titleContext: "Shown Players Passing Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/30 cursor-pointer hover:bg-indigo-800/40 transition-colors"
+                              title="Click to view Shown Players Passing breakdown"
+                            >
+                              <span className="text-sm sm:text-base text-indigo-300">
+                                {shownPassAvg}
+                              </span>{" "}
+                              <span className="text-[9px] sm:text-[10px] text-indigo-200 font-bold ml-0.5 sm:ml-1">
+                                ({shownTot.passCount})
+                              </span>
+                            </td>
+                            {/* DIGS */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "dig",
+                                  titleContext: "Shown Players Dig Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              title="Click to view Shown Players Dig breakdown"
+                            >
+                              <span className="text-indigo-300 font-black text-sm">
+                                {shownTot.digCount}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-red-300 font-bold">
+                                {shownTot.digErr}
+                              </span>
+                            </td>
+                            {/* SWINGS */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "attack",
+                                  titleContext: "Shown Players Attack Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                              title="Click to view Shown Players Attack breakdown"
+                            >
+                              <span className="font-black text-white">
+                                {shownTot.attCount}
+                              </span>{" "}
+                              <span className="text-[9px] text-indigo-200 font-medium">
+                                ({shownTot.attCountFront}/{shownTot.attCountBack})
+                              </span>
+                              <br />
+                              <span className="text-emerald-300 font-black text-sm">
+                                {shownTot.attKill}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-red-300 font-bold text-xs">
+                                {shownTot.attErr}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-amber-300 font-bold text-xs">
+                                {shownTot.attBlk}
+                              </span>
+                            </td>
+                            {/* KILL % */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "attack",
+                                  titleContext: "Shown Players Attack Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                              title="Click to view Shown Players Attack breakdown"
+                            >
+                              {shownKillPct}
+                            </td>
+                            {/* BLOCKS */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "block",
+                                  titleContext: "Shown Players Block Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                              title="Click to view Shown Players Block breakdown"
+                            >
+                              <span className="font-black text-white">
+                                {shownBlkTot}
+                              </span>
+                              <span className="text-indigo-200 font-bold">
+                                ({shownTot.blkStuff})
+                              </span>{" "}
+                              -{" "}
+                              <span className="text-amber-300">
+                                {shownTot.blkLate}
+                              </span>{" "}
+                              -{" "}
+                              <span className="text-white">
+                                {shownTot.blkNet}
+                              </span>{" "}
+                              -{" "}
+                              <span className="text-white">
+                                {shownTot.blkUsed}
+                              </span>
+                            </td>
+                            {/* SERVES */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "serve",
+                                  titleContext: "Shown Players Serve Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              title="Click to view Shown Players Serve breakdown"
+                            >
+                              <span className="font-black text-white">
+                                {shownSrvTot}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-emerald-300 font-black text-sm">
+                                {shownTot.srvAce}
+                              </span>{" "}
+                              <span className="text-indigo-300 mx-0.5">-</span>{" "}
+                              <span className="text-red-300 font-bold">
+                                {shownTot.srvErr}
+                              </span>
+                            </td>
+                            {/* SRV +/- */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "serve",
+                                  titleContext: "Shown Players Serve Breakdown",
+                                })
+                              }
+                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                              title="Click to view Shown Players Serve breakdown"
+                            >
+                              <span
+                                className={
+                                  shownSrvPlusMinus > 0
+                                    ? "text-emerald-300"
+                                    : shownSrvPlusMinus < 0
+                                      ? "text-red-300"
+                                      : "text-slate-300"
+                                }
+                              >
+                                {shownSrvPlusMinus > 0
+                                  ? `+${shownSrvPlusMinus}`
+                                  : shownSrvPlusMinus}
+                              </span>
+                            </td>
+                          </tr>
+                        )}
+
+                        {/* WHOLE TEAM TOTALS ROW */}
                         <tr className="bg-[#001f5c] text-white font-bold text-[10px] sm:text-xs tracking-wider">
                           <td className="p-2.5 sm:p-3 sticky left-0 bg-[#001f5c] text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-blue-400">
                             <div className="flex items-center space-x-1.5 sm:space-x-2">
@@ -9212,11 +9848,11 @@ export default function App() {
                               </span>
                               <div className="flex flex-col">
                                 <span className="font-black text-amber-300 uppercase tracking-widest text-xs sm:text-sm">
-                                  TEAM
+                                  TEAM TOTALS
                                 </span>
                                 <span className="text-[9px] text-blue-200 font-medium">
-                                  {visibleUccPlayers.length} player
-                                  {visibleUccPlayers.length !== 1 ? "s" : ""}
+                                  {allUccPlayers.length} total roster player
+                                  {allUccPlayers.length !== 1 ? "s" : ""}
                                 </span>
                               </div>
                             </div>
