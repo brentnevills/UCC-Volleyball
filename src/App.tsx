@@ -45,6 +45,7 @@ import {
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
 import { StatCorrectionModal } from "./components/StatCorrectionModal";
+import { StatBreakdownModal } from "./components/StatBreakdownModal";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -642,6 +643,8 @@ export default function App() {
     latePressed?: boolean;
   } | null>(null);
   const [hiddenPracticePlayers, setHiddenPracticePlayers] = useState<string[]>([]);
+  const [hiddenPlayerIds, setHiddenPlayerIds] = useState<string[]>([]);
+  const [showPlayerFilterModal, setShowPlayerFilterModal] = useState(false);
   const [showPracticeStats, setShowPracticeStats] = useState(false);
   const [showStatCorrectionModal, setShowStatCorrectionModal] = useState(false);
   const [showPositioning, setShowPositioning] = useState(false);
@@ -656,6 +659,17 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [setWinnerModal, setSetWinnerModal] = useState(null);
   const [careerPlayerName, setCareerPlayerName] = useState(null);
+  const [statBreakdownModal, setStatBreakdownModal] = useState<{
+    isOpen: boolean;
+    selectedPlayer: any;
+    category: "serve" | "attack" | "block" | "pass" | "dig";
+    titleContext?: string;
+  }>({
+    isOpen: false,
+    selectedPlayer: null,
+    category: "serve",
+    titleContext: "",
+  });
   const [statFilter, setStatFilter] = useState("all");
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
@@ -2496,12 +2510,19 @@ export default function App() {
         isRetired: p.isRetired || false,
         passSum: 0,
         passCount: 0,
+        pass3: 0,
+        pass2: 0,
+        pass1: 0,
+        pass0: 0,
         attCount: 0,
         attCountFront: 0,
         attCountBack: 0,
         attBlk: 0,
         attKill: 0,
         attErr: 0,
+        attErrNet: 0,
+        attErrOut: 0,
+        attErrStuffed: 0,
         blkCount: 0,
         blkStuff: 0,
         blkLate: 0,
@@ -2510,6 +2531,11 @@ export default function App() {
         srvCount: 0,
         srvAce: 0,
         srvErr: 0,
+        srvErrNet: 0,
+        srvErrWide: 0,
+        srvErrLong: 0,
+        srvErrFoot: 0,
+        srvErrOther: 0,
         digCount: 0,
         digErr: 0,
       };
@@ -2573,6 +2599,10 @@ export default function App() {
         if (s.category === "Pass") {
           p.passCount += 1;
           p.passSum += s.value;
+          if (s.value === 3) p.pass3 += 1;
+          else if (s.value === 2) p.pass2 += 1;
+          else if (s.value === 1) p.pass1 += 1;
+          else if (s.value === 0) p.pass0 += 1;
         } else if (s.category === "Dig") {
           if (s.metric === "Dig") p.digCount += 1;
           if (s.metric === "Error") p.digErr += 1;
@@ -2599,8 +2629,12 @@ export default function App() {
             s.metric === "Net" ||
             s.metric === "Out/Net" ||
             s.metric === "Stuffed"
-          )
+          ) {
             p.attErr += 1;
+            if (s.metric === "Net") p.attErrNet += 1;
+            else if (s.metric === "Stuffed") p.attErrStuffed += 1;
+            else p.attErrOut += 1;
+          }
           if (s.metric === "Blocked" || s.metric === "Stuffed") p.attBlk += 1;
         } else if (s.category === "Block") {
           if (s.metric === "Play On" || s.metric === "Touch")
@@ -2617,7 +2651,15 @@ export default function App() {
         } else if (s.category === "Serve") {
           if (s.metric === "Attempt") p.srvCount += 1;
           if (s.metric === "Ace") p.srvAce += 1;
-          if (s.metric?.includes("Miss") || s.metric === "Error") p.srvErr += 1;
+          if (s.metric?.includes("Miss") || s.metric === "Error") {
+            p.srvErr += 1;
+            const m = s.metric.toLowerCase();
+            if (m.includes("net")) p.srvErrNet += 1;
+            else if (m.includes("wide")) p.srvErrWide += 1;
+            else if (m.includes("long") || m.includes("out") || m.includes("deep")) p.srvErrLong += 1;
+            else if (m.includes("foot")) p.srvErrFoot += 1;
+            else p.srvErrOther += 1;
+          }
         }
       }
     });
@@ -2629,9 +2671,36 @@ export default function App() {
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
-    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Serves,Aces,Serve Errors,Serve +/-,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Pass Avg,Passes\n`;
 
-    Object.values(uccStats).forEach((p) => {
+    const visiblePlayers = Object.values(uccStats).filter((p) => {
+      if (hiddenPlayerIds.includes(p.id)) return false;
+      if (!showRetired && p.isRetired) return false;
+      return true;
+    });
+
+    const teamTot = {
+      passCount: 0,
+      passSum: 0,
+      digCount: 0,
+      digErr: 0,
+      attCount: 0,
+      attCountFront: 0,
+      attCountBack: 0,
+      attKill: 0,
+      attErr: 0,
+      attBlk: 0,
+      blkCount: 0,
+      blkStuff: 0,
+      blkLate: 0,
+      blkNet: 0,
+      blkUsed: 0,
+      srvCount: 0,
+      srvAce: 0,
+      srvErr: 0,
+    };
+
+    visiblePlayers.forEach((p) => {
       const passAvg =
         p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
       const blkTot = p.blkCount + p.blkStuff;
@@ -2641,20 +2710,66 @@ export default function App() {
           ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
           : "0.0%";
       const srvPlusMinus = p.srvAce - p.srvErr;
-      csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+
+      teamTot.passCount += p.passCount || 0;
+      teamTot.passSum += p.passSum || 0;
+      teamTot.digCount += p.digCount || 0;
+      teamTot.digErr += p.digErr || 0;
+      teamTot.attCount += p.attCount || 0;
+      teamTot.attCountFront += p.attCountFront || 0;
+      teamTot.attCountBack += p.attCountBack || 0;
+      teamTot.attKill += p.attKill || 0;
+      teamTot.attErr += p.attErr || 0;
+      teamTot.attBlk += p.attBlk || 0;
+      teamTot.blkCount += p.blkCount || 0;
+      teamTot.blkStuff += p.blkStuff || 0;
+      teamTot.blkLate += p.blkLate || 0;
+      teamTot.blkNet += p.blkNet || 0;
+      teamTot.blkUsed += p.blkUsed || 0;
+      teamTot.srvCount += p.srvCount || 0;
+      teamTot.srvAce += p.srvAce || 0;
+      teamTot.srvErr += p.srvErr || 0;
+
+      csv += `"${p.number || ""}","${p.name}",${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${passAvg},${p.passCount}\n`;
     });
 
+    const totPassAvg =
+      teamTot.passCount > 0 ? (teamTot.passSum / teamTot.passCount).toFixed(2) : "0.00";
+    const totBlkTot = teamTot.blkCount + teamTot.blkStuff;
+    const totSrvTot = teamTot.srvCount + teamTot.srvAce + teamTot.srvErr;
+    const totKillPct =
+      teamTot.attCount > 0
+        ? ((teamTot.attKill / teamTot.attCount) * 100).toFixed(1) + "%"
+        : "0.0%";
+    const totSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
+
+    csv += `"","TEAM TOTALS",${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},${teamTot.attBlk},${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totPassAvg},${teamTot.passCount}\n`;
+
     csv +=
-      "\nOPPONENT STATS\nID,Pass Avg,Passes,Swings,Kills,Kill %,Aces,Serve Errors,Serve +/-\n";
-    Object.entries(opponentStats).forEach(([id, p]) => {
-      const passAvg =
-        p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
-      const killPct =
-        p.attCount > 0
-          ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
-          : "0.0%";
-      const srvPlusMinus = p.srvAce - p.srvErr;
-      csv += `"${id}",${passAvg},${p.passCount},${p.attCount},${p.attKill},${killPct},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+      "\nOPPONENT STATS\nID,Aces,Serve Errors,Serve +/-,Swings,Kills,Kill %,Pass Avg,Passes\n";
+    Object.entries(opponentStats).forEach(([teamOrId, pOrPlayers]: [string, any]) => {
+      if (typeof pOrPlayers === "object" && pOrPlayers !== null && !("passCount" in pOrPlayers)) {
+        Object.entries(pOrPlayers).forEach(([id, p]: [string, any]) => {
+          const passAvg =
+            p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
+          const killPct =
+            p.attCount > 0
+              ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+              : "0.0%";
+          const srvPlusMinus = p.srvAce - p.srvErr;
+          csv += `"${teamOrId} - ${id}",${p.srvAce},${p.srvErr},${srvPlusMinus},${p.attCount},${p.attKill},${killPct},${passAvg},${p.passCount}\n`;
+        });
+      } else {
+        const p = pOrPlayers;
+        const passAvg =
+          p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
+        const killPct =
+          p.attCount > 0
+            ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+            : "0.0%";
+        const srvPlusMinus = p.srvAce - p.srvErr;
+        csv += `"${teamOrId}",${p.srvAce},${p.srvErr},${srvPlusMinus},${p.attCount},${p.attKill},${killPct},${passAvg},${p.passCount}\n`;
+      }
     });
 
     const blob = new Blob([csv], { type: "text/csv" });
@@ -2687,8 +2802,10 @@ export default function App() {
       [
         "Number",
         "Name",
-        "Pass Avg",
-        "Passes",
+        "Serves",
+        "Aces",
+        "Serve Errors",
+        "Serve +/-",
         "Digs",
         "Dig Errors",
         "Swings",
@@ -2703,14 +2820,39 @@ export default function App() {
         "Blk Late",
         "Blk Net",
         "Blk Used",
-        "Serves",
-        "Aces",
-        "Serve Errors",
-        "Serve +/-",
+        "Pass Avg",
+        "Passes",
       ],
     ];
 
-    const body = Object.values(uccStats).map((p) => {
+    const visiblePlayers = Object.values(uccStats).filter((p) => {
+      if (hiddenPlayerIds.includes(p.id)) return false;
+      if (!showRetired && p.isRetired) return false;
+      return true;
+    });
+
+    const teamTot = {
+      passCount: 0,
+      passSum: 0,
+      digCount: 0,
+      digErr: 0,
+      attCount: 0,
+      attCountFront: 0,
+      attCountBack: 0,
+      attKill: 0,
+      attErr: 0,
+      attBlk: 0,
+      blkCount: 0,
+      blkStuff: 0,
+      blkLate: 0,
+      blkNet: 0,
+      blkUsed: 0,
+      srvCount: 0,
+      srvAce: 0,
+      srvErr: 0,
+    };
+
+    const body = visiblePlayers.map((p) => {
       const passAvg =
         p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
       const blkTot = p.blkCount + p.blkStuff;
@@ -2721,11 +2863,32 @@ export default function App() {
           : "0.0%";
       const srvPlusMinus = p.srvAce - p.srvErr;
 
+      teamTot.passCount += p.passCount || 0;
+      teamTot.passSum += p.passSum || 0;
+      teamTot.digCount += p.digCount || 0;
+      teamTot.digErr += p.digErr || 0;
+      teamTot.attCount += p.attCount || 0;
+      teamTot.attCountFront += p.attCountFront || 0;
+      teamTot.attCountBack += p.attCountBack || 0;
+      teamTot.attKill += p.attKill || 0;
+      teamTot.attErr += p.attErr || 0;
+      teamTot.attBlk += p.attBlk || 0;
+      teamTot.blkCount += p.blkCount || 0;
+      teamTot.blkStuff += p.blkStuff || 0;
+      teamTot.blkLate += p.blkLate || 0;
+      teamTot.blkNet += p.blkNet || 0;
+      teamTot.blkUsed += p.blkUsed || 0;
+      teamTot.srvCount += p.srvCount || 0;
+      teamTot.srvAce += p.srvAce || 0;
+      teamTot.srvErr += p.srvErr || 0;
+
       return [
         p.number || "",
         p.name,
-        passAvg,
-        p.passCount,
+        srvTot,
+        p.srvAce,
+        p.srvErr,
+        srvPlusMinus,
         p.digCount,
         p.digErr,
         p.attCount,
@@ -2740,19 +2903,56 @@ export default function App() {
         p.blkLate,
         p.blkNet,
         p.blkUsed,
-        srvTot,
-        p.srvAce,
-        p.srvErr,
-        srvPlusMinus,
+        passAvg,
+        p.passCount,
       ];
     });
+
+    const totPassAvg =
+      teamTot.passCount > 0 ? (teamTot.passSum / teamTot.passCount).toFixed(2) : "0.00";
+    const totBlkTot = teamTot.blkCount + teamTot.blkStuff;
+    const totSrvTot = teamTot.srvCount + teamTot.srvAce + teamTot.srvErr;
+    const totKillPct =
+      teamTot.attCount > 0
+        ? ((teamTot.attKill / teamTot.attCount) * 100).toFixed(1) + "%"
+        : "0.0%";
+    const totSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
+
+    const foot = [
+      [
+        "TEAM",
+        "TOTALS",
+        totSrvTot,
+        teamTot.srvAce,
+        teamTot.srvErr,
+        totSrvPlusMinus,
+        teamTot.digCount,
+        teamTot.digErr,
+        teamTot.attCount,
+        teamTot.attCountFront,
+        teamTot.attCountBack,
+        teamTot.attKill,
+        totKillPct,
+        teamTot.attErr,
+        teamTot.attBlk,
+        totBlkTot,
+        teamTot.blkStuff,
+        teamTot.blkLate,
+        teamTot.blkNet,
+        teamTot.blkUsed,
+        totPassAvg,
+        teamTot.passCount,
+      ],
+    ];
 
     autoTable(doc, {
       startY: 20,
       head: head,
       body: body,
+      foot: foot,
       styles: { fontSize: 8 },
       headStyles: { fillColor: [0, 51, 160] },
+      footStyles: { fillColor: [0, 27, 94], textColor: [255, 255, 255], fontStyle: "bold" },
     });
 
     const finalY = doc.lastAutoTable.finalY || 20;
@@ -2761,36 +2961,60 @@ export default function App() {
     const oppHead = [
       [
         "ID",
-        "Pass Avg",
-        "Passes",
-        "Swings",
-        "Kills",
-        "Kill %",
         "Aces",
         "Serve Errors",
         "Serve +/-",
+        "Swings",
+        "Kills",
+        "Kill %",
+        "Pass Avg",
+        "Passes",
       ],
     ];
-    const oppBody = Object.entries(opponentStats).map(([id, p]) => {
-      const passAvg =
-        p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
-      const killPct =
-        p.attCount > 0
-          ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
-          : "0.0%";
-      const srvPlusMinus = p.srvAce - p.srvErr;
-
-      return [
-        id,
-        passAvg,
-        p.passCount,
-        p.attCount,
-        p.attKill,
-        killPct,
-        p.srvAce,
-        p.srvErr,
-        srvPlusMinus,
-      ];
+    const oppBody: any[] = [];
+    Object.entries(opponentStats).forEach(([teamOrId, pOrPlayers]: [string, any]) => {
+      if (typeof pOrPlayers === "object" && pOrPlayers !== null && !("passCount" in pOrPlayers)) {
+        Object.entries(pOrPlayers).forEach(([id, p]: [string, any]) => {
+          const passAvg =
+            p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
+          const killPct =
+            p.attCount > 0
+              ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+              : "0.0%";
+          const srvPlusMinus = p.srvAce - p.srvErr;
+          oppBody.push([
+            `${teamOrId} - #${id}`,
+            p.srvAce,
+            p.srvErr,
+            srvPlusMinus,
+            p.attCount,
+            p.attKill,
+            killPct,
+            passAvg,
+            p.passCount,
+          ]);
+        });
+      } else {
+        const p = pOrPlayers;
+        const passAvg =
+          p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
+        const killPct =
+          p.attCount > 0
+            ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
+            : "0.0%";
+        const srvPlusMinus = p.srvAce - p.srvErr;
+        oppBody.push([
+          teamOrId,
+          p.srvAce,
+          p.srvErr,
+          srvPlusMinus,
+          p.attCount,
+          p.attKill,
+          killPct,
+          passAvg,
+          p.passCount,
+        ]);
+      }
     });
 
     autoTable(doc, {
@@ -6412,28 +6636,44 @@ export default function App() {
           <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
             <XCircle
               size={60}
-              className="text-red-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(239,68,68,0.5)] sm:w-20 sm:h-20"
+              className="text-red-500 mb-3 sm:mb-4 drop-shadow-[0_0_30px_rgba(239,68,68,0.5)] sm:w-16 sm:h-16"
             />
-            <h2 className="text-2xl sm:text-4xl font-black mb-8 sm:mb-10 text-center tracking-widest uppercase">
-              Select Error Type
+            <h2 className="text-xl sm:text-3xl font-black mb-6 sm:mb-8 text-center tracking-widest uppercase">
+              Select Serve Error Type
             </h2>
-            <div className="flex w-full max-w-sm gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full max-w-md">
               <button
                 onClick={() => handleServeErrorChoice("Net")}
-                className="flex-1 bg-slate-700 text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-2xl sm:text-3xl shadow-xl active:scale-95 border-b-4 border-slate-800"
+                className="bg-slate-800 hover:bg-slate-700 text-white py-5 sm:py-7 rounded-2xl font-black text-lg sm:text-2xl shadow-xl active:scale-95 border-b-4 border-slate-950 flex flex-col items-center justify-center transition-all"
               >
-                NET
+                <span>NET</span>
+                <span className="text-[10px] sm:text-xs text-slate-400 font-medium">In the Net</span>
               </button>
               <button
-                onClick={() => handleServeErrorChoice("Out")}
-                className="flex-1 bg-red-600 text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-2xl sm:text-3xl shadow-xl active:scale-95 border-b-4 border-red-800"
+                onClick={() => handleServeErrorChoice("Wide")}
+                className="bg-amber-600 hover:bg-amber-500 text-white py-5 sm:py-7 rounded-2xl font-black text-lg sm:text-2xl shadow-xl active:scale-95 border-b-4 border-amber-800 flex flex-col items-center justify-center transition-all"
               >
-                OUT
+                <span>WIDE</span>
+                <span className="text-[10px] sm:text-xs text-amber-200 font-medium">Out Sideline</span>
+              </button>
+              <button
+                onClick={() => handleServeErrorChoice("Long")}
+                className="bg-red-600 hover:bg-red-500 text-white py-5 sm:py-7 rounded-2xl font-black text-lg sm:text-2xl shadow-xl active:scale-95 border-b-4 border-red-800 flex flex-col items-center justify-center transition-all"
+              >
+                <span>LONG</span>
+                <span className="text-[10px] sm:text-xs text-red-200 font-medium">Out Baseline</span>
+              </button>
+              <button
+                onClick={() => handleServeErrorChoice("Foot Fault")}
+                className="bg-purple-700 hover:bg-purple-600 text-white py-5 sm:py-7 rounded-2xl font-black text-lg sm:text-2xl shadow-xl active:scale-95 border-b-4 border-purple-900 flex flex-col items-center justify-center transition-all"
+              >
+                <span>FOOT FAULT</span>
+                <span className="text-[10px] sm:text-xs text-purple-200 font-medium">Line Violation</span>
               </button>
             </div>
             <button
               onClick={() => setServeErrorPrompt(null)}
-              className="mt-6 sm:mt-8 text-slate-400 font-bold text-sm sm:text-lg hover:text-white px-6 py-2 sm:py-3 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors"
+              className="mt-6 sm:mt-8 text-slate-400 font-bold text-sm sm:text-base hover:text-white px-6 py-2 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors"
             >
               Cancel
             </button>
@@ -8152,23 +8392,63 @@ export default function App() {
                   ({currentNav.name})
                 </span>
               </h2>
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                <label className="text-[10px] sm:text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 cursor-pointer">
+              <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowPlayerFilterModal(true)}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-black flex items-center gap-1.5 transition-all shadow-sm ${
+                    hiddenPlayerIds.length > 0
+                      ? "bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100"
+                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                  }`}
+                  title="Filter visible players in Stats Table and PDF export"
+                >
+                  {hiddenPlayerIds.length > 0 ? (
+                    <EyeOff size={14} className="text-amber-600 shrink-0" />
+                  ) : (
+                    <Eye size={14} className="text-slate-500 shrink-0" />
+                  )}
+                  <span>
+                    Players (
+                    {
+                      Object.values(uccStats).filter(
+                        (p) =>
+                          !hiddenPlayerIds.includes(p.id) &&
+                          (showRetired || !p.isRetired)
+                      ).length
+                    }
+                    /
+                    {
+                      Object.values(uccStats).filter(
+                        (p) => showRetired || !p.isRetired
+                      ).length
+                    }
+                    )
+                  </span>
+                  {hiddenPlayerIds.length > 0 && (
+                    <span className="bg-amber-500 text-white rounded-full px-1.5 py-0.5 text-[9px] font-black">
+                      {hiddenPlayerIds.length} hidden
+                    </span>
+                  )}
+                </button>
+
+                <label className="text-[10px] sm:text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2 cursor-pointer bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 shadow-sm">
                   <input
                     type="checkbox"
                     checked={showRetired}
                     onChange={(e) => setShowRetired(e.target.checked)}
                     className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
                   />
-                  Include Retired
+                  Retired
                 </label>
-                <div className="bg-white px-3 py-1.5 rounded-lg border border-slate-200 flex items-center shadow-sm w-full sm:w-64">
+
+                <div className="bg-white px-3 py-1.5 rounded-lg border border-slate-200 flex items-center shadow-sm flex-1 sm:w-56">
                   <span className="text-slate-400 font-bold mr-2 text-xs">
                     Search
                   </span>
                   <input
                     type="text"
-                    placeholder="Player Name / #"
+                    placeholder="Player / #"
                     value={statFilter === "all" ? "" : statFilter}
                     onChange={(e) => setStatFilter(e.target.value)}
                     className="flex-1 bg-transparent border-none outline-none text-xs sm:text-sm font-bold text-slate-700 w-full"
@@ -8184,211 +8464,740 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
-              {/* Scroll indicator for mobile */}
-              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[800px]">
-                  <thead>
-                    <tr className="bg-slate-100 text-slate-500 text-[9px] sm:text-[10px] tracking-widest uppercase border-b-2 border-slate-200">
-                      <th className="p-2 sm:p-3 font-black w-32 sm:w-40 sticky left-0 bg-slate-100 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
-                        PLAYER
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
-                        PASSING
-                        <br />
-                        <span className="opacity-70 font-bold tracking-normal">
-                          Avg(Tot)
-                        </span>
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-slate-50">
-                        DIGS
-                        <br />
-                        <span className="opacity-70 font-bold tracking-normal">
-                          (D-Err)
-                        </span>
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
-                        SWINGS
-                        <br />
-                        <span className="opacity-70 font-bold tracking-normal text-[8px] sm:text-[9px]">
-                          Tot(F/B) K-E-B
-                        </span>
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-green-600">
-                        KILL %
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-slate-50">
-                        BLOCKS
-                        <br />
-                        <span className="opacity-70 font-bold tracking-normal">
-                          (Tot(Stf)-Lt-Net-Usd)
-                        </span>
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200">
-                        SERVES
-                        <br />
-                        <span className="opacity-70 font-bold tracking-normal">
-                          (Att-Ace-Err)
-                        </span>
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-blue-600 bg-blue-50/50">
-                        SRV +/-
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {Object.values(uccStats)
-                      .filter((p) => {
-                        if (!showRetired && p.isRetired) return false;
-                        if (statFilter !== "all" && statFilter !== "") {
-                          const searchLower = statFilter.toLowerCase();
-                          return (
-                            p.name.toLowerCase().includes(searchLower) ||
-                            (p.number || "").toString().includes(searchLower)
-                          );
-                        }
-                        return true;
-                      })
-                      .map((p) => {
-                        const passAvg =
-                          p.passCount > 0
-                            ? (p.passSum / p.passCount).toFixed(2)
-                            : "-";
-                        const blkTot = p.blkCount + p.blkStuff;
-                        const srvTot = p.srvCount + p.srvAce + p.srvErr;
-                        const killPct =
-                          p.attCount > 0
-                            ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%"
-                            : "0.0%";
-                        const srvPlusMinus = p.srvAce - p.srvErr;
+            {/* Hidden players alert banner */}
+            {hiddenPlayerIds.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 sm:p-3 mb-4 flex items-center justify-between text-xs text-amber-900 font-bold shadow-sm">
+                <div className="flex items-center gap-2">
+                  <EyeOff size={16} className="text-amber-600 shrink-0" />
+                  <span>
+                    <strong>{hiddenPlayerIds.length}</strong> player
+                    {hiddenPlayerIds.length !== 1 ? "s" : ""} hidden. Hidden
+                    players are excluded from this table, the Team row, and the
+                    PDF export.
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setHiddenPlayerIds([])}
+                    className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded-lg text-xs font-black transition-colors"
+                  >
+                    Show All
+                  </button>
+                  <button
+                    onClick={() => setShowPlayerFilterModal(true)}
+                    className="bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 px-2.5 py-1 rounded-lg text-xs font-black transition-colors"
+                  >
+                    Manage
+                  </button>
+                </div>
+              </div>
+            )}
 
-                        return (
-                          <tr
-                            key={p.id}
-                            onClick={() => setCareerPlayerName(p.name)}
-                            className="hover:bg-blue-50/50 text-[10px] sm:text-xs cursor-pointer transition-colors"
-                            title="Click to view full Career Stats across all teams"
+            {/* Main Lancers Stats Table */}
+            {(() => {
+              const visibleUccPlayers = Object.values(uccStats).filter((p) => {
+                if (hiddenPlayerIds.includes(p.id)) return false;
+                if (!showRetired && p.isRetired) return false;
+                if (statFilter !== "all" && statFilter !== "") {
+                  const searchLower = statFilter.toLowerCase();
+                  return (
+                    p.name.toLowerCase().includes(searchLower) ||
+                    (p.number || "").toString().includes(searchLower)
+                  );
+                }
+                return true;
+              });
+
+              const teamTot = visibleUccPlayers.reduce(
+                (acc, p) => {
+                  acc.passCount += p.passCount || 0;
+                  acc.passSum += p.passSum || 0;
+                  acc.pass3 += p.pass3 || 0;
+                  acc.pass2 += p.pass2 || 0;
+                  acc.pass1 += p.pass1 || 0;
+                  acc.pass0 += p.pass0 || 0;
+                  acc.digCount += p.digCount || 0;
+                  acc.digErr += p.digErr || 0;
+                  acc.attCount += p.attCount || 0;
+                  acc.attCountFront += p.attCountFront || 0;
+                  acc.attCountBack += p.attCountBack || 0;
+                  acc.attKill += p.attKill || 0;
+                  acc.attErr += p.attErr || 0;
+                  acc.attErrNet += p.attErrNet || 0;
+                  acc.attErrOut += p.attErrOut || 0;
+                  acc.attErrStuffed += p.attErrStuffed || 0;
+                  acc.attBlk += p.attBlk || 0;
+                  acc.blkCount += p.blkCount || 0;
+                  acc.blkStuff += p.blkStuff || 0;
+                  acc.blkLate += p.blkLate || 0;
+                  acc.blkNet += p.blkNet || 0;
+                  acc.blkUsed += p.blkUsed || 0;
+                  acc.srvCount += p.srvCount || 0;
+                  acc.srvAce += p.srvAce || 0;
+                  acc.srvErr += p.srvErr || 0;
+                  acc.srvErrNet += p.srvErrNet || 0;
+                  acc.srvErrWide += p.srvErrWide || 0;
+                  acc.srvErrLong += p.srvErrLong || 0;
+                  acc.srvErrFoot += p.srvErrFoot || 0;
+                  acc.srvErrOther += p.srvErrOther || 0;
+                  return acc;
+                },
+                {
+                  name: "Team Totals",
+                  number: "ALL",
+                  passCount: 0,
+                  passSum: 0,
+                  pass3: 0,
+                  pass2: 0,
+                  pass1: 0,
+                  pass0: 0,
+                  digCount: 0,
+                  digErr: 0,
+                  attCount: 0,
+                  attCountFront: 0,
+                  attCountBack: 0,
+                  attKill: 0,
+                  attErr: 0,
+                  attErrNet: 0,
+                  attErrOut: 0,
+                  attErrStuffed: 0,
+                  attBlk: 0,
+                  blkCount: 0,
+                  blkStuff: 0,
+                  blkLate: 0,
+                  blkNet: 0,
+                  blkUsed: 0,
+                  srvCount: 0,
+                  srvAce: 0,
+                  srvErr: 0,
+                  srvErrNet: 0,
+                  srvErrWide: 0,
+                  srvErrLong: 0,
+                  srvErrFoot: 0,
+                  srvErrOther: 0,
+                }
+              );
+
+              const teamPassAvg =
+                teamTot.passCount > 0
+                  ? (teamTot.passSum / teamTot.passCount).toFixed(2)
+                  : "-";
+              const teamBlkTot = teamTot.blkCount + teamTot.blkStuff;
+              const teamSrvTot =
+                teamTot.srvCount + teamTot.srvAce + teamTot.srvErr;
+              const teamKillPct =
+                teamTot.attCount > 0
+                  ? ((teamTot.attKill / teamTot.attCount) * 100).toFixed(1) +
+                    "%"
+                  : "0.0%";
+              const teamSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
+
+              return (
+                <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
+                  {/* Scroll indicator for mobile */}
+                  <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[800px]">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-500 text-[9px] sm:text-[10px] tracking-widest uppercase border-b-2 border-slate-200">
+                          <th className="p-2 sm:p-3 font-black w-36 sm:w-44 sticky left-0 bg-slate-100 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                            PLAYER
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-purple-50/40 text-purple-900 cursor-pointer hover:bg-purple-100/60 transition-colors"
+                            title="Click to view Team Serve Breakdown"
                           >
-                            <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400">
-                              <div className="flex items-center space-x-1 sm:space-x-2">
-                                <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#0033A0]/10 text-[#0033A0] font-black flex items-center justify-center text-[9px] sm:text-[10px]">
-                                  {p.number || "-"}
-                                </span>
-                                <span className="font-bold text-indigo-700 underline truncate max-w-[80px] sm:max-w-none">
-                                  {p.name}
-                                </span>
-                              </div>
+                            SERVES ▾
+                            <br />
+                            <span className="opacity-70 font-bold tracking-normal">
+                              (Att-Ace-Err)
+                            </span>
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-blue-600 bg-blue-50/50 cursor-pointer hover:bg-blue-100/60 transition-colors"
+                            title="Click to view Team Serve Breakdown"
+                          >
+                            SRV +/- ▾
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "dig",
+                                titleContext: "Team Dig Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-200/60 transition-colors"
+                            title="Click to view Team Dig Breakdown"
+                          >
+                            DIGS ▾
+                            <br />
+                            <span className="opacity-70 font-bold tracking-normal">
+                              (D-Err)
+                            </span>
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "attack",
+                                titleContext: "Team Attack Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors"
+                            title="Click to view Team Attack Breakdown"
+                          >
+                            SWINGS ▾
+                            <br />
+                            <span className="opacity-70 font-bold tracking-normal text-[8px] sm:text-[9px]">
+                              Tot(F/B) K-E-B
+                            </span>
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "attack",
+                                titleContext: "Team Attack Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-green-600 cursor-pointer hover:bg-green-50 transition-colors"
+                            title="Click to view Team Attack Breakdown"
+                          >
+                            KILL % ▾
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "block",
+                                titleContext: "Team Block Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-200/60 transition-colors"
+                            title="Click to view Team Block Breakdown"
+                          >
+                            BLOCKS ▾
+                            <br />
+                            <span className="opacity-70 font-bold tracking-normal">
+                              (Tot(Stf)-Lt-Net-Usd)
+                            </span>
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "pass",
+                                titleContext: "Team Passing Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-blue-50/40 text-blue-900 cursor-pointer hover:bg-blue-100/60 transition-colors"
+                            title="Click to view Team Passing Breakdown"
+                          >
+                            PASSING ▾
+                            <br />
+                            <span className="opacity-70 font-bold tracking-normal">
+                              Avg(Tot)
+                            </span>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {visibleUccPlayers.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={8}
+                              className="p-8 text-center text-slate-400 font-bold tracking-wider text-xs"
+                            >
+                              No players visible. (Check filters or hidden
+                              players)
                             </td>
-                            <td className="p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100">
-                              {passAvg}{" "}
-                              <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold ml-0.5 sm:ml-1">
-                                ({p.passCount})
-                              </span>
-                            </td>
-                            <td className="p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50">
-                              <span className="text-blue-600 font-black text-sm">
-                                {p.digCount}
-                              </span>{" "}
-                              <span className="text-slate-300 mx-0.5">-</span>{" "}
-                              <span className="text-red-500 font-bold">
-                                {p.digErr}
-                              </span>
-                            </td>
-                            <td className="p-2 sm:p-3 border-l border-slate-100 text-center">
-                              <span className="font-bold text-slate-600">
-                                {p.attCount}
-                              </span>{" "}
-                              <span className="text-[9px] text-slate-400 font-medium">
-                                ({p.attCountFront}/{p.attCountBack})
-                              </span>
-                              <br />
-                              <span className="text-green-600 font-black text-sm">
-                                {p.attKill}
-                              </span>{" "}
-                              <span className="text-slate-300 mx-0.5">-</span>{" "}
-                              <span className="text-red-500 font-bold text-xs">
-                                {p.attErr}
-                              </span>{" "}
-                              <span className="text-slate-300 mx-0.5">-</span>{" "}
-                              <span className="text-amber-600 font-bold text-xs">
-                                {p.attBlk}
-                              </span>
-                            </td>
-                            <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30">
-                              {killPct}
-                            </td>
-                            <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell">
-                              <span className="font-bold">{blkTot}</span>(
-                              <strong className="text-indigo-600">
-                                {p.blkStuff}
-                              </strong>
-                              ) -{" "}
-                              <span className="text-amber-600">
-                                {p.blkLate}
-                              </span>{" "}
-                              - {p.blkNet} - {p.blkUsed}
-                            </td>
-                            <td className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden">
-                              <div className="flex flex-col">
-                                <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold whitespace-nowrap bg-white px-1 py-0.5 rounded border border-slate-200 mt-1">
-                                  <span className="font-bold text-slate-700">
-                                    {blkTot}
-                                  </span>
-                                  ({p.blkStuff}){" "}
-                                  <span className="text-slate-300 mx-0.5">
-                                    •
+                          </tr>
+                        ) : (
+                          visibleUccPlayers.map((p) => {
+                            const passAvg =
+                              p.passCount > 0
+                                ? (p.passSum / p.passCount).toFixed(2)
+                                : "-";
+                            const blkTot = p.blkCount + p.blkStuff;
+                            const srvTot = p.srvCount + p.srvAce + p.srvErr;
+                            const killPct =
+                              p.attCount > 0
+                                ? ((p.attKill / p.attCount) * 100).toFixed(1) +
+                                  "%"
+                                : "0.0%";
+                            const srvPlusMinus = p.srvAce - p.srvErr;
+
+                            return (
+                              <tr
+                                key={p.id}
+                                className="hover:bg-blue-50/30 text-[10px] sm:text-xs transition-colors group"
+                              >
+                                <td
+                                  onClick={() => setCareerPlayerName(p.name)}
+                                  className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400 cursor-pointer"
+                                  title="Click player name for Career Profile"
+                                >
+                                  <div className="flex items-center space-x-1.5 sm:space-x-2">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setHiddenPlayerIds((prev) =>
+                                          prev.includes(p.id)
+                                            ? prev.filter((id) => id !== p.id)
+                                            : [...prev, p.id]
+                                        );
+                                      }}
+                                      className="text-slate-300 hover:text-amber-600 p-0.5 rounded transition-colors shrink-0"
+                                      title="Hide player from stats & PDF"
+                                    >
+                                      <Eye
+                                        size={13}
+                                        className="text-slate-400 hover:text-amber-600"
+                                      />
+                                    </button>
+                                    <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#0033A0]/10 text-[#0033A0] font-black flex items-center justify-center text-[9px] sm:text-[10px] shrink-0">
+                                      {p.number || "-"}
+                                    </span>
+                                    <span className="font-bold text-indigo-700 hover:underline truncate max-w-[80px] sm:max-w-none">
+                                      {p.name}
+                                    </span>
+                                  </div>
+                                </td>
+                                {/* SERVES */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "serve",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Serve breakdown (Net, Wide, Long, Foot Fault)`}
+                                >
+                                  <span className="font-bold text-slate-600">
+                                    {srvTot}
                                   </span>{" "}
+                                  <span className="text-slate-300 mx-0.5">
+                                    -
+                                  </span>{" "}
+                                  <span className="text-emerald-600 font-black text-sm">
+                                    {p.srvAce}
+                                  </span>{" "}
+                                  <span className="text-slate-300 mx-0.5">
+                                    -
+                                  </span>{" "}
+                                  <span className="text-red-500 font-bold">
+                                    {p.srvErr}
+                                  </span>
+                                </td>
+                                {/* SRV +/- */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "serve",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors"
+                                  title={`Click to view ${p.name}'s Serve breakdown`}
+                                >
+                                  <span
+                                    className={
+                                      srvPlusMinus > 0
+                                        ? "text-green-600"
+                                        : srvPlusMinus < 0
+                                          ? "text-red-500"
+                                          : "text-slate-400"
+                                    }
+                                  >
+                                    {srvPlusMinus > 0
+                                      ? `+${srvPlusMinus}`
+                                      : srvPlusMinus}
+                                  </span>
+                                </td>
+                                {/* DIGS */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "dig",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50 cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Dig breakdown`}
+                                >
+                                  <span className="text-blue-600 font-black text-sm">
+                                    {p.digCount}
+                                  </span>{" "}
+                                  <span className="text-slate-300 mx-0.5">
+                                    -
+                                  </span>{" "}
+                                  <span className="text-red-500 font-bold">
+                                    {p.digErr}
+                                  </span>
+                                </td>
+                                {/* SWINGS */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "attack",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Attack breakdown (Front/Back, Net, Out, Stuffed)`}
+                                >
+                                  <span className="font-bold text-slate-600">
+                                    {p.attCount}
+                                  </span>{" "}
+                                  <span className="text-[9px] text-slate-400 font-medium">
+                                    ({p.attCountFront}/{p.attCountBack})
+                                  </span>
+                                  <br />
+                                  <span className="text-green-600 font-black text-sm">
+                                    {p.attKill}
+                                  </span>{" "}
+                                  <span className="text-slate-300 mx-0.5">
+                                    -
+                                  </span>{" "}
+                                  <span className="text-red-500 font-bold text-xs">
+                                    {p.attErr}
+                                  </span>{" "}
+                                  <span className="text-slate-300 mx-0.5">
+                                    -
+                                  </span>{" "}
+                                  <span className="text-amber-600 font-bold text-xs">
+                                    {p.attBlk}
+                                  </span>
+                                </td>
+                                {/* KILL % */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "attack",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30 cursor-pointer hover:bg-green-100/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Attack breakdown`}
+                                >
+                                  {killPct}
+                                </td>
+                                {/* BLOCKS */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "block",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Block breakdown`}
+                                >
+                                  <span className="font-bold">{blkTot}</span>(
+                                  <strong className="text-indigo-600">
+                                    {p.blkStuff}
+                                  </strong>
+                                  ) -{" "}
                                   <span className="text-amber-600">
                                     {p.blkLate}
                                   </span>{" "}
-                                  <span className="text-slate-300 mx-0.5">
-                                    •
-                                  </span>{" "}
-                                  {p.blkNet}{" "}
-                                  <span className="text-slate-300 mx-0.5">
-                                    •
-                                  </span>{" "}
-                                  {p.blkUsed}
+                                  - {p.blkNet} - {p.blkUsed}
+                                </td>
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "block",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Block breakdown`}
+                                >
+                                  <div className="flex flex-col">
+                                    <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold whitespace-nowrap bg-white px-1 py-0.5 rounded border border-slate-200 mt-1">
+                                      <span className="font-bold text-slate-700">
+                                        {blkTot}
+                                      </span>
+                                      ({p.blkStuff}){" "}
+                                      <span className="text-slate-300 mx-0.5">
+                                        •
+                                      </span>{" "}
+                                      <span className="text-amber-600">
+                                        {p.blkLate}
+                                      </span>{" "}
+                                      <span className="text-slate-300 mx-0.5">
+                                        •
+                                      </span>{" "}
+                                      {p.blkNet}{" "}
+                                      <span className="text-slate-300 mx-0.5">
+                                        •
+                                      </span>{" "}
+                                      {p.blkUsed}
+                                    </span>
+                                  </div>
+                                </td>
+                                {/* PASSING */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "pass",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Passing breakdown (3/2/1/0 scores)`}
+                                >
+                                  {passAvg}{" "}
+                                  <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold ml-0.5 sm:ml-1">
+                                    ({p.passCount})
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+
+                      {/* TEAM TOTALS ROW */}
+                      <tfoot className="border-t-2 border-[#0033A0] shadow-md">
+                        <tr className="bg-[#001f5c] text-white font-bold text-[10px] sm:text-xs tracking-wider">
+                          <td className="p-2.5 sm:p-3 sticky left-0 bg-[#001f5c] text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-blue-400">
+                            <div className="flex items-center space-x-1.5 sm:space-x-2">
+                              <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-amber-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
+                                ★
+                              </span>
+                              <div className="flex flex-col">
+                                <span className="font-black text-amber-300 uppercase tracking-widest text-xs sm:text-sm">
+                                  TEAM
+                                </span>
+                                <span className="text-[9px] text-blue-200 font-medium">
+                                  {visibleUccPlayers.length} player
+                                  {visibleUccPlayers.length !== 1 ? "s" : ""}
                                 </span>
                               </div>
-                            </td>
-                            <td className="p-2 sm:p-3 border-l border-slate-100 text-center">
-                              <span className="font-bold text-slate-600">
-                                {srvTot}
-                              </span>{" "}
-                              <span className="text-slate-300 mx-0.5">-</span>{" "}
-                              <span className="text-emerald-600 font-black text-sm">
-                                {p.srvAce}
-                              </span>{" "}
-                              <span className="text-slate-300 mx-0.5">-</span>{" "}
-                              <span className="text-red-500 font-bold">
-                                {p.srvErr}
-                              </span>
-                            </td>
-                            <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm">
-                              <span
-                                className={
-                                  srvPlusMinus > 0
-                                    ? "text-green-600"
-                                    : srvPlusMinus < 0
-                                      ? "text-red-500"
-                                      : "text-slate-400"
-                                }
-                              >
-                                {srvPlusMinus > 0
-                                  ? `+${srvPlusMinus}`
-                                  : srvPlusMinus}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                            </div>
+                          </td>
+                          {/* SERVES */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            title="Click to view Team Serve breakdown"
+                          >
+                            <span className="font-black text-white">
+                              {teamSrvTot}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-emerald-300 font-black text-sm">
+                              {teamTot.srvAce}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-300 font-bold">
+                              {teamTot.srvErr}
+                            </span>
+                          </td>
+                          {/* SRV +/- */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                            title="Click to view Team Serve breakdown"
+                          >
+                            <span
+                              className={
+                                teamSrvPlusMinus > 0
+                                  ? "text-emerald-300"
+                                  : teamSrvPlusMinus < 0
+                                    ? "text-red-300"
+                                    : "text-slate-300"
+                              }
+                            >
+                              {teamSrvPlusMinus > 0
+                                ? `+${teamSrvPlusMinus}`
+                                : teamSrvPlusMinus}
+                            </span>
+                          </td>
+                          {/* DIGS */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "dig",
+                                titleContext: "Team Dig Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            title="Click to view Team Dig breakdown"
+                          >
+                            <span className="text-blue-300 font-black text-sm">
+                              {teamTot.digCount}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-300 font-bold">
+                              {teamTot.digErr}
+                            </span>
+                          </td>
+                          {/* SWINGS */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "attack",
+                                titleContext: "Team Attack Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                            title="Click to view Team Attack breakdown"
+                          >
+                            <span className="font-black text-white">
+                              {teamTot.attCount}
+                            </span>{" "}
+                            <span className="text-[9px] text-blue-200 font-medium">
+                              ({teamTot.attCountFront}/{teamTot.attCountBack})
+                            </span>
+                            <br />
+                            <span className="text-emerald-300 font-black text-sm">
+                              {teamTot.attKill}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-300 font-bold text-xs">
+                              {teamTot.attErr}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-amber-300 font-bold text-xs">
+                              {teamTot.attBlk}
+                            </span>
+                          </td>
+                          {/* KILL % */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "attack",
+                                titleContext: "Team Attack Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                            title="Click to view Team Attack breakdown"
+                          >
+                            {teamKillPct}
+                          </td>
+                          {/* BLOCKS */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "block",
+                                titleContext: "Team Block Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                            title="Click to view Team Block breakdown"
+                          >
+                            <span className="font-black text-white">
+                              {teamBlkTot}
+                            </span>
+                            <span className="text-blue-200 font-bold">
+                              ({teamTot.blkStuff})
+                            </span>{" "}
+                            -{" "}
+                            <span className="text-amber-300">
+                              {teamTot.blkLate}
+                            </span>{" "}
+                            -{" "}
+                            <span className="text-white">
+                              {teamTot.blkNet}
+                            </span>{" "}
+                            -{" "}
+                            <span className="text-white">
+                              {teamTot.blkUsed}
+                            </span>
+                          </td>
+                          {/* PASSING */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "pass",
+                                titleContext: "Team Passing Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors"
+                            title="Click to view Team Passing breakdown"
+                          >
+                            <span className="text-sm sm:text-base text-amber-300">
+                              {teamPassAvg}
+                            </span>{" "}
+                            <span className="text-[9px] sm:text-[10px] text-blue-200 font-bold ml-0.5 sm:ml-1">
+                              ({teamTot.passCount})
+                            </span>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
 
             <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
               <Users className="mr-2 text-slate-500" size={18} /> Opponents
@@ -8401,11 +9210,13 @@ export default function App() {
                     <tr className="bg-slate-800 text-slate-300 text-[9px] sm:text-[10px] tracking-widest uppercase border-b border-slate-900">
                       <th className="p-2 sm:p-3 font-black w-24 sm:w-32">ID</th>
                       <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 bg-slate-900">
-                        PASS
-                        <br />
-                        <span className="opacity-70 font-bold tracking-normal">
-                          Avg(Tot)
-                        </span>
+                        ACES
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 bg-slate-900">
+                        SRV ERR
+                      </th>
+                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 text-blue-400 bg-slate-900">
+                        +/-
                       </th>
                       <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700">
                         SWINGS
@@ -8417,13 +9228,11 @@ export default function App() {
                         KILL %
                       </th>
                       <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 bg-slate-900">
-                        ACES
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 bg-slate-900">
-                        SRV ERR
-                      </th>
-                      <th className="p-2 sm:p-3 font-black text-center border-l border-slate-700 text-blue-400 bg-slate-900">
-                        +/-
+                        PASS
+                        <br />
+                        <span className="opacity-70 font-bold tracking-normal">
+                          Avg(Tot)
+                        </span>
                       </th>
                     </tr>
                   </thead>
@@ -8442,6 +9251,44 @@ export default function App() {
                         ([teamName, players]) => {
                           const isExpanded =
                             expandedOppTeams[teamName] || false;
+
+                          const oppPlayerList = Object.values(players);
+                          const oppTeamTot = oppPlayerList.reduce(
+                            (acc: any, p: any) => {
+                              acc.passCount += p.passCount || 0;
+                              acc.passSum += p.passSum || 0;
+                              acc.attCount += p.attCount || 0;
+                              acc.attKill += p.attKill || 0;
+                              acc.srvAce += p.srvAce || 0;
+                              acc.srvErr += p.srvErr || 0;
+                              return acc;
+                            },
+                            {
+                              passCount: 0,
+                              passSum: 0,
+                              attCount: 0,
+                              attKill: 0,
+                              srvAce: 0,
+                              srvErr: 0,
+                            }
+                          );
+                          const oppTeamPassAvg =
+                            oppTeamTot.passCount > 0
+                              ? (
+                                  oppTeamTot.passSum / oppTeamTot.passCount
+                                ).toFixed(2)
+                              : "-";
+                          const oppTeamKillPct =
+                            oppTeamTot.attCount > 0
+                              ? (
+                                  (oppTeamTot.attKill /
+                                    oppTeamTot.attCount) *
+                                  100
+                                ).toFixed(1) + "%"
+                              : "0.0%";
+                          const oppTeamSrvPlusMinus =
+                            oppTeamTot.srvAce - oppTeamTot.srvErr;
+
                           return (
                             <React.Fragment key={teamName}>
                               <tr
@@ -8475,72 +9322,118 @@ export default function App() {
                                   </div>
                                 </td>
                               </tr>
-                              {isExpanded &&
-                                Object.entries(players).map(([id, p]) => {
-                                  const passAvg =
-                                    p.passCount > 0
-                                      ? (p.passSum / p.passCount).toFixed(2)
-                                      : "-";
-                                  const killPct =
-                                    p.attCount > 0
-                                      ? (
-                                          (p.attKill / p.attCount) *
-                                          100
-                                        ).toFixed(1) + "%"
-                                      : "0.0%";
-                                  const srvPlusMinus = p.srvAce - p.srvErr;
-                                  return (
-                                    <tr
-                                      key={id}
-                                      className="hover:bg-slate-50 text-[10px] sm:text-xs"
-                                    >
-                                      <td className="p-2 sm:p-3">
-                                        <span className="bg-white border border-slate-200 text-slate-600 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-black text-xs sm:text-sm ml-2 shadow-sm">
-                                          {id}
-                                        </span>
+                              {isExpanded && (
+                                <>
+                                  {Object.entries(players).map(([id, p]) => {
+                                    const passAvg =
+                                      p.passCount > 0
+                                        ? (p.passSum / p.passCount).toFixed(2)
+                                        : "-";
+                                    const killPct =
+                                      p.attCount > 0
+                                        ? (
+                                            (p.attKill / p.attCount) *
+                                            100
+                                          ).toFixed(1) + "%"
+                                        : "0.0%";
+                                    const srvPlusMinus = p.srvAce - p.srvErr;
+                                    return (
+                                      <tr
+                                        key={id}
+                                        className="hover:bg-slate-50 text-[10px] sm:text-xs"
+                                      >
+                                        <td className="p-2 sm:p-3">
+                                          <span className="bg-white border border-slate-200 text-slate-600 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-black text-xs sm:text-sm ml-2 shadow-sm">
+                                            {id}
+                                          </span>
+                                        </td>
+                                        <td className="p-2 sm:p-3 font-black text-blue-600 text-center border-l border-slate-100 bg-slate-50 text-sm">
+                                          {p.srvAce}
+                                        </td>
+                                        <td className="p-2 sm:p-3 font-bold text-red-500 text-center border-l border-slate-100 bg-slate-50 text-sm">
+                                          {p.srvErr}
+                                        </td>
+                                        <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-slate-50 text-sm">
+                                          <span
+                                            className={
+                                              srvPlusMinus > 0
+                                                ? "text-green-600"
+                                                : srvPlusMinus < 0
+                                                  ? "text-red-500"
+                                                  : "text-slate-400"
+                                            }
+                                          >
+                                            {srvPlusMinus > 0
+                                              ? `+${srvPlusMinus}`
+                                              : srvPlusMinus}
+                                          </span>
+                                        </td>
+                                        <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 text-slate-600">
+                                          {p.attCount}
+                                        </td>
+                                        <td className="p-2 sm:p-3 font-black text-green-600 text-center border-l border-slate-100 text-sm">
+                                          {p.attKill}
+                                        </td>
+                                        <td className="p-2 sm:p-3 font-black text-green-600 bg-green-50/50 text-center border-l border-slate-100">
+                                          {killPct}
+                                        </td>
+                                        <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 bg-slate-50 text-slate-700">
+                                          {passAvg}{" "}
+                                          <span className="text-[9px] sm:text-[10px] text-slate-400 ml-0.5 sm:ml-1">
+                                            ({p.passCount})
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+
+                                  {/* Opponent Team Total Subtotal */}
+                                  {oppPlayerList.length > 1 && (
+                                    <tr className="bg-slate-700 text-white font-bold text-[10px] sm:text-xs">
+                                      <td className="p-2 sm:p-2.5 uppercase tracking-wider text-slate-200">
+                                        TEAM TOTAL
                                       </td>
-                                      <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 bg-slate-50 text-slate-700">
-                                        {passAvg}{" "}
-                                        <span className="text-[9px] sm:text-[10px] text-slate-400 ml-0.5 sm:ml-1">
-                                          ({p.passCount})
-                                        </span>
+                                      <td className="p-2 sm:p-2.5 text-center border-l border-slate-600 text-blue-300 font-black">
+                                        {oppTeamTot.srvAce}
                                       </td>
-                                      <td className="p-2 sm:p-3 font-bold text-center border-l border-slate-100 text-slate-600">
-                                        {p.attCount}
+                                      <td className="p-2 sm:p-2.5 text-center border-l border-slate-600 text-red-300 font-bold">
+                                        {oppTeamTot.srvErr}
                                       </td>
-                                      <td className="p-2 sm:p-3 font-black text-green-600 text-center border-l border-slate-100 text-sm">
-                                        {p.attKill}
-                                      </td>
-                                      <td className="p-2 sm:p-3 font-black text-green-600 bg-green-50/50 text-center border-l border-slate-100">
-                                        {killPct}
-                                      </td>
-                                      <td className="p-2 sm:p-3 font-black text-blue-600 text-center border-l border-slate-100 bg-slate-50 text-sm">
-                                        {p.srvAce}
-                                      </td>
-                                      <td className="p-2 sm:p-3 font-bold text-red-500 text-center border-l border-slate-100 bg-slate-50 text-sm">
-                                        {p.srvErr}
-                                      </td>
-                                      <td className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-slate-50 text-sm">
+                                      <td className="p-2 sm:p-2.5 text-center border-l border-slate-600 font-black">
                                         <span
                                           className={
-                                            srvPlusMinus > 0
-                                              ? "text-green-600"
-                                              : srvPlusMinus < 0
-                                                ? "text-red-500"
-                                                : "text-slate-400"
+                                            oppTeamSrvPlusMinus > 0
+                                              ? "text-green-300"
+                                              : oppTeamSrvPlusMinus < 0
+                                                ? "text-red-300"
+                                                : "text-slate-300"
                                           }
                                         >
-                                          {srvPlusMinus > 0
-                                            ? `+${srvPlusMinus}`
-                                            : srvPlusMinus}
+                                          {oppTeamSrvPlusMinus > 0
+                                            ? `+${oppTeamSrvPlusMinus}`
+                                            : oppTeamSrvPlusMinus}
                                         </span>
                                       </td>
+                                      <td className="p-2 sm:p-2.5 text-center border-l border-slate-600 text-slate-200">
+                                        {oppTeamTot.attCount}
+                                      </td>
+                                      <td className="p-2 sm:p-2.5 text-center border-l border-slate-600 text-emerald-300 font-black">
+                                        {oppTeamTot.attKill}
+                                      </td>
+                                      <td className="p-2 sm:p-2.5 text-center border-l border-slate-600 text-emerald-300 font-bold">
+                                        {oppTeamKillPct}
+                                      </td>
+                                      <td className="p-2 sm:p-2.5 text-center border-l border-slate-600 text-amber-300 font-black">
+                                        {oppTeamPassAvg} ({oppTeamTot.passCount}
+                                        )
+                                      </td>
                                     </tr>
-                                  );
-                                })}
+                                  )}
+                                </>
+                              )}
                             </React.Fragment>
                           );
-                        },
+                        }
                       )
                     )}
                   </tbody>
@@ -8549,6 +9442,156 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* PLAYER VISIBILITY MODAL */}
+        {showPlayerFilterModal && (
+          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in duration-150">
+              <div className="bg-[#0033A0] text-white p-4 flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <ListFilter size={18} className="text-blue-200" />
+                  <div>
+                    <h3 className="font-black text-sm uppercase tracking-wider">
+                      Select Visible Players
+                    </h3>
+                    <p className="text-[11px] text-blue-200">
+                      Choose which players appear in the Stats table and PDF
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowPlayerFilterModal(false)}
+                  className="text-white/70 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
+                <span className="text-xs font-bold text-slate-600">
+                  Visible:{" "}
+                  <strong className="text-blue-700 font-black">
+                    {
+                      appData.roster.filter(
+                        (p) =>
+                          !hiddenPlayerIds.includes(p.id) &&
+                          (showRetired || !p.isRetired)
+                      ).length
+                    }
+                  </strong>{" "}
+                  /{" "}
+                  {
+                    appData.roster.filter(
+                      (p) => showRetired || !p.isRetired
+                    ).length
+                  }{" "}
+                  players
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHiddenPlayerIds([])}
+                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setHiddenPlayerIds(
+                        appData.roster
+                          .filter((p) => showRetired || !p.isRetired)
+                          .map((p) => p.id)
+                      )
+                    }
+                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    Hide All
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-4 overflow-y-auto flex-1 divide-y divide-slate-100">
+                {appData.roster
+                  .filter((p) => showRetired || !p.isRetired)
+                  .map((player) => {
+                    const isHidden = hiddenPlayerIds.includes(player.id);
+                    return (
+                      <div
+                        key={player.id}
+                        onClick={() => {
+                          setHiddenPlayerIds((prev) =>
+                            isHidden
+                              ? prev.filter((id) => id !== player.id)
+                              : [...prev, player.id]
+                          );
+                        }}
+                        className="py-2.5 px-2 flex items-center justify-between hover:bg-slate-50 rounded-xl cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-center space-x-3">
+                          <span
+                            className={`w-7 h-7 rounded-full font-black text-xs flex items-center justify-center ${
+                              !isHidden
+                                ? "bg-[#0033A0] text-white"
+                                : "bg-slate-200 text-slate-500"
+                            }`}
+                          >
+                            {player.number || "-"}
+                          </span>
+                          <div>
+                            <span
+                              className={`font-bold text-sm ${
+                                !isHidden ? "text-slate-900" : "text-slate-400"
+                              }`}
+                            >
+                              {player.name}
+                            </span>
+                            {player.isRetired && (
+                              <span className="ml-2 text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-bold">
+                                Retired
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-2">
+                          {!isHidden ? (
+                            <span className="flex items-center text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+                              <Check size={14} className="mr-1" /> Visible
+                            </span>
+                          ) : (
+                            <span className="flex items-center text-xs font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+                              <EyeOff size={14} className="mr-1" /> Hidden
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              <div className="p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    exportPDF();
+                    setShowPlayerFilterModal(false);
+                  }}
+                  className="bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center shadow-sm transition-colors"
+                >
+                  <FileText size={14} className="mr-1.5" /> Export PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPlayerFilterModal(false)}
+                  className="bg-slate-800 hover:bg-slate-900 text-white font-black px-5 py-2 rounded-xl text-xs uppercase tracking-wider shadow-sm transition-colors"
+                >
+                  Apply & Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {careerPlayerName && (
           <CareerStatsModal
             playerName={careerPlayerName}
@@ -8556,6 +9599,13 @@ export default function App() {
             onClose={() => setCareerPlayerName(null)}
           />
         )}
+        <StatBreakdownModal
+          isOpen={statBreakdownModal.isOpen}
+          onClose={() => setStatBreakdownModal((prev) => ({ ...prev, isOpen: false }))}
+          selectedPlayer={statBreakdownModal.selectedPlayer}
+          initialCategory={statBreakdownModal.category}
+          titleContext={statBreakdownModal.titleContext}
+        />
         {renderInstallModal()}
       </div>
     );

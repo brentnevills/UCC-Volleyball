@@ -9,6 +9,7 @@ import {
   Database,
   Edit3,
 } from "lucide-react";
+import { StatBreakdownModal, StatCategoryType, PlayerBreakdownStats } from "./StatBreakdownModal";
 
 interface PracticeStatsModalProps {
   isOpen: boolean;
@@ -34,6 +35,17 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "pass" | "attack" | "serve" | "defense">("all");
   const [scope, setScope] = useState<"day" | "current_set">("day");
+  const [breakdownModal, setBreakdownModal] = useState<{
+    isOpen: boolean;
+    player: PlayerBreakdownStats | null;
+    category: StatCategoryType;
+    titleContext?: string;
+  }>({
+    isOpen: false,
+    player: null,
+    category: "serve",
+    titleContext: "",
+  });
 
   const practiceStats = useMemo(() => {
     const playerMap: { [id: string]: any } = {};
@@ -46,24 +58,42 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
           number: p.number || "-",
           passCount: 0,
           passSum: 0,
+          pass3: 0,
+          pass2: 0,
+          pass1: 0,
+          pass0: 0,
           p3: 0,
           p2: 0,
           p1: 0,
           p0: 0,
           attCount: 0,
-          attKill: 0,
-          attErr: 0,
-          attBlk: 0,
+          attCountFront: 0,
+          attCountBack: 0,
           attFront: 0,
           attBack: 0,
+          attKill: 0,
+          attErr: 0,
+          attErrNet: 0,
+          attErrOut: 0,
+          attErrStuffed: 0,
+          attBlk: 0,
           srvCount: 0,
           srvAce: 0,
           srvErr: 0,
+          srvErrNet: 0,
+          srvErrWide: 0,
+          srvErrLong: 0,
+          srvErrFoot: 0,
+          srvErrOther: 0,
           digCount: 0,
           digErr: 0,
+          blkCount: 0,
           blkStuff: 0,
           blkTouch: 0,
           blkFault: 0,
+          blkLate: 0,
+          blkNet: 0,
+          blkUsed: 0,
         };
       }
     });
@@ -93,10 +123,19 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
       if (s.category === "Pass") {
         p.passCount += 1;
         p.passSum += Number(s.value || 0);
-        if (s.value === 3) p.p3 += 1;
-        else if (s.value === 2) p.p2 += 1;
-        else if (s.value === 1) p.p1 += 1;
-        else if (s.value === 0) p.p0 += 1;
+        if (s.value === 3) {
+          p.p3 += 1;
+          p.pass3 += 1;
+        } else if (s.value === 2) {
+          p.p2 += 1;
+          p.pass2 += 1;
+        } else if (s.value === 1) {
+          p.p1 += 1;
+          p.pass1 += 1;
+        } else if (s.value === 0) {
+          p.p0 += 1;
+          p.pass0 += 1;
+        }
       } else if (s.category === "Attack") {
         if (
           [
@@ -112,27 +151,51 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
           ].includes(s.metric)
         ) {
           p.attCount += 1;
-          if (s.row === "Front" || s.metric === "Swing Front") p.attFront += 1;
-          else if (s.row === "Back" || s.metric === "Swing Back") p.attBack += 1;
-          else p.attFront += 1;
+          if (s.row === "Front" || s.metric === "Swing Front") {
+            p.attFront += 1;
+            p.attCountFront += 1;
+          } else if (s.row === "Back" || s.metric === "Swing Back") {
+            p.attBack += 1;
+            p.attCountBack += 1;
+          } else {
+            p.attFront += 1;
+            p.attCountFront += 1;
+          }
         }
         if (s.metric === "Kill") p.attKill += 1;
-        if (["Out", "Net", "Out/Net", "Stuffed"].includes(s.metric)) p.attErr += 1;
+        if (["Out", "Net", "Out/Net", "Stuffed"].includes(s.metric)) {
+          p.attErr += 1;
+          if (s.metric === "Net") p.attErrNet += 1;
+          else if (s.metric === "Stuffed") p.attErrStuffed += 1;
+          else p.attErrOut += 1;
+        }
         if (s.metric === "Blocked" || s.metric === "Stuffed") p.attBlk += 1;
       } else if (s.category === "Serve") {
         if (s.metric === "Attempt") p.srvCount += 1;
         if (s.metric === "Ace") p.srvAce += 1;
-        if (s.metric?.includes("Miss") || s.metric === "Error") p.srvErr += 1;
+        if (s.metric?.includes("Miss") || s.metric === "Error") {
+          p.srvErr += 1;
+          const m = s.metric.toLowerCase();
+          if (m.includes("net")) p.srvErrNet += 1;
+          else if (m.includes("wide")) p.srvErrWide += 1;
+          else if (m.includes("long") || m.includes("out") || m.includes("deep")) p.srvErrLong += 1;
+          else if (m.includes("foot")) p.srvErrFoot += 1;
+          else p.srvErrOther += 1;
+        }
       } else if (s.category === "Dig") {
         if (s.metric === "Dig") p.digCount += 1;
         if (s.metric === "Error") p.digErr += 1;
       } else if (s.category === "Block") {
         if (s.metric === "Play On" || s.metric === "Touch") {
           p.blkTouch += Number(s.value || 1);
+          p.blkCount += Number(s.value || 1);
         } else if (s.metric === "Block" || s.metric === "Stuff" || s.metric === "Stuffed") {
           p.blkStuff += Number(s.value || 1);
         } else if (["Late", "Net Viol", "Used"].includes(s.metric)) {
           p.blkFault += Number(s.value || 1);
+          if (s.metric === "Late") p.blkLate += Number(s.value || 1);
+          else if (s.metric === "Net Viol") p.blkNet += Number(s.value || 1);
+          else if (s.metric === "Used") p.blkUsed += Number(s.value || 1);
         }
       }
     });
@@ -140,26 +203,47 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
     const list = Object.values(playerMap);
 
     const totals = {
+      id: "TEAM_TOTALS",
+      name: "TEAM TOTAL",
+      number: "★",
       passCount: 0,
       passSum: 0,
       p3: 0,
       p2: 0,
       p1: 0,
       p0: 0,
+      pass3: 0,
+      pass2: 0,
+      pass1: 0,
+      pass0: 0,
       attCount: 0,
+      attCountFront: 0,
+      attCountBack: 0,
       attKill: 0,
       attErr: 0,
+      attErrNet: 0,
+      attErrOut: 0,
+      attErrStuffed: 0,
       attBlk: 0,
       attFront: 0,
       attBack: 0,
       srvCount: 0,
       srvAce: 0,
       srvErr: 0,
+      srvErrNet: 0,
+      srvErrWide: 0,
+      srvErrLong: 0,
+      srvErrFoot: 0,
+      srvErrOther: 0,
       digCount: 0,
       digErr: 0,
       blkStuff: 0,
       blkTouch: 0,
+      blkCount: 0,
       blkFault: 0,
+      blkLate: 0,
+      blkNet: 0,
+      blkUsed: 0,
     };
 
     list.forEach((p) => {
@@ -169,20 +253,38 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
       totals.p2 += p.p2;
       totals.p1 += p.p1;
       totals.p0 += p.p0;
+      totals.pass3 += p.pass3;
+      totals.pass2 += p.pass2;
+      totals.pass1 += p.pass1;
+      totals.pass0 += p.pass0;
       totals.attCount += p.attCount;
+      totals.attCountFront += p.attCountFront;
+      totals.attCountBack += p.attCountBack;
       totals.attKill += p.attKill;
       totals.attErr += p.attErr;
+      totals.attErrNet += p.attErrNet;
+      totals.attErrOut += p.attErrOut;
+      totals.attErrStuffed += p.attErrStuffed;
       totals.attBlk += p.attBlk;
       totals.attFront += p.attFront;
       totals.attBack += p.attBack;
       totals.srvCount += p.srvCount;
       totals.srvAce += p.srvAce;
       totals.srvErr += p.srvErr;
+      totals.srvErrNet += p.srvErrNet;
+      totals.srvErrWide += p.srvErrWide;
+      totals.srvErrLong += p.srvErrLong;
+      totals.srvErrFoot += p.srvErrFoot;
+      totals.srvErrOther += p.srvErrOther;
       totals.digCount += p.digCount;
       totals.digErr += p.digErr;
       totals.blkStuff += p.blkStuff;
       totals.blkTouch += p.blkTouch;
+      totals.blkCount += p.blkCount;
       totals.blkFault += p.blkFault;
+      totals.blkLate += p.blkLate;
+      totals.blkNet += p.blkNet;
+      totals.blkUsed += p.blkUsed;
     });
 
     return { players: list, totals };
@@ -324,10 +426,12 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
         {totals && (
           <div className="bg-slate-50 border-b border-slate-200 p-3 sm:p-4 shrink-0 grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
             <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col">
-              <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Passing</span>
+              <span className="text-[10px] font-black text-purple-600 uppercase tracking-widest">Serving</span>
               <div className="flex items-baseline justify-between mt-1">
-                <span className="text-xl sm:text-2xl font-black text-slate-800">{totPassAvg}</span>
-                <span className="text-xs font-bold text-slate-500">{totals.passCount} passes</span>
+                <span className="text-xl sm:text-2xl font-black text-slate-800">{totals.srvAce}A / {totals.srvErr}E</span>
+                <span className={`text-xs font-bold ${totSrvPlusMinus >= 0 ? "text-purple-700" : "text-red-500"}`}>
+                  {totSrvPlusMinus >= 0 ? `+${totSrvPlusMinus}` : totSrvPlusMinus}
+                </span>
               </div>
             </div>
 
@@ -340,16 +444,6 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
             </div>
 
             <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col">
-              <span className="text-[10px] font-black text-purple-600 uppercase tracking-widest">Serving</span>
-              <div className="flex items-baseline justify-between mt-1">
-                <span className="text-xl sm:text-2xl font-black text-slate-800">{totals.srvAce}A / {totals.srvErr}E</span>
-                <span className={`text-xs font-bold ${totSrvPlusMinus >= 0 ? "text-purple-700" : "text-red-500"}`}>
-                  {totSrvPlusMinus >= 0 ? `+${totSrvPlusMinus}` : totSrvPlusMinus}
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col">
               <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest">Digs</span>
               <div className="flex items-baseline justify-between mt-1">
                 <span className="text-xl sm:text-2xl font-black text-slate-800">{totals.digCount}</span>
@@ -357,11 +451,19 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
               </div>
             </div>
 
-            <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-200 shadow-sm col-span-2 sm:col-span-1 flex flex-col">
+            <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col">
               <span className="text-[10px] font-black text-teal-600 uppercase tracking-widest">Blocks</span>
               <div className="flex items-baseline justify-between mt-1">
                 <span className="text-xl sm:text-2xl font-black text-slate-800">{totals.blkStuff} Stuff</span>
                 <span className="text-xs font-bold text-slate-500">{totals.blkTouch} touch</span>
+              </div>
+            </div>
+
+            <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-200 shadow-sm col-span-2 sm:col-span-1 flex flex-col">
+              <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Passing</span>
+              <div className="flex items-baseline justify-between mt-1">
+                <span className="text-xl sm:text-2xl font-black text-slate-800">{totPassAvg}</span>
+                <span className="text-xs font-bold text-slate-500">{totals.passCount} passes</span>
               </div>
             </div>
           </div>
@@ -395,36 +497,36 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
               All Stats
             </button>
             <button
+              onClick={() => setActiveTab("serve")}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeTab === "serve" ? "bg-white text-purple-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Serving
+            </button>
+            <button
+              onClick={() => setActiveTab("attack")}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeTab === "attack" ? "bg-white text-green-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Attacking
+            </button>
+            <button
+              onClick={() => setActiveTab("defense")}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                activeTab === "defense" ? "bg-white text-amber-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Digs & Blocks
+            </button>
+            <button
               onClick={() => setActiveTab("pass")}
               className={`px-3 py-1.5 rounded-lg transition-all ${
                 activeTab === "pass" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
               }`}
             >
               Passing
-            </button>
-            <button
-              onClick={() => setActiveTab("attack")}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                activeTab === "attack" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Attacking
-            </button>
-            <button
-              onClick={() => setActiveTab("serve")}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                activeTab === "serve" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Serving
-            </button>
-            <button
-              onClick={() => setActiveTab("defense")}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                activeTab === "defense" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Digs & Blocks
             </button>
           </div>
         </div>
@@ -437,12 +539,14 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
                 <th className="p-3 sticky left-0 bg-slate-800 z-30 min-w-[140px] shadow-[2px_0_5px_rgba(0,0,0,0.2)]">
                   Player
                 </th>
-                
-                {(activeTab === "all" || activeTab === "pass") && (
+
+                {(activeTab === "all" || activeTab === "serve") && (
                   <>
-                    <th className="p-3 text-center bg-blue-900/60 border-l border-white/10">Pass Avg</th>
-                    <th className="p-3 text-center bg-blue-900/60 border-l border-white/10">Passes (Tot)</th>
-                    <th className="p-3 text-center bg-blue-900/40 border-l border-white/10">3 / 2 / 1 / 0</th>
+                    <th className="p-3 text-center bg-purple-900/60 border-l border-white/10">Serves (Tot)</th>
+                    <th className="p-3 text-center bg-purple-900/60 border-l border-white/10">Aces</th>
+                    <th className="p-3 text-center bg-purple-900/40 border-l border-white/10">Errors</th>
+                    <th className="p-3 text-center bg-purple-900/40 border-l border-white/10">In Play</th>
+                    <th className="p-3 text-center bg-purple-900/40 border-l border-white/10">+/-</th>
                   </>
                 )}
 
@@ -457,16 +561,6 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
                   </>
                 )}
 
-                {(activeTab === "all" || activeTab === "serve") && (
-                  <>
-                    <th className="p-3 text-center bg-purple-900/60 border-l border-white/10">Serves (Tot)</th>
-                    <th className="p-3 text-center bg-purple-900/60 border-l border-white/10">Aces</th>
-                    <th className="p-3 text-center bg-purple-900/40 border-l border-white/10">Errors</th>
-                    <th className="p-3 text-center bg-purple-900/40 border-l border-white/10">In Play</th>
-                    <th className="p-3 text-center bg-purple-900/40 border-l border-white/10">+/-</th>
-                  </>
-                )}
-
                 {(activeTab === "all" || activeTab === "defense") && (
                   <>
                     <th className="p-3 text-center bg-amber-900/60 border-l border-white/10">Digs (Tot)</th>
@@ -474,6 +568,14 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
                     <th className="p-3 text-center bg-teal-900/60 border-l border-white/10">Stuffs</th>
                     <th className="p-3 text-center bg-teal-900/40 border-l border-white/10">Touches</th>
                     <th className="p-3 text-center bg-teal-900/40 border-l border-white/10">Faults</th>
+                  </>
+                )}
+
+                {(activeTab === "all" || activeTab === "pass") && (
+                  <>
+                    <th className="p-3 text-center bg-blue-900/60 border-l border-white/10">Pass Avg</th>
+                    <th className="p-3 text-center bg-blue-900/60 border-l border-white/10">Passes (Tot)</th>
+                    <th className="p-3 text-center bg-blue-900/40 border-l border-white/10">3 / 2 / 1 / 0</th>
                   </>
                 )}
               </tr>
@@ -496,61 +598,38 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
                       <span className="font-bold text-slate-800 truncate">{p.name}</span>
                     </td>
 
-                    {(activeTab === "all" || activeTab === "pass") && (
-                      <>
-                        <td className="p-3 text-center border-l border-slate-200 font-black text-blue-700 text-sm sm:text-base">
-                          {passAvg}
-                        </td>
-                        <td className="p-3 text-center border-l border-slate-200 font-bold text-slate-700">
-                          {p.passCount}
-                        </td>
-                        <td className="p-3 text-center border-l border-slate-200 text-slate-500 font-mono text-xs">
-                          <span className="text-emerald-600 font-bold">{p.p3}</span> /{" "}
-                          <span className="text-blue-600 font-bold">{p.p2}</span> /{" "}
-                          <span className="text-amber-600 font-bold">{p.p1}</span> /{" "}
-                          <span className="text-red-500 font-bold">{p.p0}</span>
-                        </td>
-                      </>
-                    )}
-
-                    {(activeTab === "all" || activeTab === "attack") && (
-                      <>
-                        <td className="p-3 text-center border-l border-slate-200 font-black text-slate-800">
-                          {p.attCount}
-                        </td>
-                        <td className="p-3 text-center border-l border-slate-200 font-black text-green-600 text-sm sm:text-base">
-                          {p.attKill}
-                        </td>
-                        <td className="p-3 text-center border-l border-slate-200 font-bold text-green-700">
-                          {killPct}
-                        </td>
-                        <td className="p-3 text-center border-l border-slate-200 text-red-500 font-bold">
-                          {p.attErr}
-                        </td>
-                        <td className="p-3 text-center border-l border-slate-200 text-slate-600">
-                          {p.attBlk}
-                        </td>
-                        <td className="p-3 text-center border-l border-slate-200 font-mono font-bold text-slate-700">
-                          {hitEff}
-                        </td>
-                      </>
-                    )}
-
                     {(activeTab === "all" || activeTab === "serve") && (
                       <>
-                        <td className="p-3 text-center border-l border-slate-200 font-bold text-slate-800">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "serve", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-bold text-slate-800 cursor-pointer hover:bg-purple-100/60 transition-colors"
+                          title="Click to view detailed Serve breakdown (Net, Wide, Long, Foot Fault)"
+                        >
                           {srvTot}
                         </td>
-                        <td className="p-3 text-center border-l border-slate-200 font-black text-purple-600 text-sm sm:text-base">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "serve", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-black text-purple-600 text-sm sm:text-base cursor-pointer hover:bg-purple-100/60 transition-colors"
+                          title="Click to view detailed Serve breakdown"
+                        >
                           {p.srvAce}
                         </td>
-                        <td className="p-3 text-center border-l border-slate-200 text-red-500 font-bold">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "serve", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 text-red-500 font-bold cursor-pointer hover:bg-red-50 transition-colors"
+                          title="Click to view error breakdown (Net, Wide, Long, Foot Fault)"
+                        >
                           {p.srvErr}
                         </td>
-                        <td className="p-3 text-center border-l border-slate-200 text-slate-600">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "serve", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 text-slate-600 cursor-pointer hover:bg-purple-50 transition-colors"
+                        >
                           {p.srvCount}
                         </td>
-                        <td className={`p-3 text-center border-l border-slate-200 font-black ${
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "serve", titleContext: "Practice Stats" })}
+                          className={`p-3 text-center border-l border-slate-200 font-black cursor-pointer hover:bg-purple-50 transition-colors ${
                           srvPlusMinus > 0 ? "text-purple-700" : srvPlusMinus < 0 ? "text-red-500" : "text-slate-500"
                         }`}>
                           {srvPlusMinus > 0 ? `+${srvPlusMinus}` : srvPlusMinus}
@@ -558,22 +637,111 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
                       </>
                     )}
 
+                    {(activeTab === "all" || activeTab === "attack") && (
+                      <>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "attack", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-black text-slate-800 cursor-pointer hover:bg-green-100/60 transition-colors"
+                          title="Click to view Attack breakdown (Kills, Net, Out, Stuffed, Front/Back)"
+                        >
+                          {p.attCount}
+                        </td>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "attack", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-black text-green-600 text-sm sm:text-base cursor-pointer hover:bg-green-100/60 transition-colors"
+                        >
+                          {p.attKill}
+                        </td>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "attack", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-bold text-green-700 cursor-pointer hover:bg-green-50 transition-colors"
+                        >
+                          {killPct}
+                        </td>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "attack", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 text-red-500 font-bold cursor-pointer hover:bg-red-50 transition-colors"
+                          title="Click to view Attack errors (Net, Out, Stuffed)"
+                        >
+                          {p.attErr}
+                        </td>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "attack", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 text-slate-600 cursor-pointer hover:bg-amber-50 transition-colors"
+                        >
+                          {p.attBlk}
+                        </td>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "attack", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-mono font-bold text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors"
+                        >
+                          {hitEff}
+                        </td>
+                      </>
+                    )}
+
                     {(activeTab === "all" || activeTab === "defense") && (
                       <>
-                        <td className="p-3 text-center border-l border-slate-200 font-black text-amber-700">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "dig", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-black text-amber-700 cursor-pointer hover:bg-amber-100/60 transition-colors"
+                          title="Click to view Dig breakdown"
+                        >
                           {p.digCount}
                         </td>
-                        <td className="p-3 text-center border-l border-slate-200 text-red-500 font-bold">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "dig", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 text-red-500 font-bold cursor-pointer hover:bg-red-50 transition-colors"
+                        >
                           {p.digErr}
                         </td>
-                        <td className="p-3 text-center border-l border-slate-200 font-black text-teal-700">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "block", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-black text-teal-700 cursor-pointer hover:bg-teal-100/60 transition-colors"
+                          title="Click to view Block breakdown (Stuffs, Late, Net Viol, Used)"
+                        >
                           {p.blkStuff}
                         </td>
-                        <td className="p-3 text-center border-l border-slate-200 text-slate-600">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "block", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 text-slate-600 cursor-pointer hover:bg-teal-50 transition-colors"
+                        >
                           {p.blkTouch}
                         </td>
-                        <td className="p-3 text-center border-l border-slate-200 text-slate-500">
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "block", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 text-slate-500 cursor-pointer hover:bg-red-50 transition-colors"
+                          title="Click to view Block Faults (Late, Net, Used)"
+                        >
                           {p.blkFault}
+                        </td>
+                      </>
+                    )}
+
+                    {(activeTab === "all" || activeTab === "pass") && (
+                      <>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "pass", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-black text-blue-700 text-sm sm:text-base cursor-pointer hover:bg-blue-100/60 transition-colors"
+                          title="Click to view Passing breakdown (3s, 2s, 1s, 0s)"
+                        >
+                          {passAvg}
+                        </td>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "pass", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 font-bold text-slate-700 cursor-pointer hover:bg-blue-50 transition-colors"
+                        >
+                          {p.passCount}
+                        </td>
+                        <td
+                          onClick={() => setBreakdownModal({ isOpen: true, player: p, category: "pass", titleContext: "Practice Stats" })}
+                          className="p-3 text-center border-l border-slate-200 text-slate-500 font-mono text-xs cursor-pointer hover:bg-blue-50 transition-colors"
+                          title="Click to view 3/2/1/0 breakdown"
+                        >
+                          <span className="text-emerald-600 font-bold">{p.p3}</span> /{" "}
+                          <span className="text-blue-600 font-bold">{p.p2}</span> /{" "}
+                          <span className="text-amber-600 font-bold">{p.p1}</span> /{" "}
+                          <span className="text-red-500 font-bold">{p.p0}</span>
                         </td>
                       </>
                     )}
@@ -588,58 +756,37 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
                     TEAM TOTAL
                   </td>
 
-                  {(activeTab === "all" || activeTab === "pass") && (
-                    <>
-                      <td className="p-3 text-center border-l border-indigo-200 text-blue-900 text-sm sm:text-base">
-                        {totPassAvg}
-                      </td>
-                      <td className="p-3 text-center border-l border-indigo-200">
-                        {totals.passCount}
-                      </td>
-                      <td className="p-3 text-center border-l border-indigo-200 font-mono text-xs">
-                        {totals.p3} / {totals.p2} / {totals.p1} / {totals.p0}
-                      </td>
-                    </>
-                  )}
-
-                  {(activeTab === "all" || activeTab === "attack") && (
-                    <>
-                      <td className="p-3 text-center border-l border-indigo-200">
-                        {totals.attCount}
-                      </td>
-                      <td className="p-3 text-center border-l border-indigo-200 text-green-700 text-sm sm:text-base">
-                        {totals.attKill}
-                      </td>
-                      <td className="p-3 text-center border-l border-indigo-200 text-green-800">
-                        {totKillPct}
-                      </td>
-                      <td className="p-3 text-center border-l border-indigo-200 text-red-600">
-                        {totals.attErr}
-                      </td>
-                      <td className="p-3 text-center border-l border-indigo-200">
-                        {totals.attBlk}
-                      </td>
-                      <td className="p-3 text-center border-l border-indigo-200 font-mono">
-                        {totHitEff}
-                      </td>
-                    </>
-                  )}
-
                   {(activeTab === "all" || activeTab === "serve") && (
                     <>
-                      <td className="p-3 text-center border-l border-indigo-200">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "serve", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors"
+                        title="Click to view Team Serve breakdown"
+                      >
                         {totSrvTot}
                       </td>
-                      <td className="p-3 text-center border-l border-indigo-200 text-purple-800 text-sm sm:text-base">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "serve", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-purple-800 text-sm sm:text-base cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
                         {totals.srvAce}
                       </td>
-                      <td className="p-3 text-center border-l border-indigo-200 text-red-600">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "serve", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-red-600 cursor-pointer hover:bg-red-100 transition-colors"
+                        title="Click to view Team Serve error breakdown"
+                      >
                         {totals.srvErr}
                       </td>
-                      <td className="p-3 text-center border-l border-indigo-200">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "serve", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
                         {totals.srvCount}
                       </td>
-                      <td className={`p-3 text-center border-l border-indigo-200 ${
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "serve", titleContext: "Practice Team Totals" })}
+                        className={`p-3 text-center border-l border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors ${
                         totSrvPlusMinus > 0 ? "text-purple-800" : totSrvPlusMinus < 0 ? "text-red-600" : ""
                       }`}>
                         {totSrvPlusMinus > 0 ? `+${totSrvPlusMinus}` : totSrvPlusMinus}
@@ -647,22 +794,107 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
                     </>
                   )}
 
+                  {(activeTab === "all" || activeTab === "attack") && (
+                    <>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "attack", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors"
+                        title="Click to view Team Attack breakdown"
+                      >
+                        {totals.attCount}
+                      </td>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "attack", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-green-700 text-sm sm:text-base cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
+                        {totals.attKill}
+                      </td>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "attack", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-green-800 cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
+                        {totKillPct}
+                      </td>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "attack", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-red-600 cursor-pointer hover:bg-red-100 transition-colors"
+                        title="Click to view Team Attack error breakdown"
+                      >
+                        {totals.attErr}
+                      </td>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "attack", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
+                        {totals.attBlk}
+                      </td>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "attack", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 font-mono cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
+                        {totHitEff}
+                      </td>
+                    </>
+                  )}
+
                   {(activeTab === "all" || activeTab === "defense") && (
                     <>
-                      <td className="p-3 text-center border-l border-indigo-200 text-amber-800">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "dig", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-amber-800 cursor-pointer hover:bg-indigo-100 transition-colors"
+                        title="Click to view Team Dig breakdown"
+                      >
                         {totals.digCount}
                       </td>
-                      <td className="p-3 text-center border-l border-indigo-200 text-red-600">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "dig", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-red-600 cursor-pointer hover:bg-red-100 transition-colors"
+                      >
                         {totals.digErr}
                       </td>
-                      <td className="p-3 text-center border-l border-indigo-200 text-teal-800">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "block", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-teal-800 cursor-pointer hover:bg-indigo-100 transition-colors"
+                        title="Click to view Team Block breakdown"
+                      >
                         {totals.blkStuff}
                       </td>
-                      <td className="p-3 text-center border-l border-indigo-200">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "block", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
                         {totals.blkTouch}
                       </td>
-                      <td className="p-3 text-center border-l border-indigo-200">
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "block", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
                         {totals.blkFault}
+                      </td>
+                    </>
+                  )}
+
+                  {(activeTab === "all" || activeTab === "pass") && (
+                    <>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "pass", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 text-blue-900 text-sm sm:text-base cursor-pointer hover:bg-indigo-100 transition-colors"
+                        title="Click to view Team Passing breakdown"
+                      >
+                        {totPassAvg}
+                      </td>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "pass", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 cursor-pointer hover:bg-indigo-100 transition-colors"
+                      >
+                        {totals.passCount}
+                      </td>
+                      <td
+                        onClick={() => setBreakdownModal({ isOpen: true, player: totals, category: "pass", titleContext: "Practice Team Totals" })}
+                        className="p-3 text-center border-l border-indigo-200 font-mono text-xs cursor-pointer hover:bg-indigo-100 transition-colors"
+                        title="Click to view Team 3/2/1/0 breakdown"
+                      >
+                        {totals.p3} / {totals.p2} / {totals.p1} / {totals.p0}
                       </td>
                     </>
                   )}
@@ -686,6 +918,15 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
         </div>
 
       </div>
+
+      {/* STAT BREAKDOWN MODAL */}
+      <StatBreakdownModal
+        isOpen={breakdownModal.isOpen}
+        onClose={() => setBreakdownModal((prev) => ({ ...prev, isOpen: false }))}
+        selectedPlayer={breakdownModal.player}
+        initialCategory={breakdownModal.category}
+        titleContext={breakdownModal.titleContext}
+      />
     </div>
   );
 };
