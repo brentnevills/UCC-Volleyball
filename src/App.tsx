@@ -2671,7 +2671,7 @@ export default function App() {
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
-    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Serves,Aces,Serve Errors,Serve +/-,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Pass Avg,Passes\n`;
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
     const visiblePlayers = Object.values(uccStats).filter((p) => {
       if (hiddenPlayerIds.includes(p.id)) return false;
@@ -2730,7 +2730,7 @@ export default function App() {
       teamTot.srvAce += p.srvAce || 0;
       teamTot.srvErr += p.srvErr || 0;
 
-      csv += `"${p.number || ""}","${p.name}",${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${passAvg},${p.passCount}\n`;
+      csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
     });
 
     const totPassAvg =
@@ -2743,7 +2743,7 @@ export default function App() {
         : "0.0%";
     const totSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
 
-    csv += `"","TEAM TOTALS",${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},${teamTot.attBlk},${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totPassAvg},${teamTot.passCount}\n`;
+    csv += `"","TEAM TOTALS",${totPassAvg},${teamTot.passCount},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},${teamTot.attBlk},${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus}\n`;
 
     csv +=
       "\nOPPONENT STATS\nID,Aces,Serve Errors,Serve +/-,Swings,Kills,Kill %,Pass Avg,Passes\n";
@@ -2802,10 +2802,8 @@ export default function App() {
       [
         "Number",
         "Name",
-        "Serves",
-        "Aces",
-        "Serve Errors",
-        "Serve +/-",
+        "Pass Avg",
+        "Passes",
         "Digs",
         "Dig Errors",
         "Swings",
@@ -2820,8 +2818,10 @@ export default function App() {
         "Blk Late",
         "Blk Net",
         "Blk Used",
-        "Pass Avg",
-        "Passes",
+        "Serves",
+        "Aces",
+        "Serve Errors",
+        "Serve +/-",
       ],
     ];
 
@@ -2885,10 +2885,8 @@ export default function App() {
       return [
         p.number || "",
         p.name,
-        srvTot,
-        p.srvAce,
-        p.srvErr,
-        srvPlusMinus,
+        passAvg,
+        p.passCount,
         p.digCount,
         p.digErr,
         p.attCount,
@@ -2903,8 +2901,10 @@ export default function App() {
         p.blkLate,
         p.blkNet,
         p.blkUsed,
-        passAvg,
-        p.passCount,
+        srvTot,
+        p.srvAce,
+        p.srvErr,
+        srvPlusMinus,
       ];
     });
 
@@ -2922,10 +2922,8 @@ export default function App() {
       [
         "TEAM",
         "TOTALS",
-        totSrvTot,
-        teamTot.srvAce,
-        teamTot.srvErr,
-        totSrvPlusMinus,
+        totPassAvg,
+        teamTot.passCount,
         teamTot.digCount,
         teamTot.digErr,
         teamTot.attCount,
@@ -2940,8 +2938,10 @@ export default function App() {
         teamTot.blkLate,
         teamTot.blkNet,
         teamTot.blkUsed,
-        totPassAvg,
-        teamTot.passCount,
+        totSrvTot,
+        teamTot.srvAce,
+        teamTot.srvErr,
+        totSrvPlusMinus,
       ],
     ];
 
@@ -8610,32 +8610,18 @@ export default function App() {
                               setStatBreakdownModal({
                                 isOpen: true,
                                 selectedPlayer: teamTot,
-                                category: "serve",
-                                titleContext: "Team Serve Breakdown",
+                                category: "pass",
+                                titleContext: "Team Passing Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-purple-50/40 text-purple-900 cursor-pointer hover:bg-purple-100/60 transition-colors"
-                            title="Click to view Team Serve Breakdown"
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-blue-50/40 text-blue-900 cursor-pointer hover:bg-blue-100/60 transition-colors"
+                            title="Click to view Team Passing Breakdown"
                           >
-                            SERVES ▾
+                            PASSING ▾
                             <br />
                             <span className="opacity-70 font-bold tracking-normal">
-                              (Att-Ace-Err)
+                              Avg(Tot)
                             </span>
-                          </th>
-                          <th
-                            onClick={() =>
-                              setStatBreakdownModal({
-                                isOpen: true,
-                                selectedPlayer: teamTot,
-                                category: "serve",
-                                titleContext: "Team Serve Breakdown",
-                              })
-                            }
-                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-blue-600 bg-blue-50/50 cursor-pointer hover:bg-blue-100/60 transition-colors"
-                            title="Click to view Team Serve Breakdown"
-                          >
-                            SRV +/- ▾
                           </th>
                           <th
                             onClick={() =>
@@ -8710,22 +8696,238 @@ export default function App() {
                               setStatBreakdownModal({
                                 isOpen: true,
                                 selectedPlayer: teamTot,
-                                category: "pass",
-                                titleContext: "Team Passing Breakdown",
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-blue-50/40 text-blue-900 cursor-pointer hover:bg-blue-100/60 transition-colors"
-                            title="Click to view Team Passing Breakdown"
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-purple-50/40 text-purple-900 cursor-pointer hover:bg-purple-100/60 transition-colors"
+                            title="Click to view Team Serve Breakdown"
                           >
-                            PASSING ▾
+                            SERVES ▾
                             <br />
                             <span className="opacity-70 font-bold tracking-normal">
-                              Avg(Tot)
+                              (Att-Ace-Err)
                             </span>
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-blue-600 bg-blue-50/50 cursor-pointer hover:bg-blue-100/60 transition-colors"
+                            title="Click to view Team Serve Breakdown"
+                          >
+                            SRV +/- ▾
                           </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
+                        {/* TOP STICKY TEAM TOTALS ROW */}
+                        <tr className="bg-gradient-to-r from-blue-950 via-[#002B7A] to-blue-950 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-blue-400">
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "pass",
+                                titleContext: "Team Impact & Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 sticky left-0 bg-[#001f5c] text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-amber-400 cursor-pointer hover:bg-[#002b7a] transition-colors"
+                            title="Click for full Team Breakdown modal"
+                          >
+                            <div className="flex items-center space-x-1.5 sm:space-x-2">
+                              <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-amber-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
+                                ★
+                              </span>
+                              <div className="flex flex-col">
+                                <span className="font-black text-amber-300 uppercase tracking-widest text-xs">
+                                  TEAM TOTALS
+                                </span>
+                                <span className="text-[9px] text-blue-200 font-medium">
+                                  {visibleUccPlayers.length} active player{visibleUccPlayers.length !== 1 ? "s" : ""}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          {/* PASSING */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "pass",
+                                titleContext: "Team Passing Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/40 cursor-pointer hover:bg-blue-800/50 transition-colors"
+                            title="Click to view Team Passing breakdown (3/2/1/0 scores)"
+                          >
+                            <span className="text-sm sm:text-base text-amber-300">
+                              {teamPassAvg}
+                            </span>{" "}
+                            <span className="text-[9px] sm:text-[10px] text-blue-200 font-bold ml-0.5 sm:ml-1">
+                              ({teamTot.passCount})
+                            </span>
+                          </td>
+                          {/* DIGS */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "dig",
+                                titleContext: "Team Dig Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            title="Click to view Team Dig breakdown"
+                          >
+                            <span className="text-blue-300 font-black text-sm">
+                              {teamTot.digCount}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-300 font-bold">
+                              {teamTot.digErr}
+                            </span>
+                          </td>
+                          {/* SWINGS */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "attack",
+                                titleContext: "Team Attack Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                            title="Click to view Team Attack breakdown"
+                          >
+                            <span className="font-black text-white">
+                              {teamTot.attCount}
+                            </span>{" "}
+                            <span className="text-[9px] text-blue-200 font-medium">
+                              ({teamTot.attCountFront}/{teamTot.attCountBack})
+                            </span>
+                            <br />
+                            <span className="text-emerald-300 font-black text-sm">
+                              {teamTot.attKill}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-300 font-bold text-xs">
+                              {teamTot.attErr}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-amber-300 font-bold text-xs">
+                              {teamTot.attBlk}
+                            </span>
+                          </td>
+                          {/* KILL % */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "attack",
+                                titleContext: "Team Attack Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                            title="Click to view Team Attack breakdown"
+                          >
+                            {teamKillPct}
+                          </td>
+                          {/* BLOCKS */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "block",
+                                titleContext: "Team Block Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                            title="Click to view Team Block breakdown"
+                          >
+                            <span className="font-black text-white">
+                              {teamBlkTot}
+                            </span>
+                            <span className="text-blue-200 font-bold">
+                              ({teamTot.blkStuff})
+                            </span>{" "}
+                            -{" "}
+                            <span className="text-amber-300">
+                              {teamTot.blkLate}
+                            </span>{" "}
+                            -{" "}
+                            <span className="text-white">
+                              {teamTot.blkNet}
+                            </span>{" "}
+                            -{" "}
+                            <span className="text-white">
+                              {teamTot.blkUsed}
+                            </span>
+                          </td>
+                          {/* SERVES */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors"
+                            title="Click to view Team Serve breakdown"
+                          >
+                            <span className="font-black text-white">
+                              {teamSrvTot}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-emerald-300 font-black text-sm">
+                              {teamTot.srvAce}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-300 font-bold">
+                              {teamTot.srvErr}
+                            </span>
+                          </td>
+                          {/* SRV +/- */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                            title="Click to view Team Serve breakdown"
+                          >
+                            <span
+                              className={
+                                teamSrvPlusMinus > 0
+                                  ? "text-emerald-300"
+                                  : teamSrvPlusMinus < 0
+                                    ? "text-red-300"
+                                    : "text-slate-300"
+                              }
+                            >
+                              {teamSrvPlusMinus > 0
+                                ? `+${teamSrvPlusMinus}`
+                                : teamSrvPlusMinus}
+                            </span>
+                          </td>
+                        </tr>
+
                         {visibleUccPlayers.length === 0 ? (
                           <tr>
                             <td
@@ -8788,60 +8990,22 @@ export default function App() {
                                     </span>
                                   </div>
                                 </td>
-                                {/* SERVES */}
+                                {/* PASSING */}
                                 <td
                                   onClick={() =>
                                     setStatBreakdownModal({
                                       isOpen: true,
                                       selectedPlayer: p,
-                                      category: "serve",
+                                      category: "pass",
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors"
-                                  title={`Click to view ${p.name}'s Serve breakdown (Net, Wide, Long, Foot Fault)`}
+                                  className="p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Passing breakdown (3/2/1/0 scores)`}
                                 >
-                                  <span className="font-bold text-slate-600">
-                                    {srvTot}
-                                  </span>{" "}
-                                  <span className="text-slate-300 mx-0.5">
-                                    -
-                                  </span>{" "}
-                                  <span className="text-emerald-600 font-black text-sm">
-                                    {p.srvAce}
-                                  </span>{" "}
-                                  <span className="text-slate-300 mx-0.5">
-                                    -
-                                  </span>{" "}
-                                  <span className="text-red-500 font-bold">
-                                    {p.srvErr}
-                                  </span>
-                                </td>
-                                {/* SRV +/- */}
-                                <td
-                                  onClick={() =>
-                                    setStatBreakdownModal({
-                                      isOpen: true,
-                                      selectedPlayer: p,
-                                      category: "serve",
-                                      titleContext: `${p.name} (#${p.number || "-"})`,
-                                    })
-                                  }
-                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors"
-                                  title={`Click to view ${p.name}'s Serve breakdown`}
-                                >
-                                  <span
-                                    className={
-                                      srvPlusMinus > 0
-                                        ? "text-green-600"
-                                        : srvPlusMinus < 0
-                                          ? "text-red-500"
-                                          : "text-slate-400"
-                                    }
-                                  >
-                                    {srvPlusMinus > 0
-                                      ? `+${srvPlusMinus}`
-                                      : srvPlusMinus}
+                                  {passAvg}{" "}
+                                  <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold ml-0.5 sm:ml-1">
+                                    ({p.passCount})
                                   </span>
                                 </td>
                                 {/* DIGS */}
@@ -8976,22 +9140,60 @@ export default function App() {
                                     </span>
                                   </div>
                                 </td>
-                                {/* PASSING */}
+                                {/* SERVES */}
                                 <td
                                   onClick={() =>
                                     setStatBreakdownModal({
                                       isOpen: true,
                                       selectedPlayer: p,
-                                      category: "pass",
+                                      category: "serve",
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors"
-                                  title={`Click to view ${p.name}'s Passing breakdown (3/2/1/0 scores)`}
+                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors"
+                                  title={`Click to view ${p.name}'s Serve breakdown (Net, Wide, Long, Foot Fault)`}
                                 >
-                                  {passAvg}{" "}
-                                  <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold ml-0.5 sm:ml-1">
-                                    ({p.passCount})
+                                  <span className="font-bold text-slate-600">
+                                    {srvTot}
+                                  </span>{" "}
+                                  <span className="text-slate-300 mx-0.5">
+                                    -
+                                  </span>{" "}
+                                  <span className="text-emerald-600 font-black text-sm">
+                                    {p.srvAce}
+                                  </span>{" "}
+                                  <span className="text-slate-300 mx-0.5">
+                                    -
+                                  </span>{" "}
+                                  <span className="text-red-500 font-bold">
+                                    {p.srvErr}
+                                  </span>
+                                </td>
+                                {/* SRV +/- */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "serve",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors"
+                                  title={`Click to view ${p.name}'s Serve breakdown`}
+                                >
+                                  <span
+                                    className={
+                                      srvPlusMinus > 0
+                                        ? "text-green-600"
+                                        : srvPlusMinus < 0
+                                          ? "text-red-500"
+                                          : "text-slate-400"
+                                    }
+                                  >
+                                    {srvPlusMinus > 0
+                                      ? `+${srvPlusMinus}`
+                                      : srvPlusMinus}
                                   </span>
                                 </td>
                               </tr>
@@ -9019,56 +9221,24 @@ export default function App() {
                               </div>
                             </div>
                           </td>
-                          {/* SERVES */}
+                          {/* PASSING */}
                           <td
                             onClick={() =>
                               setStatBreakdownModal({
                                 isOpen: true,
                                 selectedPlayer: teamTot,
-                                category: "serve",
-                                titleContext: "Team Serve Breakdown",
+                                category: "pass",
+                                titleContext: "Team Passing Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
-                            title="Click to view Team Serve breakdown"
+                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors"
+                            title="Click to view Team Passing breakdown"
                           >
-                            <span className="font-black text-white">
-                              {teamSrvTot}
+                            <span className="text-sm sm:text-base text-amber-300">
+                              {teamPassAvg}
                             </span>{" "}
-                            <span className="text-blue-300 mx-0.5">-</span>{" "}
-                            <span className="text-emerald-300 font-black text-sm">
-                              {teamTot.srvAce}
-                            </span>{" "}
-                            <span className="text-blue-300 mx-0.5">-</span>{" "}
-                            <span className="text-red-300 font-bold">
-                              {teamTot.srvErr}
-                            </span>
-                          </td>
-                          {/* SRV +/- */}
-                          <td
-                            onClick={() =>
-                              setStatBreakdownModal({
-                                isOpen: true,
-                                selectedPlayer: teamTot,
-                                category: "serve",
-                                titleContext: "Team Serve Breakdown",
-                              })
-                            }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
-                            title="Click to view Team Serve breakdown"
-                          >
-                            <span
-                              className={
-                                teamSrvPlusMinus > 0
-                                  ? "text-emerald-300"
-                                  : teamSrvPlusMinus < 0
-                                    ? "text-red-300"
-                                    : "text-slate-300"
-                              }
-                            >
-                              {teamSrvPlusMinus > 0
-                                ? `+${teamSrvPlusMinus}`
-                                : teamSrvPlusMinus}
+                            <span className="text-[9px] sm:text-[10px] text-blue-200 font-bold ml-0.5 sm:ml-1">
+                              ({teamTot.passCount})
                             </span>
                           </td>
                           {/* DIGS */}
@@ -9171,24 +9341,56 @@ export default function App() {
                               {teamTot.blkUsed}
                             </span>
                           </td>
-                          {/* PASSING */}
+                          {/* SERVES */}
                           <td
                             onClick={() =>
                               setStatBreakdownModal({
                                 isOpen: true,
                                 selectedPlayer: teamTot,
-                                category: "pass",
-                                titleContext: "Team Passing Breakdown",
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors"
-                            title="Click to view Team Passing breakdown"
+                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            title="Click to view Team Serve breakdown"
                           >
-                            <span className="text-sm sm:text-base text-amber-300">
-                              {teamPassAvg}
+                            <span className="font-black text-white">
+                              {teamSrvTot}
                             </span>{" "}
-                            <span className="text-[9px] sm:text-[10px] text-blue-200 font-bold ml-0.5 sm:ml-1">
-                              ({teamTot.passCount})
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-emerald-300 font-black text-sm">
+                              {teamTot.srvAce}
+                            </span>{" "}
+                            <span className="text-blue-300 mx-0.5">-</span>{" "}
+                            <span className="text-red-300 font-bold">
+                              {teamTot.srvErr}
+                            </span>
+                          </td>
+                          {/* SRV +/- */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "serve",
+                                titleContext: "Team Serve Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                            title="Click to view Team Serve breakdown"
+                          >
+                            <span
+                              className={
+                                teamSrvPlusMinus > 0
+                                  ? "text-emerald-300"
+                                  : teamSrvPlusMinus < 0
+                                    ? "text-red-300"
+                                    : "text-slate-300"
+                              }
+                            >
+                              {teamSrvPlusMinus > 0
+                                ? `+${teamSrvPlusMinus}`
+                                : teamSrvPlusMinus}
                             </span>
                           </td>
                         </tr>
