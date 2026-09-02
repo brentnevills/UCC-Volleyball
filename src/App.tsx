@@ -2505,6 +2505,7 @@ export default function App() {
     const oppData = {}; // { 'Match Opponent Name': { 'O1': stats... } }
     appData.roster.forEach((p) => {
       uccData[p.id] = {
+        id: p.id,
         name: p.name,
         number: p.number,
         isRetired: p.isRetired || false,
@@ -8697,6 +8698,7 @@ export default function App() {
                   return acc;
                 },
                 {
+                  id: "TEAM_TOTALS",
                   name: "Team Totals (Whole Team)",
                   number: "ALL",
                   passCount: 0,
@@ -8782,6 +8784,7 @@ export default function App() {
                   return acc;
                 },
                 {
+                  id: "SHOWN_PLAYERS",
                   name: "Shown Players (Avg & Tot)",
                   number: "SHOWN",
                   passCount: 0,

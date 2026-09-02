@@ -98,8 +98,11 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
 
   const isTeam =
     selectedPlayer.id === "TEAM_TOTALS" ||
+    selectedPlayer.id === "SHOWN_PLAYERS" ||
     selectedPlayer.name === "TEAM TOTALS" ||
-    selectedPlayer.name === "Team Totals";
+    selectedPlayer.name === "Team Totals" ||
+    selectedPlayer.name.toLowerCase().includes("team") ||
+    selectedPlayer.name.toLowerCase().includes("shown");
 
   // Calculations
   // Serving
