@@ -37,7 +37,14 @@ import {
   Sparkles,
   Info,
   Edit3,
+  ListFilter,
+  Search,
+  Filter,
+  Check,
 } from "lucide-react";
+
+import { PracticeStatsModal } from "./components/PracticeStatsModal";
+import { StatCorrectionModal } from "./components/StatCorrectionModal";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -218,7 +225,21 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
               if (s.metric === "Dig") pTeam.digCount += 1;
               if (s.metric === "Error") pTeam.digErr += 1;
             } else if (s.category === "Attack") {
-              if (s.metric === "Swing") pTeam.attCount += 1;
+              if (
+                [
+                  "Swing",
+                  "Swing Front",
+                  "Swing Back",
+                  "Blocked",
+                  "Stuffed",
+                  "Out",
+                  "Net",
+                  "Out/Net",
+                  "Kill",
+                ].includes(s.metric)
+              ) {
+                pTeam.attCount += 1;
+              }
               if (s.metric === "Kill") pTeam.attKill += 1;
               if (
                 s.metric === "Out" ||
@@ -227,6 +248,8 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
                 s.metric === "Stuffed"
               )
                 pTeam.attErr += 1;
+              if (s.metric === "Blocked" || s.metric === "Stuffed")
+                pTeam.attBlk = (pTeam.attBlk || 0) + 1;
             } else if (s.category === "Block") {
               if (s.metric === "Play On" || s.metric === "Touch")
                 pTeam.blkCount += s.value || 1;
@@ -242,7 +265,7 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
             } else if (s.category === "Serve") {
               if (s.metric === "Attempt") pTeam.srvCount += 1;
               if (s.metric === "Ace") pTeam.srvAce += 1;
-              if (s.metric?.includes("Miss")) pTeam.srvErr += 1;
+              if (s.metric?.includes("Miss") || s.metric === "Error") pTeam.srvErr += 1;
             }
           });
 
@@ -611,6 +634,8 @@ export default function App() {
     latePressed?: boolean;
   } | null>(null);
   const [hiddenPracticePlayers, setHiddenPracticePlayers] = useState<string[]>([]);
+  const [showPracticeStats, setShowPracticeStats] = useState(false);
+  const [showStatCorrectionModal, setShowStatCorrectionModal] = useState(false);
   const [showPositioning, setShowPositioning] = useState(false);
   const [viewOppStats, setViewOppStats] = useState(false);
   const [subPairs, setSubPairs] = useState<{ [key: string]: string }>({});
@@ -1580,6 +1605,12 @@ export default function App() {
       });
     }
 
+    setAppData((prev) => ({
+      ...prev,
+      stats: lastState.stats,
+      sets: lastState.sets,
+    }));
+
     setSetWinnerModal(null);
     setEndRallyVisible(false);
     setServeErrorPrompt(null);
@@ -1594,6 +1625,7 @@ export default function App() {
     metric,
     value = 1,
     isOpponent = false,
+    row = null,
   ) => {
     if (!activeMatch || !activeSetId) {
       console.error("Attempted to log stat without active match/set context.");
@@ -1613,6 +1645,7 @@ export default function App() {
       metric,
       value,
       isOpponent,
+      ...(row ? { row } : {}),
       timestamp: new Date().toISOString(),
     };
 
@@ -1636,6 +1669,105 @@ export default function App() {
       }
     } else if (!isFirebaseAvailable) {
       writeLocalDb({ ...appData, stats: [...appData.stats, newStat] });
+    }
+  };
+
+  const handleDeleteStat = async (statId: string) => {
+    setAppData((prev) => ({
+      ...prev,
+      stats: prev.stats.filter((s) => s.id !== statId),
+    }));
+
+    if (isFirebaseAvailable && user) {
+      try {
+        await deleteDoc(doc(db, `${publicPath}/${activeTeam}/stats/${statId}`));
+      } catch (err) {
+        console.error("Failed to delete stat from cloud:", err);
+      }
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        stats: appData.stats.filter((s) => s.id !== statId),
+      });
+    }
+  };
+
+  const handleUpdateStat = async (statId: string, updatedFields: any) => {
+    setAppData((prev) => ({
+      ...prev,
+      stats: prev.stats.map((s) =>
+        s.id === statId ? { ...s, ...updatedFields } : s,
+      ),
+    }));
+
+    const existingStat = appData.stats.find((s) => s.id === statId);
+    const mergedStat = { ...(existingStat || {}), ...updatedFields };
+
+    if (isFirebaseAvailable && user) {
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/stats/${statId}`),
+          mergedStat,
+          { merge: true },
+        );
+      } catch (err) {
+        console.error("Failed to update stat in cloud:", err);
+      }
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        stats: appData.stats.map((s) => (s.id === statId ? mergedStat : s)),
+      });
+    }
+  };
+
+  const handleAddManualStat = async (statData: {
+    playerId: string;
+    category: string;
+    metric: string;
+    value?: number;
+    isOpponent?: boolean;
+    row?: string;
+  }) => {
+    if (!activeMatch) return;
+    const targetSetId =
+      activeSetId ||
+      appData.sets.find((s) => s.matchId === activeMatch.id)?.id ||
+      "manual_set";
+    const statId =
+      Date.now().toString() + Math.random().toString(36).substring(7);
+    const newStat = {
+      id: statId,
+      matchId: activeMatch.id,
+      setId: targetSetId,
+      playerId: statData.playerId,
+      category: statData.category,
+      metric: statData.metric,
+      value: statData.value ?? 1,
+      isOpponent: !!statData.isOpponent,
+      ...(statData.row ? { row: statData.row } : {}),
+      timestamp: new Date().toISOString(),
+    };
+
+    setAppData((prev) => ({
+      ...prev,
+      stats: [...prev.stats, newStat],
+    }));
+
+    if (isFirebaseAvailable && user) {
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/stats/${statId}`),
+          newStat,
+        );
+      } catch (err) {
+        console.error("Failed to add stat to cloud:", err);
+      }
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        stats: [...appData.stats, newStat],
+      });
     }
   };
 
@@ -1670,29 +1802,16 @@ export default function App() {
 
   const recordStatAndCheckPoint = (playerId, category, metric, value = 1) => {
     pushToHistory();
-    logStat(playerId, category, metric, value);
 
     const currentLineupIdx = lineup.indexOf(playerId);
     const isBackRow =
       [0, 4, 5].includes(currentLineupIdx) || playerId === liberoId;
+    const row = category === "Attack" ? (isBackRow ? "Back" : "Front") : null;
+
+    logStat(playerId, category, metric, value, false, row);
 
     if (category !== "Block") {
       setSelectedPlayerId(null);
-    }
-
-    if (category === "Attack") {
-      const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
-      if (metric === "Kill") {
-        logStat(playerId, "Attack", swingMetric, 1);
-      } else if (metric === "Out" || metric === "Net" || metric === "Stuffed") {
-        logStat(playerId, "Attack", swingMetric, 1);
-        logStat(playerId, "Attack", metric, 1); // Also log the specific error
-      } else if (metric === "Swing" || metric === "Blocked") {
-        logStat(playerId, "Attack", swingMetric, 1);
-        if (metric === "Blocked") {
-          logStat(playerId, "Attack", "Blocked", 1);
-        }
-      }
     }
 
     // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
@@ -1707,29 +1826,16 @@ export default function App() {
 
   const recordOppStatAndCheckPoint = (oppId, category, metric, value = 1) => {
     pushToHistory();
-    logStat(oppId, category, metric, value, true);
 
     const currentLineupIdx = oppLineup.indexOf(oppId);
     const isBackRow =
       [0, 4, 5].includes(currentLineupIdx) || oppId === oppLiberoId;
+    const row = category === "Attack" ? (isBackRow ? "Back" : "Front") : null;
+
+    logStat(oppId, category, metric, value, true, row);
 
     if (category !== "Block") {
       setSelectedOppId(null);
-    }
-
-    if (category === "Attack") {
-      const swingMetric = isBackRow ? "Swing Back" : "Swing Front";
-      if (metric === "Kill") {
-        logStat(oppId, "Attack", swingMetric, 1, true);
-      } else if (metric === "Out" || metric === "Net" || metric === "Stuffed") {
-        logStat(oppId, "Attack", swingMetric, 1, true);
-        logStat(oppId, "Attack", metric, 1, true);
-      } else if (metric === "Swing" || metric === "Blocked") {
-        logStat(oppId, "Attack", swingMetric, 1, true);
-        if (metric === "Blocked") {
-          logStat(oppId, "Attack", "Blocked", 1, true);
-        }
-      }
     }
 
     // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
@@ -2331,13 +2437,23 @@ export default function App() {
             s.metric === "Blocked" ||
             s.metric === "Stuffed" ||
             s.metric === "Out" ||
-            s.metric === "Net"
+            s.metric === "Net" ||
+            s.metric === "Out/Net" ||
+            s.metric === "Kill"
           )
             p.attCount += 1;
           if (s.metric === "Kill") p.attKill += 1;
+          if (
+            s.metric === "Out" ||
+            s.metric === "Net" ||
+            s.metric === "Out/Net" ||
+            s.metric === "Stuffed"
+          )
+            p.attErr = (p.attErr || 0) + 1;
         } else if (s.category === "Serve") {
+          if (s.metric === "Attempt") p.srvCount = (p.srvCount || 0) + 1;
           if (s.metric === "Ace") p.srvAce += 1;
-          if (s.metric?.includes("Miss")) p.srvErr += 1;
+          if (s.metric?.includes("Miss") || s.metric === "Error") p.srvErr += 1;
         } else if (s.category === "Pass") {
           p.passCount += 1;
           p.passSum += s.value;
@@ -2364,8 +2480,9 @@ export default function App() {
             s.metric === "Kill"
           ) {
             p.attCount += 1;
-            if (s.metric === "Swing Front") p.attCountFront += 1;
-            if (s.metric === "Swing Back") p.attCountBack += 1;
+            if (s.row === "Front" || s.metric === "Swing Front") p.attCountFront += 1;
+            else if (s.row === "Back" || s.metric === "Swing Back") p.attCountBack += 1;
+            else p.attCountFront += 1;
           }
           if (s.metric === "Kill") p.attKill += 1;
           if (
@@ -2391,7 +2508,7 @@ export default function App() {
         } else if (s.category === "Serve") {
           if (s.metric === "Attempt") p.srvCount += 1;
           if (s.metric === "Ace") p.srvAce += 1;
-          if (s.metric?.includes("Miss")) p.srvErr += 1;
+          if (s.metric?.includes("Miss") || s.metric === "Error") p.srvErr += 1;
         }
       }
     });
@@ -4723,13 +4840,24 @@ export default function App() {
 
         {/* NEW COLLAPSIBLE COURT AND TABLE VIEW */}
         <div className="flex-1 flex flex-col relative bg-slate-100 overflow-hidden min-h-0 landscape:min-w-0">
-          <div className="p-2 sm:p-4 flex items-center justify-between bg-white border-b border-slate-200 shrink-0">
-            <button
-              onClick={() => setShowPositioning(true)}
-              className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors"
-            >
-              Show Court
-            </button>
+          <div className="p-2 sm:p-4 flex items-center justify-between bg-white border-b border-slate-200 shrink-0 gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowPositioning(true)}
+                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors"
+              >
+                Show Court
+              </button>
+              <button
+                onClick={() => setShowStatCorrectionModal(true)}
+                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-indigo-50 text-indigo-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-indigo-100 transition-colors flex items-center gap-1.5 border border-indigo-200 shadow-sm"
+                title="Review & Correct Stats"
+              >
+                <Edit3 size={14} className="text-indigo-600" />
+                <span className="hidden sm:inline">Data Correction</span>
+                <span className="sm:hidden">Correct</span>
+              </button>
+            </div>
             <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
               <button
                 onClick={() => setViewOppStats(false)}
@@ -5166,8 +5294,16 @@ export default function App() {
             <button
               onClick={viewStatsWithCurrentMatch}
               className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase"
+              title="View Live Stats"
             >
               <Activity size={18} />
+            </button>
+            <button
+              onClick={() => setShowStatCorrectionModal(true)}
+              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-indigo-600 to-indigo-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-indigo-500 hover:to-indigo-700 shadow-md border-t border-indigo-400 transition-all active:scale-95 text-xs sm:text-sm uppercase"
+              title="Data Correction & Stat Log"
+            >
+              <Edit3 size={18} />
             </button>
             {appData.matches.find((m) => m.id === activeMatch?.id)?.isLive !==
             false ? (
@@ -6514,6 +6650,19 @@ export default function App() {
             </div>
           </div>
         )}
+        {showStatCorrectionModal && (
+          <StatCorrectionModal
+            isOpen={showStatCorrectionModal}
+            onClose={() => setShowStatCorrectionModal(false)}
+            stats={appData.stats}
+            roster={sortedRoster}
+            activeSetId={activeSetId}
+            activeMatch={activeMatch}
+            onDeleteStat={handleDeleteStat}
+            onUpdateStat={handleUpdateStat}
+            onAddStat={handleAddManualStat}
+          />
+        )}
         {renderInstallModal()}
       </div>
     );
@@ -6531,7 +6680,23 @@ export default function App() {
           <h1 className="text-xl font-black uppercase tracking-widest flex items-center">
             <Activity className="mr-2 text-blue-400" size={24} /> Open Practice
           </h1>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setShowPracticeStats(true)}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 sm:px-4 py-2 rounded-lg font-bold transition-all flex items-center shadow-sm active:scale-95 border border-indigo-400/30"
+              title="View Practice Stats"
+            >
+              <Activity size={18} className="sm:mr-1 text-amber-300" />
+              <span className="hidden sm:inline">STATS</span>
+            </button>
+            <button
+              onClick={() => setShowStatCorrectionModal(true)}
+              className="bg-slate-800 hover:bg-slate-700 text-white px-3 sm:px-4 py-2 rounded-lg font-bold transition-all flex items-center shadow-sm active:scale-95 border border-white/10"
+              title="Data Correction & Log"
+            >
+              <Edit3 size={18} className="sm:mr-1 text-indigo-300" />
+              <span className="hidden sm:inline">CORRECT</span>
+            </button>
             <button
               onClick={handleInstallApp}
               className="bg-slate-800 text-white px-3 sm:px-4 py-2 rounded-lg font-bold hover:bg-slate-700 transition-colors flex items-center border border-white/10"
@@ -6616,14 +6781,35 @@ export default function App() {
                     pSum += s.value;
                     if (s.value === 0) pErr++;
                   } else if (s.category === "Attack") {
-                    aCount++;
+                    if (
+                      [
+                        "Swing",
+                        "Swing Front",
+                        "Swing Back",
+                        "Blocked",
+                        "Stuffed",
+                        "Out",
+                        "Net",
+                        "Out/Net",
+                        "Kill",
+                      ].includes(s.metric)
+                    ) {
+                      aCount++;
+                    }
                     if (s.metric === "Kill") aKill++;
                     else if (
                       ["Out", "Net", "Out/Net", "Stuffed"].includes(s.metric)
                     )
                       aErr++;
                   } else if (s.category === "Serve") {
-                    sCount++;
+                    if (
+                      s.metric === "Attempt" ||
+                      s.metric === "Ace" ||
+                      s.metric?.includes("Miss") ||
+                      s.metric === "Error"
+                    ) {
+                      sCount++;
+                    }
                     if (s.metric === "Ace") sAce++;
                     else if (s.metric?.includes("Miss") || s.metric === "Error")
                       sErr++;
@@ -7157,6 +7343,39 @@ export default function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {showPracticeStats && (
+          <PracticeStatsModal
+            isOpen={showPracticeStats}
+            onClose={() => setShowPracticeStats(false)}
+            roster={sortedRoster}
+            stats={appData.stats}
+            activeSetId={activeSetId}
+            activeMatch={activeMatch}
+            onOpenDatabase={() => {
+              setShowPracticeStats(false);
+              viewStatsWithCurrentMatch();
+            }}
+            onOpenCorrection={() => {
+              setShowPracticeStats(false);
+              setShowStatCorrectionModal(true);
+            }}
+          />
+        )}
+
+        {showStatCorrectionModal && (
+          <StatCorrectionModal
+            isOpen={showStatCorrectionModal}
+            onClose={() => setShowStatCorrectionModal(false)}
+            stats={appData.stats}
+            roster={sortedRoster}
+            activeSetId={activeSetId}
+            activeMatch={activeMatch}
+            onDeleteStat={handleDeleteStat}
+            onUpdateStat={handleUpdateStat}
+            onAddStat={handleAddManualStat}
+          />
         )}
       </div>
     );
