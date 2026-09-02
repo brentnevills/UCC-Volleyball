@@ -33,13 +33,9 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "pass" | "attack" | "serve" | "defense">("all");
+  const [scope, setScope] = useState<"day" | "current_set">("day");
 
   const practiceStats = useMemo(() => {
-    if (!activeSetId) return { players: [], totals: null };
-
-    // Filter stats for this practice session set
-    const sessionStats = stats.filter((s) => s.setId === activeSetId);
-
     const playerMap: { [id: string]: any } = {};
 
     roster.forEach((p) => {
@@ -71,6 +67,23 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
         };
       }
     });
+
+    // Filter stats according to selected scope
+    let sessionStats = stats;
+    if (scope === "current_set" && activeSetId) {
+      sessionStats = stats.filter((s) => s.setId === activeSetId);
+    } else if (activeMatch) {
+      const matchDateStr = activeMatch.date ? new Date(activeMatch.date).toLocaleDateString() : null;
+      // Filter stats for matches on the same day or matching this matchId
+      sessionStats = stats.filter((s) => {
+        if (s.matchId === activeMatch.id) return true;
+        // If s.timestamp is available, check date
+        if (s.timestamp && matchDateStr) {
+          return new Date(s.timestamp).toLocaleDateString() === matchDateStr;
+        }
+        return false;
+      });
+    }
 
     sessionStats.forEach((s) => {
       if (s.isOpponent) return;
@@ -259,11 +272,11 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
                 onClose();
                 onOpenDatabase();
               }}
-              className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
-              title="View In Full Database"
+              className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-3 py-2 rounded-xl text-xs sm:text-sm font-black flex items-center gap-1.5 shadow-md transition-all active:scale-95 border border-amber-300"
+              title="View in Full Stats Database"
             >
-              <Database size={16} />
-              <span className="hidden md:inline">Full Database</span>
+              <Activity size={16} className="text-slate-950" />
+              <span>VIEW STATS</span>
             </button>
             <button
               onClick={onClose}
@@ -273,6 +286,38 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
               <X size={20} />
             </button>
           </div>
+        </div>
+
+        {/* SCOPE SELECTION (TODAY'S TOTAL VS CURRENT DRILL) */}
+        <div className="bg-slate-800/95 px-4 py-2 border-b border-slate-700 flex items-center justify-between text-xs font-bold text-slate-300">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 uppercase tracking-widest text-[10px] hidden sm:inline">Scope:</span>
+            <div className="flex bg-slate-900 rounded-lg p-0.5 border border-slate-700">
+              <button
+                onClick={() => setScope("day")}
+                className={`px-3 py-1 rounded-md transition-all font-black text-xs ${
+                  scope === "day"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Today's Practice (All Drills)
+              </button>
+              <button
+                onClick={() => setScope("current_set")}
+                className={`px-3 py-1 rounded-md transition-all font-black text-xs ${
+                  scope === "current_set"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Current Drill Only
+              </button>
+            </div>
+          </div>
+          <span className="text-[11px] text-slate-400">
+            {scope === "day" ? "All drills today combined" : "Active drill set only"}
+          </span>
         </div>
 
         {/* SUMMARY STAT CARDS */}

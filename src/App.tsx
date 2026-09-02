@@ -139,8 +139,16 @@ const getEventDetails = (match) => {
   const dateStr = match.date
     ? new Date(match.date).toLocaleDateString()
     : "Unknown Date";
+  if (match.type === "Practice") {
+    const cleanDate = dateStr.replace(/[/\\?%*:|"<> ]/g, "_");
+    return {
+      id: `practice_${cleanDate}`,
+      name: `Practice - ${dateStr}`,
+    };
+  }
+  const cleanDate = dateStr.replace(/[/\\?%*:|"<> ]/g, "_");
   return {
-    id: `day_${match.type}_${dateStr}`,
+    id: `day_${match.type}_${cleanDate}`,
     name: `${match.type} Day - ${dateStr}`,
   };
 };
@@ -1240,6 +1248,54 @@ export default function App() {
   const startSetup = async (type) => {
     enforceFullscreen();
     if (type === "Practice") {
+      const todayDateStr = new Date().toLocaleDateString();
+      const existingTodayPractice = appData.matches.find(
+        (m) =>
+          m.type === "Practice" &&
+          m.date &&
+          new Date(m.date).toLocaleDateString() === todayDateStr,
+      );
+
+      if (existingTodayPractice) {
+        const existingSets = appData.sets.filter(
+          (s) => s.matchId === existingTodayPractice.id,
+        );
+        let targetSetId = existingSets[0]?.id;
+        if (!targetSetId) {
+          targetSetId = Date.now().toString() + "_set";
+          const newSet = {
+            id: targetSetId,
+            matchId: existingTodayPractice.id,
+            setNum: 1,
+            scoreUcc: 0,
+            scoreOpp: 0,
+          };
+          if (isFirebaseAvailable && user) {
+            try {
+              await setDoc(
+                doc(db, `${publicPath}/${activeTeam}/sets/${targetSetId}`),
+                newSet,
+              );
+            } catch (err) {
+              console.error("Error creating practice set:", err);
+            }
+          } else if (!isFirebaseAvailable) {
+            writeLocalDb({
+              ...appData,
+              sets: [...appData.sets, newSet],
+            });
+          }
+        }
+
+        setActiveMatch(existingTodayPractice);
+        setActiveSetId(targetSetId);
+        setScore({ ucc: 0, opp: 0 });
+        setSetsWon({ ucc: 0, opp: 0 });
+        setCurrentSetNum(1);
+        setView("open_practice");
+        return;
+      }
+
       const matchId = Date.now().toString();
       const newMatch = {
         id: matchId,
@@ -2273,15 +2329,22 @@ export default function App() {
   const viewStatsWithCurrentMatch = () => {
     if (!activeMatch) return viewStatsFromMenu();
     const eventDetails = getEventDetails(activeMatch);
-    setStatsPath([
-      { level: "season", id: "all", name: "Season Totals" },
-      { level: "event", id: eventDetails.id, name: eventDetails.name },
-      {
-        level: "match",
-        id: activeMatch.id,
-        name: `vs ${activeMatch.opponent}`,
-      },
-    ]);
+    if (activeMatch.type === "Practice") {
+      setStatsPath([
+        { level: "season", id: "all", name: "Season Totals" },
+        { level: "event", id: eventDetails.id, name: eventDetails.name },
+      ]);
+    } else {
+      setStatsPath([
+        { level: "season", id: "all", name: "Season Totals" },
+        { level: "event", id: eventDetails.id, name: eventDetails.name },
+        {
+          level: "match",
+          id: activeMatch.id,
+          name: `vs ${activeMatch.opponent}`,
+        },
+      ]);
+    }
     setView("stats");
   };
 
@@ -2313,11 +2376,9 @@ export default function App() {
           practiceMatchIds.includes(s.matchId),
         );
       }
+      // Matches all matches (practices or games) belonging to this specific day/event
       const matchIds = appData.matches
-        .filter(
-          (m) =>
-            getEventDetails(m).id === currentNav.id && m.type !== "Practice",
-        )
+        .filter((m) => getEventDetails(m).id === currentNav.id)
         .map((m) => m.id);
       return appData.stats.filter((s) => matchIds.includes(s.matchId));
     }
@@ -2331,37 +2392,85 @@ export default function App() {
   const subNavOptions = useMemo(() => {
     if (currentNav.level === "season") {
       const events = {};
+      
+      // 1. All game matches and tournaments
       appData.matches
         .filter((m) => m.type !== "Practice")
         .forEach((m) => {
           const detail = getEventDetails(m);
           if (!events[detail.id])
-            events[detail.id] = { ...detail, level: "event" };
+            events[detail.id] = { ...detail, level: "event", date: m.date };
         });
 
-      const practiceMatches = appData.matches.filter(
-        (m) => m.type === "Practice",
-      );
-      if (practiceMatches.length > 0) {
-        events["practice_sessions"] = {
-          id: "practice_sessions",
-          name: "Practice Sessions",
-          level: "event",
-        };
-      }
+      // 2. All practice days (grouped by same day under one tab!)
+      appData.matches
+        .filter((m) => m.type === "Practice")
+        .forEach((m) => {
+          const detail = getEventDetails(m);
+          if (!events[detail.id]) {
+            events[detail.id] = { ...detail, level: "event", date: m.date, isPractice: true };
+          }
+        });
 
-      return Object.values(events);
+      // Sort newest events first
+      return Object.values(events).sort((a: any, b: any) => {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        return dateB - dateA;
+      });
     }
     if (currentNav.level === "event") {
       if (currentNav.id === "practice_sessions") {
-        return appData.matches
+        const practiceDays = {};
+        appData.matches
           .filter((m) => m.type === "Practice")
-          .map((m) => ({
+          .forEach((m) => {
+            const detail = getEventDetails(m);
+            if (!practiceDays[detail.id]) {
+              practiceDays[detail.id] = {
+                level: "event",
+                id: detail.id,
+                name: detail.name,
+                date: m.date,
+              };
+            }
+          });
+        return Object.values(practiceDays).sort((a: any, b: any) => {
+          const dateA = a.date ? new Date(a.date).getTime() : 0;
+          const dateB = b.date ? new Date(b.date).getTime() : 0;
+          return dateB - dateA;
+        });
+      }
+
+      const isPracticeEvent = currentNav.id.startsWith("practice_");
+      if (isPracticeEvent) {
+        const matchesOnDay = appData.matches.filter(
+          (m) => getEventDetails(m).id === currentNav.id,
+        );
+        if (matchesOnDay.length > 1) {
+          return matchesOnDay.map((m, idx) => ({
             level: "match",
             id: m.id,
-            name: `${m.date ? new Date(m.date).toLocaleDateString() : "Practice"}`,
+            name: `${m.title || "Drill"} #${idx + 1} (${m.date ? new Date(m.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Session"})`,
           }));
+        }
+        if (matchesOnDay.length === 1) {
+          const daySets = appData.sets.filter(
+            (s) => s.matchId === matchesOnDay[0].id,
+          );
+          if (daySets.length > 1) {
+            return daySets
+              .sort((a, b) => a.setNum - b.setNum)
+              .map((s) => ({
+                level: "set",
+                id: s.id,
+                name: `Drill / Set ${s.setNum}`,
+              }));
+          }
+        }
+        return [];
       }
+
       return appData.matches
         .filter(
           (m) =>
@@ -2942,11 +3051,11 @@ export default function App() {
   const handleDeleteEvent = async (eventId, isPracticeSessions = false) => {
     try {
       let matchesToDelete = [];
-      if (isPracticeSessions) {
+      if (isPracticeSessions || eventId === "practice_sessions") {
         matchesToDelete = appData.matches.filter((m) => m.type === "Practice");
       } else {
         matchesToDelete = appData.matches.filter(
-          (m) => getEventDetails(m).id === eventId && m.type !== "Practice",
+          (m) => getEventDetails(m).id === eventId,
         );
       }
 
@@ -3761,8 +3870,8 @@ export default function App() {
               onClick={viewStatsFromMenu}
               className="w-full bg-white text-[#001b5e] p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)]"
             >
-              <Database className="mr-2 sm:mr-3 text-[#0033A0]" size={24} />{" "}
-              VIEW DATABASE
+              <Activity className="mr-2 sm:mr-3 text-[#0033A0]" size={24} />{" "}
+              VIEW STATS
             </button>
           </div>
         </div>
@@ -6686,8 +6795,8 @@ export default function App() {
               className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 sm:px-4 py-2 rounded-lg font-bold transition-all flex items-center shadow-sm active:scale-95 border border-indigo-400/30"
               title="View Practice Stats"
             >
-              <Activity size={18} className="sm:mr-1 text-amber-300" />
-              <span className="hidden sm:inline">STATS</span>
+              <Activity size={18} className="mr-1.5 text-amber-300" />
+              <span>VIEW STATS</span>
             </button>
             <button
               onClick={() => setShowStatCorrectionModal(true)}
@@ -7390,15 +7499,15 @@ export default function App() {
       { id: "season", name: "Season Totals (No Practice)" },
       { id: "practice_sessions", name: "All Practice Sessions" },
     ];
-    appData.matches
-      .filter((m) => m.type !== "Practice")
-      .forEach((m) => {
-        const detail = getEventDetails(m);
-        if (!contexts.find((c) => c.id === detail.id)) {
-          contexts.push({ id: detail.id, name: detail.name });
-        }
+    appData.matches.forEach((m) => {
+      const detail = getEventDetails(m);
+      if (!contexts.find((c) => c.id === detail.id)) {
+        contexts.push({ id: detail.id, name: detail.name });
+      }
+      if (m.type !== "Practice") {
         contexts.push({ id: m.id, name: `${detail.name} - vs ${m.opponent}` }); // Matches
-      });
+      }
+    });
 
     const getStatsForContextAndPlayer = (contextId, playerId) => {
       let filteredStats = appData.stats;
@@ -7418,7 +7527,8 @@ export default function App() {
         );
       } else if (
         contextId.startsWith("day_") ||
-        contextId.startsWith("tourney_")
+        contextId.startsWith("tourney_") ||
+        contextId.startsWith("practice_")
       ) {
         const matchIds = appData.matches
           .filter((m) => getEventDetails(m).id === contextId)
