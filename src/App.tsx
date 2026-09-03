@@ -45,6 +45,7 @@ import {
   Layers,
   Target,
   Plus,
+  Minus,
 } from "lucide-react";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
@@ -628,6 +629,9 @@ export default function App() {
   const [selectedAceReceivers, setSelectedAceReceivers] = useState([]);
   const [endRallyVisible, setEndRallyVisible] = useState(false);
   const [subModalVisible, setSubModalVisible] = useState(false);
+  const [showLiberoDesignateModal, setShowLiberoDesignateModal] = useState(false);
+  const [liberoPromptPlayerId, setLiberoPromptPlayerId] = useState<string | null>(null);
+  const [showLiberoOutModal, setShowLiberoOutModal] = useState(false);
   const [showOppLineupPrompt, setShowOppLineupPrompt] = useState(false);
   const [tempOppLineup, setTempOppLineup] = useState(["", "", "", "", "", ""]);
   const [newOppNumber, setNewOppNumber] = useState("");
@@ -1660,6 +1664,8 @@ export default function App() {
       score: { ...score },
       lineup: [...lineup],
       oppLineup: [...oppLineup],
+      liberoSwappedOutId,
+      oppLiberoSwappedOutId,
       serving,
       rallyPhase,
       stats: [...appData.stats],
@@ -1680,6 +1686,12 @@ export default function App() {
     setScore(lastState.score);
     setLineup(lastState.lineup);
     setOppLineup(lastState.oppLineup);
+    if (lastState.liberoSwappedOutId !== undefined) {
+      setLiberoSwappedOutId(lastState.liberoSwappedOutId);
+    }
+    if (lastState.oppLiberoSwappedOutId !== undefined) {
+      setOppLiberoSwappedOutId(lastState.oppLiberoSwappedOutId);
+    }
     setServing(lastState.serving);
     setRallyPhase(lastState.rallyPhase);
     setTeamStats(lastState.teamStats);
@@ -2233,7 +2245,17 @@ export default function App() {
       setLineup(newLineup);
       updateSetState({ lineup: newLineup });
       setSelectedPlayerId(benchPlayerId);
-      setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+
+      // Libero substitutions/replacements do NOT count towards team sub total
+      const isLibSub = benchPlayerId === liberoId || selectedPlayerId === liberoId;
+      if (!isLibSub) {
+        setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+      }
+      if (benchPlayerId === liberoId) {
+        setLiberoSwappedOutId(selectedPlayerId);
+      } else if (selectedPlayerId === liberoId) {
+        setLiberoSwappedOutId(null);
+      }
 
       const newPairs = { ...subPairs };
       newPairs[selectedPlayerId] = benchPlayerId;
@@ -2296,16 +2318,22 @@ export default function App() {
     }
   };
 
-  const handleOppLiberoToggle = () => {
+  const handleOppLiberoToggle = (targetOppId?: string) => {
+    const target = targetOppId || selectedOppId;
+    if (!target) return;
     pushToHistory();
-    const index = oppLineup.indexOf(selectedOppId);
+    const index = oppLineup.indexOf(target);
     if (index === -1) return;
     const newLineup = [...oppLineup];
-    if (selectedOppId === oppLiberoId) {
-      newLineup[index] = oppLiberoSwappedOutId;
+    if (target === oppLiberoId) {
+      newLineup[index] = oppLiberoSwappedOutId || "";
       setOppLiberoSwappedOutId(null);
     } else {
-      setOppLiberoSwappedOutId(selectedOppId);
+      const currentOppLibIdx = newLineup.indexOf(oppLiberoId);
+      if (currentOppLibIdx !== -1 && oppLiberoSwappedOutId) {
+        newLineup[currentOppLibIdx] = oppLiberoSwappedOutId;
+      }
+      setOppLiberoSwappedOutId(target);
       newLineup[index] = oppLiberoId;
     }
     setOppLineup(newLineup);
@@ -2330,7 +2358,10 @@ export default function App() {
       newLineup[index] = newOppNumber;
       setOppLineup(newLineup);
       updateSetState({ oppLineup: newLineup });
-      setTeamStats((s) => ({ ...s, oppSubs: s.oppSubs + 1 }));
+      const isOppLibSub = newOppNumber === oppLiberoId || selectedOppId === oppLiberoId;
+      if (!isOppLibSub) {
+        setTeamStats((s) => ({ ...s, oppSubs: s.oppSubs + 1 }));
+      }
 
       const newPairs = { ...subPairs };
       newPairs[selectedOppId] = newOppNumber;
@@ -2343,16 +2374,38 @@ export default function App() {
     }
   };
 
-  const handleLiberoSwap = () => {
+  const handleLiberoSwap = (targetPlayerId?: string) => {
+    const target = targetPlayerId || selectedPlayerId;
+    if (!target) return;
+
+    if (!liberoId) {
+      setLiberoPromptPlayerId(target);
+      setShowLiberoDesignateModal(true);
+      return;
+    }
+
     pushToHistory();
-    const index = lineup.indexOf(selectedPlayerId);
+    const index = lineup.indexOf(target);
     if (index === -1) return;
     const newLineup = [...lineup];
-    if (selectedPlayerId === liberoId) {
-      newLineup[index] = liberoSwappedOutId;
-      setLiberoSwappedOutId(null);
+    if (target === liberoId) {
+      // Swapping Libero OUT -> restore original swapped out player
+      if (liberoSwappedOutId) {
+        newLineup[index] = liberoSwappedOutId;
+        setLiberoSwappedOutId(null);
+      } else {
+        // Prompt for replacement bench player to enter without charging a sub
+        setLiberoPromptPlayerId(target);
+        setShowLiberoOutModal(true);
+        return;
+      }
     } else {
-      setLiberoSwappedOutId(selectedPlayerId);
+      // Swapping Libero IN for this back-row player
+      const currentLibIdx = newLineup.indexOf(liberoId);
+      if (currentLibIdx !== -1 && liberoSwappedOutId) {
+        newLineup[currentLibIdx] = liberoSwappedOutId;
+      }
+      setLiberoSwappedOutId(target);
       newLineup[index] = liberoId;
     }
     setLineup(newLineup);
@@ -5783,9 +5836,14 @@ export default function App() {
                 }`}
               >
                 <div className="flex flex-col">
-                  <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-blue-200 opacity-70">
-                    Lancers
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-blue-200 opacity-70">
+                      Lancers
+                    </h2>
+                    <span className="text-[8px] sm:text-[9px] font-black text-amber-300 bg-amber-400/20 px-1.5 py-0.2 rounded border border-amber-400/30 whitespace-nowrap" title="Official team substitutions (Libero swaps excluded)">
+                      Subs: {teamStats.uccSubs}
+                    </span>
+                  </div>
                   <div className="flex items-center space-x-1 sm:space-x-2">
                     <button
                       onClick={() => manualScoreAdjust("ucc", -1)}
@@ -5866,9 +5924,14 @@ export default function App() {
                   </div>
                 )}
                 <div className="flex flex-col items-end">
-                  <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-slate-300 opacity-70 truncate max-w-[60px] sm:max-w-[100px]">
-                    {opponentName}
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[8px] sm:text-[9px] font-black text-slate-300 bg-white/10 px-1.5 py-0.2 rounded border border-white/20 whitespace-nowrap" title="Opponent team substitutions">
+                      Subs: {teamStats.oppSubs}
+                    </span>
+                    <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-slate-300 opacity-70 truncate max-w-[60px] sm:max-w-[100px]">
+                      {opponentName}
+                    </h2>
+                  </div>
                   <div className="flex items-center space-x-1 sm:space-x-2">
                     <button
                       onClick={() => manualScoreAdjust("opp", -1)}
@@ -5911,6 +5974,45 @@ export default function App() {
                 <span className="hidden sm:inline">Data Correction</span>
                 <span className="sm:hidden">Correct</span>
               </button>
+              <div
+                className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
+                title="Official Team Substitutions (Libero replacements are free and do not count toward this total)"
+              >
+                <Users size={13} className="text-[#0033A0]" />
+                <span className="hidden md:inline">Team Subs:</span>
+                <span className="md:hidden">Subs:</span>
+                <span className="font-black text-[#0033A0] tabular-nums">
+                  {!viewOppStats ? teamStats.uccSubs : teamStats.oppSubs}
+                </span>
+                <div className="flex items-center space-x-0.5 ml-0.5">
+                  <button
+                    onClick={() => {
+                      if (!viewOppStats) {
+                        setTeamStats((s) => ({ ...s, uccSubs: Math.max(0, s.uccSubs - 1) }));
+                      } else {
+                        setTeamStats((s) => ({ ...s, oppSubs: Math.max(0, s.oppSubs - 1) }));
+                      }
+                    }}
+                    className="p-0.5 text-slate-400 hover:text-slate-800 active:scale-90"
+                    title="Manual sub adjust: minus 1"
+                  >
+                    <Minus size={11} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!viewOppStats) {
+                        setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+                      } else {
+                        setTeamStats((s) => ({ ...s, oppSubs: s.oppSubs + 1 }));
+                      }
+                    }}
+                    className="p-0.5 text-slate-400 hover:text-slate-800 active:scale-90"
+                    title="Manual sub adjust: plus 1"
+                  >
+                    <Plus size={11} />
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
               <button
@@ -6130,13 +6232,11 @@ export default function App() {
               <table className="w-full text-left border-collapse min-w-[600px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
-                    {!viewOppStats && (
-                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-20">
-                        Sub
-                      </th>
-                    )}
+                    <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-36 sm:w-44">
+                      Sub / Lib
+                    </th>
                     <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black">
-                      Player
+                      Players on Court (6)
                     </th>
                     {trackedCategories.Pass && (
                       <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
@@ -6166,21 +6266,16 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(!viewOppStats ? [...lineup, liberoId] : oppLineup)
-                    .filter((id) => id && id !== liberoSwappedOutId)
-                    .sort((a, b) => {
-                      if (viewOppStats) return 0;
-                      const numA = parseInt(
-                        appData.roster.find((r) => r.id === a)?.number || "0",
-                        10,
-                      );
-                      const numB = parseInt(
-                        appData.roster.find((r) => r.id === b)?.number || "0",
-                        10,
-                      );
-                      return numA - numB;
-                    })
+                  {(!viewOppStats ? lineup : oppLineup)
+                    .filter((id): id is string => Boolean(id))
                     .map((id, index) => {
+                      const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
+                      const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
+                      // Back-row ("background") players in standard rotation are indices 0, 4, 5 (Positions 1, 5, 6)
+                      const isBackRow = [0, 4, 5].includes(posIndex);
+                      const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
+                      const isServer = !viewOppStats && posIndex === 0 && serving === "ucc";
+
                       const pName = !viewOppStats
                         ? appData.roster.find((r) => r.id === id)?.name || id
                         : id;
@@ -6192,35 +6287,148 @@ export default function App() {
                           key={index}
                           className="hover:bg-slate-50/50 transition-colors"
                         >
-                          {!viewOppStats && (
-                            <td className="p-1.5 pt-2 flex items-center justify-center">
-                              <button
-                                onClick={() => {
-                                  if (subPairs[id]) {
-                                    setPendingAutoSub({
-                                      outId: id,
-                                      inId: subPairs[id],
-                                    });
-                                  } else {
-                                    setSelectedPlayerId(id);
-                                    setSubModalVisible(true);
-                                  }
-                                }}
-                                className="w-full py-2 px-1 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center border border-slate-200 shadow-sm"
-                              >
-                                <ArrowRightLeft size={12} className="mr-1" />{" "}
-                                Sub
-                              </button>
-                            </td>
-                          )}
+                          <td className="p-1.5 pt-2">
+                            {!viewOppStats ? (
+                              <div className="flex items-center justify-center gap-1">
+                                {isLibero ? (
+                                  <>
+                                    <button
+                                      onClick={() => handleLiberoSwap(id)}
+                                      className="flex-1 py-2 px-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
+                                      title="Swap Libero out for original player (Does not count toward sub total)"
+                                    >
+                                      <ArrowRightLeft size={12} />
+                                      Lib Out
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setSelectedPlayerId(id);
+                                        setSubModalVisible(true);
+                                      }}
+                                      className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-slate-200"
+                                      title="Regular substitution"
+                                    >
+                                      Sub
+                                    </button>
+                                  </>
+                                ) : isBackRow ? (
+                                  <>
+                                    <button
+                                      onClick={() => handleLiberoSwap(id)}
+                                      className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95 shadow-xs"
+                                      title="Swap Libero in for this back row player (Does not count toward sub total)"
+                                    >
+                                      <ArrowRightLeft size={12} className="text-amber-700" />
+                                      Lib In
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (subPairs[id]) {
+                                          setPendingAutoSub({
+                                            outId: id,
+                                            inId: subPairs[id],
+                                          });
+                                        } else {
+                                          setSelectedPlayerId(id);
+                                          setSubModalVisible(true);
+                                        }
+                                      }}
+                                      className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center border border-slate-200"
+                                      title="Regular substitution"
+                                    >
+                                      Sub
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      if (subPairs[id]) {
+                                        setPendingAutoSub({
+                                          outId: id,
+                                          inId: subPairs[id],
+                                        });
+                                      } else {
+                                        setSelectedPlayerId(id);
+                                        setSubModalVisible(true);
+                                      }
+                                    }}
+                                    className="w-full py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-slate-200 shadow-xs active:scale-95"
+                                    title="Front row player substitution"
+                                  >
+                                    <ArrowRightLeft size={12} />
+                                    Sub
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center gap-1">
+                                {isLibero ? (
+                                  <button
+                                    onClick={() => handleOppLiberoToggle(id)}
+                                    className="flex-1 py-2 px-1.5 bg-amber-500 hover:bg-amber-600 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
+                                    title="Opponent Libero Out"
+                                  >
+                                    <ArrowRightLeft size={12} />
+                                    Lib Out
+                                  </button>
+                                ) : isBackRow && oppLiberoId ? (
+                                  <button
+                                    onClick={() => handleOppLiberoToggle(id)}
+                                    className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95"
+                                    title="Opponent Libero In"
+                                  >
+                                    <ArrowRightLeft size={12} />
+                                    Lib In
+                                  </button>
+                                ) : null}
+                                <button
+                                  onClick={() => {
+                                    setSelectedOppId(id);
+                                    setShowOppLineupPrompt(true);
+                                  }}
+                                  className="flex-1 py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-slate-200"
+                                  title="Opponent substitution"
+                                >
+                                  Sub
+                                </button>
+                              </div>
+                            )}
+                          </td>
                           <td className="p-3">
                             <div className="font-bold text-slate-700 capitalize flex items-center gap-2">
-                              {!viewOppStats && (
-                                <span className="w-6 h-6 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-xs shrink-0">
+                              {!viewOppStats ? (
+                                <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
                                   {pNum}
                                 </span>
+                              ) : (
+                                <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
+                                  #{id}
+                                </span>
                               )}
-                              <span className="truncate">{pName}</span>
+                              <div className="flex flex-col min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate font-black text-slate-800 text-sm">
+                                    {!viewOppStats ? pName : `Opponent #${id}`}
+                                  </span>
+                                  {isLibero && (
+                                    <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[9px] font-black uppercase tracking-wider">
+                                      LIBERO
+                                    </span>
+                                  )}
+                                  {isServer && (
+                                    <span className="text-xs" title="Currently Serving">
+                                      🏐
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                  <span>Pos {courtPosNum}</span>
+                                  <span>•</span>
+                                  <span className={isBackRow ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
+                                    {isBackRow ? "Back Row" : "Front Row"}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
                           </td>
                           {trackedCategories.Pass && (
@@ -7031,18 +7239,19 @@ export default function App() {
                   >
                     <Users size={14} className="mr-1 sm:mr-1.5" /> Sub
                   </button>
-                  {liberoId &&
-                    (lineup.indexOf(selectedPlayerId) === 0 ||
-                      lineup.indexOf(selectedPlayerId) === 4 ||
-                      lineup.indexOf(selectedPlayerId) === 5) && (
-                      <button
-                        onClick={handleLiberoSwap}
-                        className="flex-1 bg-gradient-to-b from-amber-400 to-amber-500 text-amber-950 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm uppercase flex justify-center items-center shadow-sm active:scale-95 border border-amber-500/50"
-                      >
-                        <ArrowRightLeft size={14} className="mr-1 sm:mr-1.5" />{" "}
-                        {selectedPlayerId === liberoId ? "L Out" : "L In"}
-                      </button>
-                    )}
+                  {(lineup.indexOf(selectedPlayerId) === 0 ||
+                    lineup.indexOf(selectedPlayerId) === 4 ||
+                    lineup.indexOf(selectedPlayerId) === 5 ||
+                    selectedPlayerId === liberoId) && (
+                    <button
+                      onClick={() => handleLiberoSwap(selectedPlayerId)}
+                      className="flex-1 bg-gradient-to-b from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-amber-950 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm uppercase flex justify-center items-center shadow-sm active:scale-95 border border-amber-500/50"
+                      title={selectedPlayerId === liberoId ? "Swap Libero Out (Does not count toward sub total)" : "Swap Libero In (Does not count toward sub total)"}
+                    >
+                      <ArrowRightLeft size={14} className="mr-1 sm:mr-1.5" />{" "}
+                      {selectedPlayerId === liberoId ? "Lib Out" : "Lib In"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -7258,14 +7467,15 @@ export default function App() {
                         {oppLiberoId &&
                           (oppLineup.indexOf(selectedOppId) === 0 ||
                             oppLineup.indexOf(selectedOppId) === 4 ||
-                            oppLineup.indexOf(selectedOppId) === 5) && (
+                            oppLineup.indexOf(selectedOppId) === 5 ||
+                            selectedOppId === oppLiberoId) && (
                             <button
-                              onClick={handleOppLiberoToggle}
+                              onClick={() => handleOppLiberoToggle(selectedOppId)}
                               className="flex-1 bg-gradient-to-b from-amber-100 to-amber-200 text-amber-800 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl border border-amber-300 uppercase shadow-sm"
                             >
                               {selectedOppId === oppLiberoId
-                                ? "Swap L Out"
-                                : "Swap L In"}
+                                ? "Lib Out"
+                                : "Lib In"}
                             </button>
                           )}
                       </div>
@@ -7643,9 +7853,24 @@ export default function App() {
                       newLineup[ldx] = inId;
                       setLineup(newLineup);
                       updateSetState({ lineup: newLineup });
-                      setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+                      const isLibSub = inId === liberoId || outId === liberoId;
+                      if (!isLibSub) {
+                        setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+                      }
+                      if (inId === liberoId) {
+                        setLiberoSwappedOutId(outId);
+                      } else if (outId === liberoId) {
+                        setLiberoSwappedOutId(null);
+                      }
                     } else if (outId === liberoId && liberoSwappedOutId) {
-                      // Handling libero if they subbed weirdly, ignore for now
+                      const libIdx = lineup.indexOf(liberoId);
+                      if (libIdx !== -1) {
+                        const newLineup = [...lineup];
+                        newLineup[libIdx] = inId;
+                        setLineup(newLineup);
+                        updateSetState({ lineup: newLineup });
+                        setLiberoSwappedOutId(null);
+                      }
                     }
                     setPendingAutoSub(null);
                   }}
@@ -7683,9 +7908,14 @@ export default function App() {
                   <h2 className="text-2xl font-black text-slate-800 tracking-widest uppercase">
                     Substitute
                   </h2>
-                  <p className="text-slate-400 font-bold mt-0.5 text-xs tracking-widest uppercase">
-                    Going in for #{selectedPlayerObj.number}
-                  </p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <p className="text-slate-400 font-bold text-xs tracking-widest uppercase">
+                      Going in for #{selectedPlayerObj.number}
+                    </p>
+                    <span className="text-[10px] font-black text-[#0033A0] bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                      Team Subs: {teamStats.uccSubs}
+                    </span>
+                  </div>
                 </div>
                 <button
                   onClick={() => setSubModalVisible(false)}
@@ -7700,22 +7930,143 @@ export default function App() {
                     Bench is Empty
                   </div>
                 ) : (
-                  benchPlayers.map((p) => (
+                  benchPlayers.map((p) => {
+                    const isLib = p.id === liberoId;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => handleSub(p.id)}
+                        className="w-full bg-white p-5 rounded-2xl flex items-center justify-between text-slate-800 shadow-sm border border-slate-200 active:scale-95 transition-all hover:border-slate-300"
+                      >
+                        <div className="flex items-center space-x-4">
+                          <span className="text-2xl font-black text-[#0033A0]">
+                            {p.number ? `#${p.number}` : ""}
+                          </span>
+                          <div className="flex flex-col text-left">
+                            <span className="text-lg font-black">{p.name}</span>
+                            {isLib && (
+                              <span className="text-[10px] font-black text-amber-600 uppercase tracking-wider">
+                                Libero (No sub charged)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <ArrowRightLeft className="text-slate-300" size={24} />
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* DESIGNATE LIBERO MODAL */}
+        {showLiberoDesignateModal && (
+          <div className="fixed inset-0 bg-slate-900/90 z-[120] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-150">
+            <div className="bg-white rounded-[2rem] shadow-2xl overflow-hidden max-w-md w-full border border-slate-200 flex flex-col">
+              <div className="p-5 bg-gradient-to-r from-amber-500 to-amber-600 text-white flex justify-between items-center">
+                <div>
+                  <h3 className="font-black text-lg uppercase tracking-wider">Designate Libero</h3>
+                  <p className="text-xs text-amber-100">Select player to swap in as Libero (No sub charged)</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowLiberoDesignateModal(false);
+                    setLiberoPromptPlayerId(null);
+                  }}
+                  className="p-1 rounded-full text-white/80 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto max-h-80 space-y-2 bg-slate-50">
+                {sortedRoster
+                  .filter((p) => (showRetired || !p.isRetired) && !lineup.includes(p.id))
+                  .map((p) => (
                     <button
                       key={p.id}
-                      onClick={() => handleSub(p.id)}
-                      className="w-full bg-white p-5 rounded-2xl flex items-center justify-between text-slate-800 shadow-sm border border-slate-200 active:scale-95 transition-all"
+                      onClick={() => {
+                        setLiberoId(p.id);
+                        setShowLiberoDesignateModal(false);
+                        if (liberoPromptPlayerId) {
+                          pushToHistory();
+                          const idx = lineup.indexOf(liberoPromptPlayerId);
+                          if (idx !== -1) {
+                            const newLineup = [...lineup];
+                            setLiberoSwappedOutId(liberoPromptPlayerId);
+                            newLineup[idx] = p.id;
+                            setLineup(newLineup);
+                            updateSetState({ lineup: newLineup });
+                          }
+                          setLiberoPromptPlayerId(null);
+                        }
+                      }}
+                      className="w-full bg-white p-3 rounded-xl border border-slate-200 hover:border-amber-400 hover:bg-amber-50/50 flex items-center justify-between text-left font-bold transition-all shadow-xs active:scale-98"
                     >
-                      <div className="flex items-center space-x-4">
-                        <span className="text-2xl font-black text-[#0033A0]">
-                          {p.number ? `#${p.number}` : ""}
+                      <div className="flex items-center gap-3">
+                        <span className="w-8 h-8 rounded-full bg-amber-100 text-amber-900 flex items-center justify-center font-black text-sm">
+                          {p.number ? `#${p.number}` : "-"}
                         </span>
-                        <span className="text-lg font-black">{p.name}</span>
+                        <span className="text-slate-800 font-black">{p.name}</span>
                       </div>
-                      <ArrowRightLeft className="text-slate-300" size={24} />
+                      <span className="text-xs font-black text-amber-600 uppercase">Set as Libero</span>
                     </button>
-                  ))
-                )}
+                  ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* LIBERO OUT (SELECT BENCH REPLACEMENT) MODAL */}
+        {showLiberoOutModal && (
+          <div className="fixed inset-0 bg-slate-900/90 z-[120] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-150">
+            <div className="bg-white rounded-[2rem] shadow-2xl overflow-hidden max-w-md w-full border border-slate-200 flex flex-col">
+              <div className="p-5 bg-gradient-to-r from-slate-800 to-slate-900 text-white flex justify-between items-center">
+                <div>
+                  <h3 className="font-black text-lg uppercase tracking-wider">Libero Exiting Court</h3>
+                  <p className="text-xs text-slate-300">Select player returning to court (No sub charged)</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowLiberoOutModal(false);
+                    setLiberoPromptPlayerId(null);
+                  }}
+                  className="p-1 rounded-full text-white/80 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto max-h-80 space-y-2 bg-slate-50">
+                {sortedRoster
+                  .filter((p) => (showRetired || !p.isRetired) && !lineup.includes(p.id) && p.id !== liberoId)
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setShowLiberoOutModal(false);
+                        pushToHistory();
+                        const libIdx = lineup.indexOf(liberoId);
+                        if (libIdx !== -1) {
+                          const newLineup = [...lineup];
+                          newLineup[libIdx] = p.id;
+                          setLiberoSwappedOutId(null);
+                          setLineup(newLineup);
+                          updateSetState({ lineup: newLineup });
+                        }
+                        setLiberoPromptPlayerId(null);
+                      }}
+                      className="w-full bg-white p-3 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 flex items-center justify-between text-left font-bold transition-all shadow-xs active:scale-98"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-8 h-8 rounded-full bg-blue-100 text-blue-900 flex items-center justify-center font-black text-sm">
+                          {p.number ? `#${p.number}` : "-"}
+                        </span>
+                        <span className="text-slate-800 font-black">{p.name}</span>
+                      </div>
+                      <span className="text-xs font-black text-blue-600 uppercase">Return to Court</span>
+                    </button>
+                  ))}
               </div>
             </div>
           </div>
