@@ -3298,7 +3298,7 @@ export default function App() {
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
-    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Errors,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Touches,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
     const allPlayers = Object.values(uccStats).filter((p) => {
       if (!showRetired && p.isRetired) return false;
@@ -3494,7 +3494,7 @@ export default function App() {
         "Pass Avg",
         "Passes",
         "Digs",
-        "Dig Errors",
+        "Dig Touches",
         "Swings",
         "Swings (Front)",
         "Swings (Back)",
@@ -6647,7 +6647,7 @@ export default function App() {
                       }}
                       className="col-span-4 bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center"
                     >
-                      PASS ERROR
+                      ERROR
                     </button>
                   </div>
                 )}
@@ -6677,7 +6677,7 @@ export default function App() {
                       }}
                       className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20"
                     >
-                      IN PLAY (ATTEMPT)
+                      IN PLAY
                     </button>
                     <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
                       <span className="h-px bg-slate-200 flex-1 mr-2"></span>{" "}
@@ -6754,7 +6754,7 @@ export default function App() {
                         }}
                         className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20"
                       >
-                        SWING (IN PLAY)
+                        IN PLAY
                       </button>
                       <button
                         onClick={() => {
@@ -6767,7 +6767,7 @@ export default function App() {
                         }}
                         className="bg-blue-50 text-blue-700 p-4 rounded-xl font-black text-sm sm:text-base border border-blue-200 shadow-sm active:scale-95 uppercase"
                       >
-                        BLOCKED (COVERED)
+                        COVERED
                       </button>
                     </div>
                     <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
@@ -6844,7 +6844,7 @@ export default function App() {
                       }}
                       className="bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center"
                     >
-                      DIG ERROR
+                      TOUCH
                     </button>
                   </div>
                 )}
@@ -6865,7 +6865,7 @@ export default function App() {
                         }
                         className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20"
                       >
-                        BLOCK (TOUCH)
+                        TOUCH
                       </button>
                     </div>
                     <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
@@ -7067,7 +7067,7 @@ export default function App() {
                       }
                       className="bg-slate-200 text-slate-600 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm shadow-sm active:scale-95 border border-slate-300 uppercase"
                     >
-                      Dig Error
+                      Touch
                     </button>
                   </div>
                 )}
@@ -8512,7 +8512,7 @@ export default function App() {
                       }}
                       className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20"
                     >
-                      IN PLAY (ATTEMPT)
+                      IN PLAY
                     </button>
                     <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
                       <span className="h-px bg-slate-200 flex-1 mr-2"></span>{" "}
@@ -8589,7 +8589,7 @@ export default function App() {
                         }}
                         className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20"
                       >
-                        SWING (IN PLAY)
+                        IN PLAY
                       </button>
                       <button
                         onClick={() => {
@@ -8602,7 +8602,7 @@ export default function App() {
                         }}
                         className="bg-blue-50 text-blue-700 p-4 rounded-xl font-black text-sm sm:text-base border border-blue-200 shadow-sm active:scale-95 uppercase"
                       >
-                        BLOCKED (COVERED)
+                        COVERED
                       </button>
                     </div>
                     <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
@@ -8679,7 +8679,7 @@ export default function App() {
                       }}
                       className="bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center"
                     >
-                      DIG ERROR
+                      TOUCH
                     </button>
                   </div>
                 )}
@@ -8707,7 +8707,7 @@ export default function App() {
                           }
                           className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20"
                         >
-                          BLOCK (TOUCH)
+                          TOUCH
                         </button>
                       </div>
                       <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
