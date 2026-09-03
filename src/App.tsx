@@ -43,6 +43,8 @@ import {
   Check,
   Calendar,
   Layers,
+  Target,
+  Plus,
 } from "lucide-react";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
@@ -2408,10 +2410,10 @@ export default function App() {
   const setSeasonScope = (scope) => {
     const scopeNames = {
       all: "Season Totals (Game & Practice)",
-      games: "Season Totals (Games Only)",
-      practice: "Season Totals (Practice Only)",
+      games: "All Games (Season)",
+      practice: "All Practices (Season)",
     };
-    setStatsPath([{ level: "season", id: scope, name: scopeNames[scope] }]);
+    setStatsPath([{ level: "season", id: scope, name: scopeNames[scope] || "Season Totals" }]);
   };
 
   const gameCount = useMemo(() => {
@@ -2422,17 +2424,107 @@ export default function App() {
     return appData.matches.filter((m) => m.type === "Practice").length;
   }, [appData.matches]);
 
-  const { tournamentsList, gameMatchesList, practicesList } = useMemo(() => {
-    const tourneys = {};
-    const gameMatches = [];
-    const practices = {};
+  // Helper to extract drills for a practice day/event
+  const getDrillsForPracticeEvent = (eventId: string) => {
+    const dayMatches = appData.matches.filter(
+      (m) => m.type === "Practice" && getEventDetails(m).id === eventId
+    );
+    const drills: Array<{
+      id: string;
+      level: string;
+      name: string;
+      drillNum: number;
+      matchId: string;
+      setId: string;
+      date?: string;
+      isPractice: boolean;
+      isDrill: boolean;
+    }> = [];
+
+    let overallDrillIndex = 1;
+    dayMatches.forEach((m, matchIdx) => {
+      const matchSets = appData.sets
+        .filter((s) => s.matchId === m.id)
+        .sort((a, b) => a.setNum - b.setNum);
+
+      if (matchSets.length > 0) {
+        matchSets.forEach((s) => {
+          let label = "";
+          if (m.title && m.title !== "Open Drill") {
+            label = `${m.title} (Drill ${s.setNum})`;
+          } else if (matchSets.length > 1) {
+            label = `Drill ${s.setNum}${dayMatches.length > 1 ? ` (Session #${matchIdx + 1})` : ""}`;
+          } else {
+            label = `Drill ${overallDrillIndex}: ${m.title || "Open Practice"}`;
+          }
+          drills.push({
+            id: s.id,
+            level: "drill",
+            name: label,
+            drillNum: overallDrillIndex,
+            matchId: m.id,
+            setId: s.id,
+            date: m.date,
+            isPractice: true,
+            isDrill: true,
+          });
+          overallDrillIndex++;
+        });
+      } else {
+        drills.push({
+          id: m.id,
+          level: "drill",
+          name: m.title ? `${m.title} (Drill #${overallDrillIndex})` : `Drill #${overallDrillIndex}`,
+          drillNum: overallDrillIndex,
+          matchId: m.id,
+          setId: m.id,
+          date: m.date,
+          isPractice: true,
+          isDrill: true,
+        });
+        overallDrillIndex++;
+      }
+    });
+
+    return drills;
+  };
+
+  const {
+    gameEventsList,
+    practiceDaysList,
+    tournamentsList,
+    gameMatchesList,
+    practicesList,
+  } = useMemo(() => {
+    const gameEvents: Record<string, any> = {};
+    const practiceDays: Record<string, any> = {};
+    const tourneys: Record<string, any> = {};
+    const gameMatches: any[] = [];
+    const practices: Record<string, any> = {};
 
     appData.matches.forEach((m) => {
       const dateStr = m.date
         ? new Date(m.date).toLocaleDateString()
         : "Unknown Date";
+      const detail = getEventDetails(m);
+
       if (m.type === "Practice") {
-        const detail = getEventDetails(m);
+        const matchSets = appData.sets.filter((s) => s.matchId === m.id);
+        const count = matchSets.length > 0 ? matchSets.length : 1;
+        if (!practiceDays[detail.id]) {
+          practiceDays[detail.id] = {
+            id: detail.id,
+            name: detail.name,
+            date: m.date,
+            drillCount: count,
+            matchCount: 1,
+            isPractice: true,
+          };
+        } else {
+          practiceDays[detail.id].drillCount += count;
+          practiceDays[detail.id].matchCount += 1;
+        }
+
         if (!practices[detail.id]) {
           practices[detail.id] = {
             id: detail.id,
@@ -2444,8 +2536,20 @@ export default function App() {
           practices[detail.id].count += 1;
         }
       } else {
+        if (!gameEvents[detail.id]) {
+          gameEvents[detail.id] = {
+            id: detail.id,
+            name: detail.name,
+            date: m.date,
+            isTournament: m.type === "Tournament",
+            matchCount: 1,
+            isPractice: false,
+          };
+        } else {
+          gameEvents[detail.id].matchCount += 1;
+        }
+
         if (m.type === "Tournament" && m.title) {
-          const detail = getEventDetails(m);
           if (!tourneys[detail.id]) {
             tourneys[detail.id] = {
               id: detail.id,
@@ -2457,6 +2561,7 @@ export default function App() {
             tourneys[detail.id].count += 1;
           }
         }
+
         gameMatches.push({
           id: m.id,
           opponent: m.opponent || "Opponent",
@@ -2464,25 +2569,177 @@ export default function App() {
           date: m.date,
           type: m.type,
           title: m.title,
+          eventId: detail.id,
+          eventName: detail.name,
         });
       }
     });
 
+    const sortByDate = (a: any, b: any) =>
+      new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime();
+
     return {
-      tournamentsList: Object.values(tourneys).sort(
-        (a: any, b: any) =>
-          new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-      ),
-      gameMatchesList: gameMatches.sort(
-        (a: any, b: any) =>
-          new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-      ),
-      practicesList: Object.values(practices).sort(
-        (a: any, b: any) =>
-          new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-      ),
+      gameEventsList: Object.values(gameEvents).sort(sortByDate),
+      practiceDaysList: Object.values(practiceDays).sort(sortByDate),
+      tournamentsList: Object.values(tourneys).sort(sortByDate),
+      gameMatchesList: gameMatches.sort(sortByDate),
+      practicesList: Object.values(practices).sort(sortByDate),
     };
-  }, [appData.matches]);
+  }, [appData.matches, appData.sets]);
+
+  // Current navigation state and branch detection
+  const isPracticeBranch = useMemo(() => {
+    return (
+      statsPath[0]?.id === "practice" ||
+      statsPath.some(
+        (p) =>
+          p.id?.startsWith("practice_") ||
+          p.id === "practice_sessions" ||
+          p.level === "drill"
+      )
+    );
+  }, [statsPath]);
+
+  const isGamesBranch = useMemo(() => {
+    return (
+      statsPath[0]?.id === "games" ||
+      statsPath.some(
+        (p) =>
+          p.id?.startsWith("tourney_") ||
+          p.id?.startsWith("day_") ||
+          (p.level === "match" && !isPracticeBranch) ||
+          (p.level === "set" && !isPracticeBranch)
+      )
+    );
+  }, [statsPath, isPracticeBranch]);
+
+  const isCombinedBranch = useMemo(() => {
+    return statsPath[0]?.id === "all" && statsPath.length === 1;
+  }, [statsPath]);
+
+  const activeEventNav = statsPath.find((p) => p.level === "event");
+  const activeMatchNav = statsPath.find((p) => p.level === "match");
+  const activeSetNav = statsPath.find((p) => p.level === "set");
+  const activeDrillNav = statsPath.find((p) => p.level === "drill");
+
+  // Cascading Selection Handlers for Games Hierarchy
+  const selectGameEvent = (eventId: string) => {
+    if (!eventId || eventId === "all_events") {
+      setStatsPath([{ level: "season", id: "games", name: "All Games (Season)" }]);
+      return;
+    }
+    const sampleMatch = appData.matches.find(
+      (m) => m.type !== "Practice" && getEventDetails(m).id === eventId
+    );
+    const eventName = sampleMatch ? getEventDetails(sampleMatch).name : eventId;
+    setStatsPath([
+      { level: "season", id: "games", name: "All Games (Season)" },
+      { level: "event", id: eventId, name: eventName },
+    ]);
+  };
+
+  const selectSpecificGame = (matchId: string) => {
+    if (!matchId || matchId === "all_games_in_event") {
+      if (activeEventNav) {
+        setStatsPath([
+          { level: "season", id: "games", name: "All Games (Season)" },
+          activeEventNav,
+        ]);
+      } else {
+        setStatsPath([{ level: "season", id: "games", name: "All Games (Season)" }]);
+      }
+      return;
+    }
+    const match = appData.matches.find((m) => m.id === matchId);
+    if (!match) return;
+    const eventDetail = getEventDetails(match);
+    setStatsPath([
+      { level: "season", id: "games", name: "All Games (Season)" },
+      { level: "event", id: eventDetail.id, name: eventDetail.name },
+      { level: "match", id: match.id, name: `vs ${match.opponent || "Opponent"}` },
+    ]);
+  };
+
+  const selectGameSet = (setId: string) => {
+    if (!setId || setId === "all_sets") {
+      if (activeMatchNav && activeEventNav) {
+        setStatsPath([
+          { level: "season", id: "games", name: "All Games (Season)" },
+          activeEventNav,
+          activeMatchNav,
+        ]);
+      }
+      return;
+    }
+    const setObj = appData.sets.find((s) => s.id === setId);
+    if (!setObj) return;
+    const match = appData.matches.find((m) => m.id === setObj.matchId);
+    if (!match) return;
+    const eventDetail = getEventDetails(match);
+    setStatsPath([
+      { level: "season", id: "games", name: "All Games (Season)" },
+      { level: "event", id: eventDetail.id, name: eventDetail.name },
+      { level: "match", id: match.id, name: `vs ${match.opponent || "Opponent"}` },
+      { level: "set", id: setObj.id, name: `Set ${setObj.setNum}` },
+    ]);
+  };
+
+  // Cascading Selection Handlers for Practices Hierarchy
+  const selectPracticeDay = (eventId: string) => {
+    if (!eventId || eventId === "all_practice_days") {
+      setStatsPath([{ level: "season", id: "practice", name: "All Practices (Season)" }]);
+      return;
+    }
+    const sampleMatch = appData.matches.find(
+      (m) => m.type === "Practice" && getEventDetails(m).id === eventId
+    );
+    const eventName = sampleMatch ? getEventDetails(sampleMatch).name : eventId;
+    setStatsPath([
+      { level: "season", id: "practice", name: "All Practices (Season)" },
+      { level: "event", id: eventId, name: eventName },
+    ]);
+  };
+
+  const selectPracticeDrill = (drillId: string) => {
+    if (!drillId || drillId === "all_drills_in_day") {
+      if (activeEventNav) {
+        setStatsPath([
+          { level: "season", id: "practice", name: "All Practices (Season)" },
+          activeEventNav,
+        ]);
+      } else {
+        setStatsPath([{ level: "season", id: "practice", name: "All Practices (Season)" }]);
+      }
+      return;
+    }
+
+    let foundMatch: any = null;
+    let drillName = "Drill";
+
+    const foundSet = appData.sets.find((s) => s.id === drillId);
+    if (foundSet) {
+      foundMatch = appData.matches.find((m) => m.id === foundSet.matchId);
+      if (foundMatch?.title && foundMatch.title !== "Open Drill") {
+        drillName = `${foundMatch.title} (Drill ${foundSet.setNum})`;
+      } else {
+        drillName = `Drill ${foundSet.setNum}`;
+      }
+    } else {
+      foundMatch = appData.matches.find((m) => m.id === drillId);
+      if (foundMatch) {
+        drillName = foundMatch.title || "Practice Drill";
+      }
+    }
+
+    if (foundMatch) {
+      const eventDetail = getEventDetails(foundMatch);
+      setStatsPath([
+        { level: "season", id: "practice", name: "All Practices (Season)" },
+        { level: "event", id: eventDetail.id, name: eventDetail.name },
+        { level: "drill", id: drillId, name: drillName },
+      ]);
+    }
+  };
 
   const handleQuickSelect = (val) => {
     if (!val) return;
@@ -2513,7 +2770,7 @@ export default function App() {
           {
             level: "season",
             id: "practice",
-            name: "Season Totals (Practice Only)",
+            name: "All Practices (Season)",
           },
           { level: "event", id: eventId, name: eventName },
         ]);
@@ -2522,7 +2779,7 @@ export default function App() {
           {
             level: "season",
             id: "games",
-            name: "Season Totals (Games Only)",
+            name: "All Games (Season)",
           },
           { level: "event", id: eventId, name: eventName },
         ]);
@@ -2539,11 +2796,11 @@ export default function App() {
           {
             level: "season",
             id: "practice",
-            name: "Season Totals (Practice Only)",
+            name: "All Practices (Season)",
           },
           { level: "event", id: detail.id, name: detail.name },
           {
-            level: "match",
+            level: "drill",
             id: match.id,
             name: match.title || "Drill Session",
           },
@@ -2553,12 +2810,22 @@ export default function App() {
           {
             level: "season",
             id: "games",
-            name: "Season Totals (Games Only)",
+            name: "All Games (Season)",
           },
           { level: "event", id: detail.id, name: detail.name },
           { level: "match", id: match.id, name: `vs ${match.opponent}` },
         ]);
       }
+      return;
+    }
+    if (val.startsWith("drill_")) {
+      const drillId = val.replace("drill_", "");
+      selectPracticeDrill(drillId);
+      return;
+    }
+    if (val.startsWith("set_")) {
+      const setId = val.replace("set_", "");
+      selectGameSet(setId);
       return;
     }
   };
@@ -2579,14 +2846,26 @@ export default function App() {
     if (currentNav.level === "match") {
       return `match_${currentNav.id}`;
     }
+    if (currentNav.level === "drill") {
+      return `drill_${currentNav.id}`;
+    }
     if (currentNav.level === "set") {
       return `set_${currentNav.id}`;
     }
     return "season_all";
   }, [currentNav]);
 
-  const navigateStats = (level, id, name) =>
-    setStatsPath((prev) => [...prev, { level, id, name }]);
+  const navigateStats = (level, id, name) => {
+    setStatsPath((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.level === level) {
+        // Swap sibling (e.g. Set 1 -> Set 2, or Drill 1 -> Drill 2)
+        return [...prev.slice(0, -1), { level, id, name }];
+      }
+      return [...prev, { level, id, name }];
+    });
+  };
+
   const popStatsTo = (index) =>
     setStatsPath((prev) => prev.slice(0, index + 1));
 
@@ -2641,8 +2920,13 @@ export default function App() {
     }
     if (currentNav.level === "match")
       return appData.stats.filter((s) => s.matchId === currentNav.id);
-    if (currentNav.level === "set")
-      return appData.stats.filter((s) => s.setId === currentNav.id);
+    if (currentNav.level === "set" || currentNav.level === "drill") {
+      const bySet = appData.stats.filter((s) => s.setId === currentNav.id);
+      if (bySet.length > 0) return bySet;
+      return appData.stats.filter(
+        (s) => s.setId === currentNav.id || s.matchId === currentNav.id
+      );
+    }
     return appData.stats;
   }, [appData.stats, appData.matches, currentNav]);
 
@@ -2673,12 +2957,14 @@ export default function App() {
           });
       }
 
-      // 2. All practice days (grouped by same day under one tab!)
+      // 2. All practice days
       if (scope === "all" || scope === "practice") {
         appData.matches
           .filter((m) => m.type === "Practice")
           .forEach((m) => {
             const detail = getEventDetails(m);
+            const matchSets = appData.sets.filter((s) => s.matchId === m.id);
+            const count = matchSets.length > 0 ? matchSets.length : 1;
             if (!events[detail.id]) {
               events[detail.id] = {
                 ...detail,
@@ -2686,11 +2972,11 @@ export default function App() {
                 date: m.date,
                 isPractice: true,
                 isTournament: false,
-                matchCount: 1,
+                matchCount: count,
               };
             } else {
               events[detail.id].matchCount =
-                (events[detail.id].matchCount || 1) + 1;
+                (events[detail.id].matchCount || 1) + count;
             }
           });
       }
@@ -2702,61 +2988,18 @@ export default function App() {
         return dateB - dateA;
       });
     }
+
     if (currentNav.level === "event") {
-      if (currentNav.id === "practice_sessions") {
-        const practiceDays: Record<string, any> = {};
-        appData.matches
-          .filter((m) => m.type === "Practice")
-          .forEach((m) => {
-            const detail = getEventDetails(m);
-            if (!practiceDays[detail.id]) {
-              practiceDays[detail.id] = {
-                level: "event",
-                id: detail.id,
-                name: detail.name,
-                date: m.date,
-                isPractice: true,
-              };
-            }
-          });
-        return Object.values(practiceDays).sort((a: any, b: any) => {
-          const dateA = a.date ? new Date(a.date).getTime() : 0;
-          const dateB = b.date ? new Date(b.date).getTime() : 0;
-          return dateB - dateA;
-        });
-      }
+      const isPracticeEvent =
+        currentNav.id.startsWith("practice_") ||
+        currentNav.id === "practice_sessions";
 
-      const isPracticeEvent = currentNav.id.startsWith("practice_");
       if (isPracticeEvent) {
-        const matchesOnDay = appData.matches.filter(
-          (m) => getEventDetails(m).id === currentNav.id
-        );
-        if (matchesOnDay.length > 1) {
-          return matchesOnDay.map((m, idx) => ({
-            level: "match",
-            id: m.id,
-            name: `${m.title || "Drill"} #${idx + 1} (${m.date ? new Date(m.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Session"})`,
-            isPractice: true,
-          }));
-        }
-        if (matchesOnDay.length === 1) {
-          const daySets = appData.sets.filter(
-            (s) => s.matchId === matchesOnDay[0].id
-          );
-          if (daySets.length > 1) {
-            return daySets
-              .sort((a, b) => a.setNum - b.setNum)
-              .map((s) => ({
-                level: "set",
-                id: s.id,
-                name: `Drill / Set ${s.setNum}`,
-                isPractice: true,
-              }));
-          }
-        }
-        return [];
+        // Return all drills on this practice day
+        return getDrillsForPracticeEvent(currentNav.id);
       }
 
+      // Return all games in this tournament or game day
       return appData.matches
         .filter(
           (m) =>
@@ -2765,17 +3008,70 @@ export default function App() {
         .map((m) => ({
           level: "match",
           id: m.id,
-          name: `vs ${m.opponent}`,
+          name: `vs ${m.opponent || "Opponent"}`,
+          opponent: m.opponent,
+          date: m.date,
           isPractice: false,
         }));
     }
-    if (currentNav.level === "match")
+
+    if (currentNav.level === "match") {
+      const match = appData.matches.find((m) => m.id === currentNav.id);
+      if (match?.type === "Practice") {
+        return appData.sets
+          .filter((s) => s.matchId === currentNav.id)
+          .sort((a, b) => a.setNum - b.setNum)
+          .map((s) => ({
+            level: "drill",
+            id: s.id,
+            name: `Drill / Set ${s.setNum}`,
+            isPractice: true,
+            isDrill: true,
+          }));
+      }
       return appData.sets
         .filter((s) => s.matchId === currentNav.id)
         .sort((a, b) => a.setNum - b.setNum)
-        .map((s) => ({ level: "set", id: s.id, name: `Set ${s.setNum}` }));
+        .map((s) => ({
+          level: "set",
+          id: s.id,
+          name: `Set ${s.setNum}`,
+          score: `${s.scoreUcc || 0}-${s.scoreOpp || 0}`,
+          isPractice: false,
+        }));
+    }
+
+    if (currentNav.level === "drill") {
+      // Show sibling drills on this practice day so user can switch between drills easily
+      if (activeEventNav) {
+        return getDrillsForPracticeEvent(activeEventNav.id).map((d) => ({
+          ...d,
+          isActive: d.id === currentNav.id,
+        }));
+      }
+      return [];
+    }
+
+    if (currentNav.level === "set") {
+      // Show sibling sets in this match so user can switch between Set 1, Set 2, Set 3 easily
+      if (activeMatchNav) {
+        return appData.sets
+          .filter((s) => s.matchId === activeMatchNav.id)
+          .sort((a, b) => a.setNum - b.setNum)
+          .map((s) => ({
+            level: "set",
+            id: s.id,
+            name: `Set ${s.setNum}`,
+            score: `${s.scoreUcc || 0}-${s.scoreOpp || 0}`,
+            isPractice: false,
+            isActive: s.id === currentNav.id,
+          }));
+      }
+      return [];
+    }
+
     return [];
-  }, [currentNav, appData.matches, appData.sets]);
+  }, [currentNav, appData.matches, appData.sets, activeEventNav, activeMatchNav]);
 
   const { uccStats, opponentStats } = useMemo(() => {
     const uccData = {};
@@ -7530,6 +7826,76 @@ export default function App() {
           </div>
         </div>
 
+        {/* Practice Drill Switcher & Adder Bar */}
+        <div className="bg-slate-800 text-white px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700 shadow-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-black uppercase text-amber-400 tracking-wider flex items-center gap-1.5">
+              <Target size={14} /> Current Drill:
+            </span>
+            <select
+              value={activeSetId || ""}
+              onChange={(e) => setActiveSetId(e.target.value)}
+              className="bg-slate-900 text-white text-xs font-bold border border-slate-600 rounded-lg px-2.5 py-1 focus:ring-2 focus:ring-blue-400 cursor-pointer shadow-inner"
+            >
+              {appData.sets
+                .filter((s) => s.matchId === activeMatch?.id)
+                .sort((a, b) => a.setNum - b.setNum)
+                .map((s) => (
+                  <option key={s.id} value={s.id}>
+                    Drill {s.setNum}{s.title ? `: ${s.title}` : ""}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!activeMatch) return;
+              const currentSets = appData.sets
+                .filter((s) => s.matchId === activeMatch.id)
+                .sort((a, b) => a.setNum - b.setNum);
+              const nextNum = currentSets.length + 1;
+              const drillName = prompt(
+                `Enter name for Drill #${nextNum} (e.g. Serve Receive, Hitting Lines):`,
+                `Drill ${nextNum}`,
+              );
+              if (drillName === null) return;
+              const newSetId = Date.now().toString() + "_set";
+              const newSet = {
+                id: newSetId,
+                matchId: activeMatch.id,
+                setNum: nextNum,
+                title: drillName.trim() || `Drill ${nextNum}`,
+                scoreUcc: 0,
+                scoreOpp: 0,
+              };
+              if (isFirebaseAvailable && user && activeTeam) {
+                try {
+                  await setDoc(
+                    doc(db, `${publicPath}/${activeTeam}/sets/${newSetId}`),
+                    newSet,
+                  );
+                } catch (err) {
+                  console.error("Error creating practice drill set:", err);
+                }
+              } else if (!isFirebaseAvailable) {
+                writeLocalDb({
+                  ...appData,
+                  sets: [...appData.sets, newSet],
+                });
+              }
+              setAppData((prev) => ({
+                ...prev,
+                sets: [...prev.sets, newSet],
+              }));
+              setActiveSetId(newSetId);
+            }}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer border border-emerald-400/30"
+          >
+            <Plus size={14} /> + New Drill
+          </button>
+        </div>
+
         <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24">
           {sortedRoster
             .filter((p) => !p.isRetired && !hiddenPracticePlayers.includes(p.id))
@@ -8755,181 +9121,382 @@ export default function App() {
             </div>
           </div>
 
-          {/* Season Scope & Quick Jump Selector Bar */}
-          <div className="bg-white border-b border-slate-200 px-3 sm:px-6 py-2.5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 shadow-2xs">
-            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-0.5">
-              <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider mr-1 flex-shrink-0">
-                Scope:
-              </span>
-              <button
-                type="button"
-                onClick={() => setSeasonScope("all")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
-                  currentNav.level === "season" && currentNav.id === "all"
-                    ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
-                    : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
-                }`}
-                title="Combined season totals including all matches and practices"
-              >
-                <span>🌟 All (Game & Practice)</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                    currentNav.level === "season" && currentNav.id === "all"
-                      ? "bg-white/20 text-white"
-                      : "bg-slate-200 text-slate-700"
-                  }`}
-                >
-                  {gameCount + practiceCount}
+          {/* Enhanced Hierarchical Scope & Cascading Drill-Down Filter Bar */}
+          <div className="bg-white border-b border-slate-200 px-3 sm:px-6 py-3 shadow-2xs flex flex-col gap-3">
+            {/* Tier 1: Main Scope Modes */}
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide py-0.5">
+                <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider mr-1 flex-shrink-0">
+                  Mode:
                 </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setSeasonScope("games")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                    isGamesBranch
+                      ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
+                      : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
+                  }`}
+                  title="Drill down: All Games ➔ Day / Tournament ➔ Specific Game ➔ Set"
+                >
+                  <span>🏐 Games Drill-Down</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                      isGamesBranch
+                        ? "bg-white/20 text-white"
+                        : "bg-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {gameCount}
+                  </span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setSeasonScope("games")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
-                  currentNav.level === "season" && currentNav.id === "games"
-                    ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
-                    : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
-                }`}
-                title="Season totals for games and tournaments only (excludes practice)"
-              >
-                <span>🏐 Games Only</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                    currentNav.level === "season" && currentNav.id === "games"
-                      ? "bg-white/20 text-white"
-                      : "bg-slate-200 text-slate-700"
+                <button
+                  type="button"
+                  onClick={() => setSeasonScope("practice")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                    isPracticeBranch
+                      ? "bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20"
+                      : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
                   }`}
+                  title="Drill down: All Practices ➔ Practice Day ➔ Drill"
                 >
-                  {gameCount}
-                </span>
-              </button>
+                  <span>📋 Practices Drill-Down</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                      isPracticeBranch
+                        ? "bg-white/20 text-white"
+                        : "bg-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {practiceDaysList.length > 0 ? practiceDaysList.length : practiceCount}
+                  </span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setSeasonScope("practice")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
-                  currentNav.level === "season" && currentNav.id === "practice"
-                    ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
-                    : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
-                }`}
-                title="Season totals for practice sessions only"
-              >
-                <span>📋 Practice Only</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                    currentNav.level === "season" && currentNav.id === "practice"
-                      ? "bg-white/20 text-white"
-                      : "bg-slate-200 text-slate-700"
+                <button
+                  type="button"
+                  onClick={() => setSeasonScope("all")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                    isCombinedBranch
+                      ? "bg-slate-800 text-white shadow-sm ring-2 ring-slate-800/20"
+                      : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
                   }`}
+                  title="Combined season totals across all matches and practice sessions"
                 >
-                  {practiceCount}
-                </span>
-              </button>
+                  <span>🌟 Season Totals (Game & Practice)</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                      isCombinedBranch
+                        ? "bg-white/20 text-white"
+                        : "bg-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {gameCount + practiceCount}
+                  </span>
+                </button>
+              </div>
+
+              {/* Quick Jump Selector */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <label
+                  htmlFor="quick-stats-nav"
+                  className="text-[11px] font-bold text-slate-500 whitespace-nowrap hidden sm:inline"
+                >
+                  Jump To:
+                </label>
+                <select
+                  id="quick-stats-nav"
+                  value={currentQuickSelectValue}
+                  onChange={(e) => handleQuickSelect(e.target.value)}
+                  className="w-full sm:w-auto bg-slate-50 hover:bg-white text-slate-800 text-xs font-bold border border-slate-300 rounded-lg px-3 py-1.5 shadow-2xs focus:ring-2 focus:ring-[#0033A0] focus:border-[#0033A0] transition-colors cursor-pointer"
+                >
+                  <optgroup label="── SEASON TOTALS ──">
+                    <option value="season_all">
+                      🌟 Season Totals (Game & Practice)
+                    </option>
+                    <option value="season_games">
+                      🏐 All Games (Season)
+                    </option>
+                    <option value="season_practice">
+                      📋 All Practices (Season)
+                    </option>
+                  </optgroup>
+                  {tournamentsList.length > 0 && (
+                    <optgroup label="── TOURNAMENTS ──">
+                      {tournamentsList.map((t: any) => (
+                        <option key={t.id} value={`event_${t.id}`}>
+                          🏆 {t.name} ({t.count} game{t.count !== 1 ? "s" : ""})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {gameMatchesList.length > 0 && (
+                    <optgroup label="── SPECIFIC GAMES ──">
+                      {gameMatchesList.map((m: any) => (
+                        <option key={m.id} value={`match_${m.id}`}>
+                          🏐 vs {m.opponent} ({m.dateStr})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {practiceDaysList.length > 0 && (
+                    <optgroup label="── PRACTICE DAYS ──">
+                      {practiceDaysList.map((p: any) => (
+                        <option key={p.id} value={`event_${p.id}`}>
+                          📋 {p.name} ({p.drillCount} drill{p.drillCount !== 1 ? "s" : ""})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
             </div>
 
-            {/* Quick-Jump Dropdown */}
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <label
-                htmlFor="quick-stats-nav"
-                className="text-[11px] font-bold text-slate-500 whitespace-nowrap hidden sm:inline"
-              >
-                Jump To:
-              </label>
-              <select
-                id="quick-stats-nav"
-                value={currentQuickSelectValue}
-                onChange={(e) => handleQuickSelect(e.target.value)}
-                className="w-full sm:w-auto bg-slate-50 hover:bg-white text-slate-800 text-xs font-bold border border-slate-300 rounded-lg px-3 py-1.5 shadow-2xs focus:ring-2 focus:ring-[#0033A0] focus:border-[#0033A0] transition-colors cursor-pointer"
-              >
-                <optgroup label="── SEASON TOTALS ──">
-                  <option value="season_all">
-                    🌟 Season Totals (Game & Practice)
-                  </option>
-                  <option value="season_games">
-                    🏐 Season Totals (Games Only)
-                  </option>
-                  <option value="season_practice">
-                    📋 Season Totals (Practice Only)
-                  </option>
-                </optgroup>
-                {tournamentsList.length > 0 && (
-                  <optgroup label="── TOURNAMENTS ──">
-                    {tournamentsList.map((t: any) => (
-                      <option key={t.id} value={`event_${t.id}`}>
-                        🏆 {t.name} ({t.count} game{t.count !== 1 ? "s" : ""})
+            {/* Tier 2: Cascading Filter Drill-Down Pipeline Bar */}
+            {isGamesBranch && (
+              <div className="bg-slate-50 rounded-xl p-2.5 sm:p-3 border border-slate-200/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2.5 overflow-x-auto">
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <span className="text-[10px] font-black uppercase text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 tracking-wider">
+                    Games Filter:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => selectGameEvent("all_events")}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                      !activeEventNav && !activeMatchNav && !activeSetNav
+                        ? "bg-[#0033A0] text-white shadow-xs"
+                        : "bg-white text-slate-700 hover:bg-slate-200 border border-slate-300"
+                    }`}
+                  >
+                    All Games (Season)
+                  </button>
+                </div>
+
+                <ChevronRight size={14} className="text-slate-400 hidden sm:block flex-shrink-0" />
+
+                {/* Day / Tournament Dropdown */}
+                <div className="flex items-center gap-1.5 flex-1 min-w-[170px]">
+                  <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">Day / Tourney:</span>
+                  <select
+                    value={activeEventNav ? activeEventNav.id : "all_events"}
+                    onChange={(e) => selectGameEvent(e.target.value)}
+                    className={`w-full text-xs font-bold rounded-lg px-2.5 py-1 transition-colors cursor-pointer border ${
+                      activeEventNav
+                        ? "bg-blue-50 border-blue-400 text-blue-900 font-black shadow-2xs"
+                        : "bg-white border-slate-300 text-slate-700"
+                    }`}
+                  >
+                    <option value="all_events">── All Days & Tournaments ──</option>
+                    {gameEventsList.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.isTournament ? "🏆" : "📅"} {e.name} ({e.matchCount} game{e.matchCount !== 1 ? "s" : ""})
                       </option>
                     ))}
-                  </optgroup>
-                )}
-                {gameMatchesList.length > 0 && (
-                  <optgroup label="── SPECIFIC GAMES ──">
-                    {gameMatchesList.map((m: any) => (
-                      <option key={m.id} value={`match_${m.id}`}>
-                        🏐 vs {m.opponent} ({m.dateStr})
+                  </select>
+                </div>
+
+                <ChevronRight size={14} className="text-slate-400 hidden sm:block flex-shrink-0" />
+
+                {/* Specific Game Dropdown */}
+                <div className="flex items-center gap-1.5 flex-1 min-w-[170px]">
+                  <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">Game:</span>
+                  <select
+                    value={activeMatchNav ? activeMatchNav.id : "all_games_in_event"}
+                    onChange={(e) => selectSpecificGame(e.target.value)}
+                    className={`w-full text-xs font-bold rounded-lg px-2.5 py-1 transition-colors cursor-pointer border ${
+                      activeMatchNav
+                        ? "bg-blue-50 border-blue-400 text-blue-900 font-black shadow-2xs"
+                        : "bg-white border-slate-300 text-slate-700"
+                    }`}
+                  >
+                    <option value="all_games_in_event">
+                      {activeEventNav ? "── All Games in Event ──" : "── Pick Specific Game ──"}
+                    </option>
+                    {(activeEventNav
+                      ? appData.matches.filter(
+                          (m) => m.type !== "Practice" && getEventDetails(m).id === activeEventNav.id
+                        )
+                      : gameMatchesList
+                    ).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        🏐 vs {m.opponent} {m.dateStr ? `(${m.dateStr})` : ""}
                       </option>
                     ))}
-                  </optgroup>
-                )}
-                {practicesList.length > 0 && (
-                  <optgroup label="── SPECIFIC PRACTICES ──">
-                    {practicesList.map((p: any) => (
-                      <option key={p.id} value={`event_${p.id}`}>
-                        📋 {p.name}
+                  </select>
+                </div>
+
+                <ChevronRight size={14} className="text-slate-400 hidden sm:block flex-shrink-0" />
+
+                {/* Set Dropdown */}
+                <div className="flex items-center gap-1.5 flex-1 min-w-[140px]">
+                  <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">Set:</span>
+                  <select
+                    value={activeSetNav ? activeSetNav.id : "all_sets"}
+                    onChange={(e) => selectGameSet(e.target.value)}
+                    disabled={!activeMatchNav}
+                    className={`w-full text-xs font-bold rounded-lg px-2.5 py-1 transition-colors cursor-pointer border ${
+                      activeSetNav
+                        ? "bg-blue-50 border-blue-400 text-blue-900 font-black shadow-2xs"
+                        : !activeMatchNav
+                        ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed"
+                        : "bg-white border-slate-300 text-slate-700"
+                    }`}
+                  >
+                    <option value="all_sets">
+                      {activeMatchNav ? "── All Sets (Full Game) ──" : "(Select Game First)"}
+                    </option>
+                    {activeMatchNav &&
+                      appData.sets
+                        .filter((s) => s.matchId === activeMatchNav.id)
+                        .sort((a, b) => a.setNum - b.setNum)
+                        .map((s) => (
+                          <option key={s.id} value={s.id}>
+                            Set {s.setNum} ({s.scoreUcc || 0}-{s.scoreOpp || 0})
+                          </option>
+                        ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {isPracticeBranch && (
+              <div className="bg-amber-50/60 rounded-xl p-2.5 sm:p-3 border border-amber-200/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2.5 overflow-x-auto">
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <span className="text-[10px] font-black uppercase text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300 tracking-wider">
+                    Practice Filter:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => selectPracticeDay("all_practice_days")}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                      !activeEventNav && !activeDrillNav
+                        ? "bg-amber-600 text-white shadow-xs"
+                        : "bg-white text-slate-700 hover:bg-amber-100 border border-slate-300"
+                    }`}
+                  >
+                    All Practices (Season)
+                  </button>
+                </div>
+
+                <ChevronRight size={14} className="text-amber-500 hidden sm:block flex-shrink-0" />
+
+                {/* Practice Day Dropdown */}
+                <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                  <span className="text-[10px] font-bold text-slate-600 whitespace-nowrap">Practice Day:</span>
+                  <select
+                    value={activeEventNav ? activeEventNav.id : "all_practice_days"}
+                    onChange={(e) => selectPracticeDay(e.target.value)}
+                    className={`w-full text-xs font-bold rounded-lg px-2.5 py-1 transition-colors cursor-pointer border ${
+                      activeEventNav
+                        ? "bg-white border-amber-500 text-amber-900 font-black shadow-2xs"
+                        : "bg-white border-slate-300 text-slate-700"
+                    }`}
+                  >
+                    <option value="all_practice_days">── All Practice Days ──</option>
+                    {practiceDaysList.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        📋 {p.name} ({p.drillCount} drill{p.drillCount !== 1 ? "s" : ""})
                       </option>
                     ))}
-                  </optgroup>
-                )}
-              </select>
-            </div>
+                  </select>
+                </div>
+
+                <ChevronRight size={14} className="text-amber-500 hidden sm:block flex-shrink-0" />
+
+                {/* Drill Dropdown */}
+                <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                  <span className="text-[10px] font-bold text-slate-600 whitespace-nowrap">Drill:</span>
+                  <select
+                    value={activeDrillNav ? activeDrillNav.id : "all_drills_in_day"}
+                    onChange={(e) => selectPracticeDrill(e.target.value)}
+                    disabled={!activeEventNav}
+                    className={`w-full text-xs font-bold rounded-lg px-2.5 py-1 transition-colors cursor-pointer border ${
+                      activeDrillNav
+                        ? "bg-white border-amber-500 text-amber-900 font-black shadow-2xs"
+                        : !activeEventNav
+                        ? "bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed"
+                        : "bg-white border-slate-300 text-slate-700"
+                    }`}
+                  >
+                    <option value="all_drills_in_day">
+                      {activeEventNav ? "── All Drills Today (Day Total) ──" : "(Select Practice Day First)"}
+                    </option>
+                    {activeEventNav &&
+                      getDrillsForPracticeEvent(activeEventNav.id).map((d) => (
+                        <option key={d.id} value={d.id}>
+                          🎯 {d.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Drill-down Sub-navigation */}
+          {/* Drill-down Sub-navigation Cards */}
           {subNavOptions.length > 0 && (
             <div className="bg-slate-100 p-3 sm:p-4 border-b border-slate-200 shadow-sm">
               <div className="flex flex-col gap-2">
-                {currentNav.level === "season" && currentNav.id === "all" && (
-                  <div className="flex items-center gap-1.5 pb-1 overflow-x-auto scrollbar-hide">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 mr-1 flex-shrink-0">
-                      Filter Cards:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setSubnavCategoryFilter("all")}
-                      className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
-                        subnavCategoryFilter === "all"
-                          ? "bg-slate-800 text-white shadow-xs"
-                          : "bg-white text-slate-600 hover:bg-slate-200"
-                      }`}
-                    >
-                      All Events ({subNavOptions.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSubnavCategoryFilter("games")}
-                      className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
-                        subnavCategoryFilter === "games"
-                          ? "bg-blue-700 text-white shadow-xs"
-                          : "bg-white text-slate-600 hover:bg-slate-200"
-                      }`}
-                    >
-                      🏐 Games & Tournaments (
-                      {subNavOptions.filter((o) => !o.isPractice).length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSubnavCategoryFilter("practices")}
-                      className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
-                        subnavCategoryFilter === "practices"
-                          ? "bg-amber-700 text-white shadow-xs"
-                          : "bg-white text-slate-600 hover:bg-slate-200"
-                      }`}
-                    >
-                      📋 Practices (
-                      {subNavOptions.filter((o) => o.isPractice).length})
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <ListFilter size={13} className="text-[#0033A0]" />
+                    {currentNav.level === "season"
+                      ? isPracticeBranch
+                        ? "Select Practice Day:"
+                        : isGamesBranch
+                        ? "Select Tournament or Game Day:"
+                        : "Select Event to Drill Down:"
+                      : currentNav.level === "event"
+                      ? isPracticeBranch
+                        ? "Select Drill on This Day:"
+                        : "Select Specific Game:"
+                      : currentNav.level === "match"
+                      ? "Select Set:"
+                      : currentNav.level === "drill"
+                      ? "Jump to Another Drill on This Day:"
+                      : currentNav.level === "set"
+                      ? "Jump to Another Set in This Game:"
+                      : "Available Sub-Sections:"}
+                  </span>
+
+                  {currentNav.level === "season" && currentNav.id === "all" && (
+                    <div className="flex items-center gap-1 pb-1 overflow-x-auto scrollbar-hide">
+                      <button
+                        type="button"
+                        onClick={() => setSubnavCategoryFilter("all")}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                          subnavCategoryFilter === "all"
+                            ? "bg-slate-800 text-white shadow-xs"
+                            : "bg-white text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        All ({subNavOptions.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubnavCategoryFilter("games")}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                          subnavCategoryFilter === "games"
+                            ? "bg-blue-700 text-white shadow-xs"
+                            : "bg-white text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        Games ({subNavOptions.filter((o) => !o.isPractice).length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubnavCategoryFilter("practices")}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                          subnavCategoryFilter === "practices"
+                            ? "bg-amber-700 text-white shadow-xs"
+                            : "bg-white text-slate-600 hover:bg-slate-200"
+                        }`}
+                      >
+                        Practices ({subNavOptions.filter((o) => o.isPractice).length})
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 <div className="flex overflow-x-auto gap-2 sm:gap-3 pb-1 scrollbar-hide items-center">
                   {subNavOptions
@@ -8949,35 +9516,53 @@ export default function App() {
                     .map((opt) => (
                       <div
                         key={opt.id}
-                        className="flex-shrink-0 flex items-center bg-white border border-slate-300 rounded-xl overflow-hidden shadow-xs hover:border-[#0033A0] transition-all group"
+                        className={`flex-shrink-0 flex items-center bg-white border rounded-xl overflow-hidden shadow-xs transition-all group ${
+                          opt.isActive
+                            ? "border-[#0033A0] ring-2 ring-[#0033A0]/25 bg-blue-50/30"
+                            : "border-slate-300 hover:border-[#0033A0]"
+                        }`}
                       >
                         <button
                           onClick={() =>
                             navigateStats(opt.level, opt.id, opt.name)
                           }
-                          className="px-3 sm:px-4 py-2 text-slate-700 font-bold text-xs sm:text-sm whitespace-nowrap hover:bg-[#0033A0] hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
+                          className={`px-3 sm:px-4 py-2 font-bold text-xs sm:text-sm whitespace-nowrap transition-colors flex items-center gap-1.5 cursor-pointer ${
+                            opt.isActive
+                              ? "bg-[#0033A0] text-white"
+                              : "text-slate-700 hover:bg-[#0033A0] hover:text-white"
+                          }`}
                         >
-                          {opt.isPractice && (
-                            <span className="bg-amber-100 text-amber-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
-                              Practice
+                          {opt.level === "drill" || opt.isDrill ? (
+                            <span className="bg-emerald-100 text-emerald-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-1">
+                              <Target size={11} /> Drill
+                            </span>
+                          ) : opt.level === "set" ? (
+                            <span className="bg-violet-100 text-violet-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-1">
+                              <Layers size={11} /> Set
+                            </span>
+                          ) : opt.isPractice ? (
+                            <span className="bg-amber-100 text-amber-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-1">
+                              <Activity size={11} /> Practice Day
+                            </span>
+                          ) : opt.isTournament ? (
+                            <span className="bg-indigo-100 text-indigo-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-1">
+                              <Trophy size={11} /> Tournament
+                            </span>
+                          ) : (
+                            <span className="bg-blue-100 text-blue-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-1">
+                              <Calendar size={11} /> Game Day
                             </span>
                           )}
-                          {opt.isTournament && (
-                            <span className="bg-indigo-100 text-indigo-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
-                              Tournament
-                            </span>
-                          )}
-                          {!opt.isPractice &&
-                            !opt.isTournament &&
-                            opt.level === "event" && (
-                              <span className="bg-blue-100 text-blue-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
-                                Game Day
-                              </span>
-                            )}
+
                           <span>{opt.name}</span>
+                          {opt.score && (
+                            <span className="text-[10px] opacity-85 font-mono ml-0.5">
+                              [{opt.score}]
+                            </span>
+                          )}
                           {opt.matchCount && opt.matchCount > 1 && (
                             <span className="text-[10px] opacity-75 font-normal">
-                              ({opt.matchCount} games)
+                              ({opt.matchCount} {opt.isPractice ? "drills" : "games"})
                             </span>
                           )}
                         </button>
@@ -8985,6 +9570,17 @@ export default function App() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (opt.level === "drill") {
+                                if (
+                                  window.confirm(
+                                    `⚠️ DELETE DRILL: Are you sure you want to delete "${opt.name}"? All stats recorded during this drill will be permanently erased.`,
+                                  )
+                                ) {
+                                  if (opt.setId) handleDeleteSet(opt.setId);
+                                  else if (opt.matchId) handleDeleteMatch(opt.matchId);
+                                }
+                                return;
+                              }
                               if (opt.level === "match")
                                 handleDeleteMatch(opt.id);
                               if (opt.level === "set") handleDeleteSet(opt.id);
