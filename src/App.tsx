@@ -41,6 +41,8 @@ import {
   Search,
   Filter,
   Check,
+  Calendar,
+  Layers,
 } from "lucide-react";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
@@ -644,6 +646,36 @@ export default function App() {
   } | null>(null);
   const [hiddenPracticePlayers, setHiddenPracticePlayers] = useState<string[]>([]);
   const [hiddenPlayerIds, setHiddenPlayerIds] = useState<string[]>([]);
+
+  const isPlayerHidden = (playerOrId: any) => {
+    if (!playerOrId) return false;
+    const idStr = typeof playerOrId === "object" ? String(playerOrId.id ?? playerOrId.name) : String(playerOrId);
+    const nameStr = typeof playerOrId === "object" && playerOrId.name ? String(playerOrId.name).trim().toLowerCase() : "";
+    return hiddenPlayerIds.some((hId) => {
+      const hStr = String(hId);
+      return hStr === idStr || (nameStr !== "" && hStr.trim().toLowerCase() === nameStr);
+    });
+  };
+
+  const toggleHidePlayer = (playerOrId: any) => {
+    if (!playerOrId) return;
+    const idStr = typeof playerOrId === "object" ? String(playerOrId.id ?? playerOrId.name) : String(playerOrId);
+    const nameStr = typeof playerOrId === "object" && playerOrId.name ? String(playerOrId.name).trim().toLowerCase() : "";
+    setHiddenPlayerIds((prev) => {
+      const exists = prev.some((hId) => {
+        const hStr = String(hId);
+        return hStr === idStr || (nameStr !== "" && hStr.trim().toLowerCase() === nameStr);
+      });
+      if (exists) {
+        return prev.filter((hId) => {
+          const hStr = String(hId);
+          return hStr !== idStr && (nameStr === "" || hStr.trim().toLowerCase() !== nameStr);
+        });
+      } else {
+        return [...prev, idStr];
+      }
+    });
+  };
   const [showPlayerFilterModal, setShowPlayerFilterModal] = useState(false);
   const [showPracticeStats, setShowPracticeStats] = useState(false);
   const [showStatCorrectionModal, setShowStatCorrectionModal] = useState(false);
@@ -706,8 +738,9 @@ export default function App() {
 
   // Hierarchical Stats Navigation State
   const [statsPath, setStatsPath] = useState([
-    { level: "season", id: "all", name: "Season Totals" },
+    { level: "season", id: "all", name: "Season Totals (Game & Practice)" },
   ]);
+  const [subnavCategoryFilter, setSubnavCategoryFilter] = useState("all");
   const [expandedOppTeams, setExpandedOppTeams] = useState({});
   const isProcessingPointRef = useRef(false);
 
@@ -2336,7 +2369,9 @@ export default function App() {
   // STATS CALCULATION ENGINE
   // -------------------------------------------------------------
   const viewStatsFromMenu = () => {
-    setStatsPath([{ level: "season", id: "all", name: "Season Totals" }]);
+    setStatsPath([
+      { level: "season", id: "all", name: "Season Totals (Game & Practice)" },
+    ]);
     setView("stats");
   };
 
@@ -2345,12 +2380,20 @@ export default function App() {
     const eventDetails = getEventDetails(activeMatch);
     if (activeMatch.type === "Practice") {
       setStatsPath([
-        { level: "season", id: "all", name: "Season Totals" },
+        {
+          level: "season",
+          id: "practice",
+          name: "Season Totals (Practice Only)",
+        },
         { level: "event", id: eventDetails.id, name: eventDetails.name },
       ]);
     } else {
       setStatsPath([
-        { level: "season", id: "all", name: "Season Totals" },
+        {
+          level: "season",
+          id: "games",
+          name: "Season Totals (Games Only)",
+        },
         { level: "event", id: eventDetails.id, name: eventDetails.name },
         {
           level: "match",
@@ -2362,39 +2405,239 @@ export default function App() {
     setView("stats");
   };
 
+  const setSeasonScope = (scope) => {
+    const scopeNames = {
+      all: "Season Totals (Game & Practice)",
+      games: "Season Totals (Games Only)",
+      practice: "Season Totals (Practice Only)",
+    };
+    setStatsPath([{ level: "season", id: scope, name: scopeNames[scope] }]);
+  };
+
+  const gameCount = useMemo(() => {
+    return appData.matches.filter((m) => m.type !== "Practice").length;
+  }, [appData.matches]);
+
+  const practiceCount = useMemo(() => {
+    return appData.matches.filter((m) => m.type === "Practice").length;
+  }, [appData.matches]);
+
+  const { tournamentsList, gameMatchesList, practicesList } = useMemo(() => {
+    const tourneys = {};
+    const gameMatches = [];
+    const practices = {};
+
+    appData.matches.forEach((m) => {
+      const dateStr = m.date
+        ? new Date(m.date).toLocaleDateString()
+        : "Unknown Date";
+      if (m.type === "Practice") {
+        const detail = getEventDetails(m);
+        if (!practices[detail.id]) {
+          practices[detail.id] = {
+            id: detail.id,
+            name: detail.name,
+            date: m.date,
+            count: 1,
+          };
+        } else {
+          practices[detail.id].count += 1;
+        }
+      } else {
+        if (m.type === "Tournament" && m.title) {
+          const detail = getEventDetails(m);
+          if (!tourneys[detail.id]) {
+            tourneys[detail.id] = {
+              id: detail.id,
+              name: detail.name,
+              date: m.date,
+              count: 1,
+            };
+          } else {
+            tourneys[detail.id].count += 1;
+          }
+        }
+        gameMatches.push({
+          id: m.id,
+          opponent: m.opponent || "Opponent",
+          dateStr,
+          date: m.date,
+          type: m.type,
+          title: m.title,
+        });
+      }
+    });
+
+    return {
+      tournamentsList: Object.values(tourneys).sort(
+        (a: any, b: any) =>
+          new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+      ),
+      gameMatchesList: gameMatches.sort(
+        (a: any, b: any) =>
+          new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+      ),
+      practicesList: Object.values(practices).sort(
+        (a: any, b: any) =>
+          new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+      ),
+    };
+  }, [appData.matches]);
+
+  const handleQuickSelect = (val) => {
+    if (!val) return;
+    if (val === "season_all") {
+      setSeasonScope("all");
+      return;
+    }
+    if (val === "season_games") {
+      setSeasonScope("games");
+      return;
+    }
+    if (val === "season_practice") {
+      setSeasonScope("practice");
+      return;
+    }
+    if (val.startsWith("event_")) {
+      const eventId = val.replace("event_", "");
+      const isPractice =
+        eventId.startsWith("practice_") || eventId === "practice_sessions";
+      const sampleMatch = appData.matches.find(
+        (m) => getEventDetails(m).id === eventId
+      );
+      const eventName = sampleMatch
+        ? getEventDetails(sampleMatch).name
+        : eventId;
+      if (isPractice) {
+        setStatsPath([
+          {
+            level: "season",
+            id: "practice",
+            name: "Season Totals (Practice Only)",
+          },
+          { level: "event", id: eventId, name: eventName },
+        ]);
+      } else {
+        setStatsPath([
+          {
+            level: "season",
+            id: "games",
+            name: "Season Totals (Games Only)",
+          },
+          { level: "event", id: eventId, name: eventName },
+        ]);
+      }
+      return;
+    }
+    if (val.startsWith("match_")) {
+      const matchId = val.replace("match_", "");
+      const match = appData.matches.find((m) => m.id === matchId);
+      if (!match) return;
+      const detail = getEventDetails(match);
+      if (match.type === "Practice") {
+        setStatsPath([
+          {
+            level: "season",
+            id: "practice",
+            name: "Season Totals (Practice Only)",
+          },
+          { level: "event", id: detail.id, name: detail.name },
+          {
+            level: "match",
+            id: match.id,
+            name: match.title || "Drill Session",
+          },
+        ]);
+      } else {
+        setStatsPath([
+          {
+            level: "season",
+            id: "games",
+            name: "Season Totals (Games Only)",
+          },
+          { level: "event", id: detail.id, name: detail.name },
+          { level: "match", id: match.id, name: `vs ${match.opponent}` },
+        ]);
+      }
+      return;
+    }
+  };
+
+  const currentNav = statsPath[statsPath.length - 1] || {
+    level: "season",
+    id: "all",
+    name: "Season Totals (Game & Practice)",
+  };
+
+  const currentQuickSelectValue = useMemo(() => {
+    if (currentNav.level === "season") {
+      return `season_${currentNav.id || "all"}`;
+    }
+    if (currentNav.level === "event") {
+      return `event_${currentNav.id}`;
+    }
+    if (currentNav.level === "match") {
+      return `match_${currentNav.id}`;
+    }
+    if (currentNav.level === "set") {
+      return `set_${currentNav.id}`;
+    }
+    return "season_all";
+  }, [currentNav]);
+
   const navigateStats = (level, id, name) =>
     setStatsPath((prev) => [...prev, { level, id, name }]);
   const popStatsTo = (index) =>
     setStatsPath((prev) => prev.slice(0, index + 1));
-  const currentNav = statsPath[statsPath.length - 1] || {
-    level: "season",
-    id: "all",
-    name: "Season Totals",
-  };
 
   const filteredStats = useMemo(() => {
     if (currentNav.level === "season") {
-      const nonPracticeMatchIds = appData.matches
-        .filter((m) => m.type !== "Practice")
-        .map((m) => m.id);
-      return appData.stats.filter((s) =>
-        nonPracticeMatchIds.includes(s.matchId),
+      const allMatchIds = new Set(appData.matches.map((m) => m.id));
+      if (currentNav.id === "practice") {
+        const practiceMatchIds = new Set(
+          appData.matches
+            .filter((m) => m.type === "Practice")
+            .map((m) => m.id)
+        );
+        return appData.stats.filter((s) => practiceMatchIds.has(s.matchId));
+      }
+      if (currentNav.id === "games") {
+        const gameMatchIds = new Set(
+          appData.matches
+            .filter((m) => m.type !== "Practice")
+            .map((m) => m.id)
+        );
+        return appData.stats.filter((s) => gameMatchIds.has(s.matchId));
+      }
+      // "all" or default: Game AND Practice combined!
+      return appData.stats.filter(
+        (s) => allMatchIds.has(s.matchId) || !s.matchId
       );
     }
     if (currentNav.level === "event") {
       if (currentNav.id === "practice_sessions") {
-        const practiceMatchIds = appData.matches
-          .filter((m) => m.type === "Practice")
-          .map((m) => m.id);
-        return appData.stats.filter((s) =>
-          practiceMatchIds.includes(s.matchId),
+        const practiceMatchIds = new Set(
+          appData.matches
+            .filter((m) => m.type === "Practice")
+            .map((m) => m.id)
         );
+        return appData.stats.filter((s) => practiceMatchIds.has(s.matchId));
+      }
+      if (currentNav.id === "all_games") {
+        const gameMatchIds = new Set(
+          appData.matches
+            .filter((m) => m.type !== "Practice")
+            .map((m) => m.id)
+        );
+        return appData.stats.filter((s) => gameMatchIds.has(s.matchId));
       }
       // Matches all matches (practices or games) belonging to this specific day/event
-      const matchIds = appData.matches
-        .filter((m) => getEventDetails(m).id === currentNav.id)
-        .map((m) => m.id);
-      return appData.stats.filter((s) => matchIds.includes(s.matchId));
+      const matchIds = new Set(
+        appData.matches
+          .filter((m) => getEventDetails(m).id === currentNav.id)
+          .map((m) => m.id)
+      );
+      return appData.stats.filter((s) => matchIds.has(s.matchId));
     }
     if (currentNav.level === "match")
       return appData.stats.filter((s) => s.matchId === currentNav.id);
@@ -2405,26 +2648,52 @@ export default function App() {
 
   const subNavOptions = useMemo(() => {
     if (currentNav.level === "season") {
-      const events = {};
-      
+      const scope = currentNav.id || "all";
+      const events: Record<string, any> = {};
+
       // 1. All game matches and tournaments
-      appData.matches
-        .filter((m) => m.type !== "Practice")
-        .forEach((m) => {
-          const detail = getEventDetails(m);
-          if (!events[detail.id])
-            events[detail.id] = { ...detail, level: "event", date: m.date };
-        });
+      if (scope === "all" || scope === "games") {
+        appData.matches
+          .filter((m) => m.type !== "Practice")
+          .forEach((m) => {
+            const detail = getEventDetails(m);
+            if (!events[detail.id]) {
+              events[detail.id] = {
+                ...detail,
+                level: "event",
+                date: m.date,
+                isPractice: false,
+                isTournament: m.type === "Tournament",
+                matchCount: 1,
+              };
+            } else {
+              events[detail.id].matchCount =
+                (events[detail.id].matchCount || 1) + 1;
+            }
+          });
+      }
 
       // 2. All practice days (grouped by same day under one tab!)
-      appData.matches
-        .filter((m) => m.type === "Practice")
-        .forEach((m) => {
-          const detail = getEventDetails(m);
-          if (!events[detail.id]) {
-            events[detail.id] = { ...detail, level: "event", date: m.date, isPractice: true };
-          }
-        });
+      if (scope === "all" || scope === "practice") {
+        appData.matches
+          .filter((m) => m.type === "Practice")
+          .forEach((m) => {
+            const detail = getEventDetails(m);
+            if (!events[detail.id]) {
+              events[detail.id] = {
+                ...detail,
+                level: "event",
+                date: m.date,
+                isPractice: true,
+                isTournament: false,
+                matchCount: 1,
+              };
+            } else {
+              events[detail.id].matchCount =
+                (events[detail.id].matchCount || 1) + 1;
+            }
+          });
+      }
 
       // Sort newest events first
       return Object.values(events).sort((a: any, b: any) => {
@@ -2435,7 +2704,7 @@ export default function App() {
     }
     if (currentNav.level === "event") {
       if (currentNav.id === "practice_sessions") {
-        const practiceDays = {};
+        const practiceDays: Record<string, any> = {};
         appData.matches
           .filter((m) => m.type === "Practice")
           .forEach((m) => {
@@ -2446,6 +2715,7 @@ export default function App() {
                 id: detail.id,
                 name: detail.name,
                 date: m.date,
+                isPractice: true,
               };
             }
           });
@@ -2459,18 +2729,19 @@ export default function App() {
       const isPracticeEvent = currentNav.id.startsWith("practice_");
       if (isPracticeEvent) {
         const matchesOnDay = appData.matches.filter(
-          (m) => getEventDetails(m).id === currentNav.id,
+          (m) => getEventDetails(m).id === currentNav.id
         );
         if (matchesOnDay.length > 1) {
           return matchesOnDay.map((m, idx) => ({
             level: "match",
             id: m.id,
             name: `${m.title || "Drill"} #${idx + 1} (${m.date ? new Date(m.date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Session"})`,
+            isPractice: true,
           }));
         }
         if (matchesOnDay.length === 1) {
           const daySets = appData.sets.filter(
-            (s) => s.matchId === matchesOnDay[0].id,
+            (s) => s.matchId === matchesOnDay[0].id
           );
           if (daySets.length > 1) {
             return daySets
@@ -2479,6 +2750,7 @@ export default function App() {
                 level: "set",
                 id: s.id,
                 name: `Drill / Set ${s.setNum}`,
+                isPractice: true,
               }));
           }
         }
@@ -2488,9 +2760,14 @@ export default function App() {
       return appData.matches
         .filter(
           (m) =>
-            getEventDetails(m).id === currentNav.id && m.type !== "Practice",
+            getEventDetails(m).id === currentNav.id && m.type !== "Practice"
         )
-        .map((m) => ({ level: "match", id: m.id, name: `vs ${m.opponent}` }));
+        .map((m) => ({
+          level: "match",
+          id: m.id,
+          name: `vs ${m.opponent}`,
+          isPractice: false,
+        }));
     }
     if (currentNav.level === "match")
       return appData.sets
@@ -2680,11 +2957,11 @@ export default function App() {
     });
 
     const visiblePlayers = allPlayers.filter((p) => {
-      if (hiddenPlayerIds.includes(p.id)) return false;
+      if (isPlayerHidden(p)) return false;
       return true;
     });
 
-    const hasHiddenPlayers = allPlayers.some((p) => hiddenPlayerIds.includes(p.id));
+    const hasHiddenPlayers = allPlayers.some((p) => isPlayerHidden(p));
 
     const teamTot = {
       passCount: 0,
@@ -2894,11 +3171,11 @@ export default function App() {
     });
 
     const visiblePlayers = allPlayers.filter((p) => {
-      if (hiddenPlayerIds.includes(p.id)) return false;
+      if (isPlayerHidden(p)) return false;
       return true;
     });
 
-    const hasHiddenPlayers = allPlayers.some((p) => hiddenPlayerIds.includes(p.id));
+    const hasHiddenPlayers = allPlayers.some((p) => isPlayerHidden(p));
 
     const teamTot = {
       passCount: 0,
@@ -8458,88 +8735,330 @@ export default function App() {
                   )}
                   <button
                     onClick={() => popStatsTo(idx)}
-                    className={`flex-shrink-0 hover:text-white transition-colors ${
+                    className={`flex-shrink-0 hover:text-white transition-colors cursor-pointer ${
                       idx === statsPath.length - 1
-                        ? "text-white bg-white/20 px-3 py-1 rounded-full"
+                        ? "text-white bg-white/20 px-3 py-1 rounded-full font-black"
                         : "text-slate-400"
                     }`}
                   >
-                    {nav.name}
+                    {idx === 0 ? (
+                      <span className="flex items-center gap-1.5">
+                        <BarChart3 size={13} className="text-[#0033A0]" />
+                        <span>{nav.name}</span>
+                      </span>
+                    ) : (
+                      nav.name
+                    )}
                   </button>
                 </React.Fragment>
               ))}
             </div>
           </div>
 
+          {/* Season Scope & Quick Jump Selector Bar */}
+          <div className="bg-white border-b border-slate-200 px-3 sm:px-6 py-2.5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 shadow-2xs">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-0.5">
+              <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider mr-1 flex-shrink-0">
+                Scope:
+              </span>
+              <button
+                type="button"
+                onClick={() => setSeasonScope("all")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                  currentNav.level === "season" && currentNav.id === "all"
+                    ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
+                    : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
+                }`}
+                title="Combined season totals including all matches and practices"
+              >
+                <span>🌟 All (Game & Practice)</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    currentNav.level === "season" && currentNav.id === "all"
+                      ? "bg-white/20 text-white"
+                      : "bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  {gameCount + practiceCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSeasonScope("games")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                  currentNav.level === "season" && currentNav.id === "games"
+                    ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
+                    : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
+                }`}
+                title="Season totals for games and tournaments only (excludes practice)"
+              >
+                <span>🏐 Games Only</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    currentNav.level === "season" && currentNav.id === "games"
+                      ? "bg-white/20 text-white"
+                      : "bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  {gameCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSeasonScope("practice")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                  currentNav.level === "season" && currentNav.id === "practice"
+                    ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
+                    : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
+                }`}
+                title="Season totals for practice sessions only"
+              >
+                <span>📋 Practice Only</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    currentNav.level === "season" && currentNav.id === "practice"
+                      ? "bg-white/20 text-white"
+                      : "bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  {practiceCount}
+                </span>
+              </button>
+            </div>
+
+            {/* Quick-Jump Dropdown */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <label
+                htmlFor="quick-stats-nav"
+                className="text-[11px] font-bold text-slate-500 whitespace-nowrap hidden sm:inline"
+              >
+                Jump To:
+              </label>
+              <select
+                id="quick-stats-nav"
+                value={currentQuickSelectValue}
+                onChange={(e) => handleQuickSelect(e.target.value)}
+                className="w-full sm:w-auto bg-slate-50 hover:bg-white text-slate-800 text-xs font-bold border border-slate-300 rounded-lg px-3 py-1.5 shadow-2xs focus:ring-2 focus:ring-[#0033A0] focus:border-[#0033A0] transition-colors cursor-pointer"
+              >
+                <optgroup label="── SEASON TOTALS ──">
+                  <option value="season_all">
+                    🌟 Season Totals (Game & Practice)
+                  </option>
+                  <option value="season_games">
+                    🏐 Season Totals (Games Only)
+                  </option>
+                  <option value="season_practice">
+                    📋 Season Totals (Practice Only)
+                  </option>
+                </optgroup>
+                {tournamentsList.length > 0 && (
+                  <optgroup label="── TOURNAMENTS ──">
+                    {tournamentsList.map((t: any) => (
+                      <option key={t.id} value={`event_${t.id}`}>
+                        🏆 {t.name} ({t.count} game{t.count !== 1 ? "s" : ""})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {gameMatchesList.length > 0 && (
+                  <optgroup label="── SPECIFIC GAMES ──">
+                    {gameMatchesList.map((m: any) => (
+                      <option key={m.id} value={`match_${m.id}`}>
+                        🏐 vs {m.opponent} ({m.dateStr})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {practicesList.length > 0 && (
+                  <optgroup label="── SPECIFIC PRACTICES ──">
+                    {practicesList.map((p: any) => (
+                      <option key={p.id} value={`event_${p.id}`}>
+                        📋 {p.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </div>
+          </div>
+
           {/* Drill-down Sub-navigation */}
           {subNavOptions.length > 0 && (
             <div className="bg-slate-100 p-3 sm:p-4 border-b border-slate-200 shadow-sm">
-              <div className="flex overflow-x-auto gap-2 sm:gap-3 pb-2 scrollbar-hide">
-                {subNavOptions.map((opt) => (
-                  <div
-                    key={opt.id}
-                    className="flex-shrink-0 flex items-center bg-white border border-slate-300 rounded-xl overflow-hidden shadow-sm hover:border-[#0033A0] transition-colors group"
-                  >
+              <div className="flex flex-col gap-2">
+                {currentNav.level === "season" && currentNav.id === "all" && (
+                  <div className="flex items-center gap-1.5 pb-1 overflow-x-auto scrollbar-hide">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 mr-1 flex-shrink-0">
+                      Filter Cards:
+                    </span>
                     <button
-                      onClick={() => navigateStats(opt.level, opt.id, opt.name)}
-                      className="px-4 py-2 text-slate-700 font-bold text-xs sm:text-sm whitespace-nowrap hover:bg-[#0033A0] hover:text-white transition-colors"
+                      type="button"
+                      onClick={() => setSubnavCategoryFilter("all")}
+                      className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                        subnavCategoryFilter === "all"
+                          ? "bg-slate-800 text-white shadow-xs"
+                          : "bg-white text-slate-600 hover:bg-slate-200"
+                      }`}
                     >
-                      {opt.name}
+                      All Events ({subNavOptions.length})
                     </button>
-                    {teamInfo.role === "coach" && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (opt.level === "match") handleDeleteMatch(opt.id);
-                          if (opt.level === "set") handleDeleteSet(opt.id);
-                          if (opt.level === "event") {
-                            // Find all matches for this event and delete them
-                            if (
-                              window.confirm(
-                                `⚠️ DELETE DAY: Are you sure you want to delete this entire day/event "${opt.name}"? This will permanently erase all games and stats within it.`,
-                              )
-                            ) {
-                              const matchesToDelete = appData.matches.filter(
-                                (m) =>
-                                  getEventDetails(m).id === opt.id &&
-                                  m.type !== "Practice",
-                              );
-                              if (opt.id === "practice_sessions") {
-                                matchesToDelete.push(
-                                  ...appData.matches.filter(
-                                    (m) => m.type === "Practice",
-                                  ),
-                                );
-                              }
-                              // Re-use handleDeleteMatch for each inside an async loop? It has UI prompts...
-                              // We need a silent bulk delete, or we just extract the bulk delete logic
-                              handleDeleteEvent(
-                                opt.id,
-                                opt.id === "practice_sessions",
-                              );
-                            }
-                          }
-                        }}
-                        className="px-2 py-2 text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors border-l border-slate-200"
-                        title="Delete"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSubnavCategoryFilter("games")}
+                      className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                        subnavCategoryFilter === "games"
+                          ? "bg-blue-700 text-white shadow-xs"
+                          : "bg-white text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      🏐 Games & Tournaments (
+                      {subNavOptions.filter((o) => !o.isPractice).length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSubnavCategoryFilter("practices")}
+                      className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                        subnavCategoryFilter === "practices"
+                          ? "bg-amber-700 text-white shadow-xs"
+                          : "bg-white text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      📋 Practices (
+                      {subNavOptions.filter((o) => o.isPractice).length})
+                    </button>
                   </div>
-                ))}
+                )}
+
+                <div className="flex overflow-x-auto gap-2 sm:gap-3 pb-1 scrollbar-hide items-center">
+                  {subNavOptions
+                    .filter((opt) => {
+                      if (
+                        currentNav.level !== "season" ||
+                        currentNav.id !== "all"
+                      ) {
+                        return true;
+                      }
+                      if (subnavCategoryFilter === "games")
+                        return !opt.isPractice;
+                      if (subnavCategoryFilter === "practices")
+                        return opt.isPractice;
+                      return true;
+                    })
+                    .map((opt) => (
+                      <div
+                        key={opt.id}
+                        className="flex-shrink-0 flex items-center bg-white border border-slate-300 rounded-xl overflow-hidden shadow-xs hover:border-[#0033A0] transition-all group"
+                      >
+                        <button
+                          onClick={() =>
+                            navigateStats(opt.level, opt.id, opt.name)
+                          }
+                          className="px-3 sm:px-4 py-2 text-slate-700 font-bold text-xs sm:text-sm whitespace-nowrap hover:bg-[#0033A0] hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
+                        >
+                          {opt.isPractice && (
+                            <span className="bg-amber-100 text-amber-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
+                              Practice
+                            </span>
+                          )}
+                          {opt.isTournament && (
+                            <span className="bg-indigo-100 text-indigo-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
+                              Tournament
+                            </span>
+                          )}
+                          {!opt.isPractice &&
+                            !opt.isTournament &&
+                            opt.level === "event" && (
+                              <span className="bg-blue-100 text-blue-800 group-hover:bg-white/20 group-hover:text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
+                                Game Day
+                              </span>
+                            )}
+                          <span>{opt.name}</span>
+                          {opt.matchCount && opt.matchCount > 1 && (
+                            <span className="text-[10px] opacity-75 font-normal">
+                              ({opt.matchCount} games)
+                            </span>
+                          )}
+                        </button>
+                        {teamInfo.role === "coach" && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (opt.level === "match")
+                                handleDeleteMatch(opt.id);
+                              if (opt.level === "set") handleDeleteSet(opt.id);
+                              if (opt.level === "event") {
+                                if (
+                                  window.confirm(
+                                    `⚠️ DELETE DAY: Are you sure you want to delete this entire day/event "${opt.name}"? This will permanently erase all games and stats within it.`,
+                                  )
+                                ) {
+                                  handleDeleteEvent(
+                                    opt.id,
+                                    opt.id === "practice_sessions" ||
+                                      opt.isPractice,
+                                  );
+                                }
+                              }
+                            }}
+                            className="px-2.5 py-2 text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors border-l border-slate-200 cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                </div>
               </div>
             </div>
           )}
 
           <div className="p-3 sm:p-8 flex-1 overflow-y-auto bg-slate-50/50">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 sm:mb-4 gap-3">
-              <h2 className="text-lg sm:text-xl font-black text-slate-800 tracking-widest uppercase flex items-center">
-                <Shield className="mr-2 text-[#0033A0]" size={18} /> Lancers{" "}
-                <span className="text-slate-400 text-sm ml-2 hidden sm:inline">
-                  ({currentNav.name})
-                </span>
-              </h2>
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-lg sm:text-xl font-black text-slate-800 tracking-widest uppercase flex items-center">
+                    <Shield className="mr-2 text-[#0033A0]" size={18} /> Lancers
+                  </h2>
+                  <span className="bg-[#0033A0]/10 text-[#0033A0] text-xs font-black px-2.5 py-0.5 rounded-full border border-[#0033A0]/20">
+                    {currentNav.name}
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-slate-500">
+                  {currentNav.level === "season" && currentNav.id === "all" && (
+                    <span>
+                      Combined season totals across all {gameCount} game
+                      {gameCount !== 1 ? "s" : ""} & tournament
+                      {gameCount !== 1 ? "s" : ""} and {practiceCount} practice session
+                      {practiceCount !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                  {currentNav.level === "season" && currentNav.id === "games" && (
+                    <span>
+                      Season totals for {gameCount} game
+                      {gameCount !== 1 ? "s" : ""} & tournament
+                      {gameCount !== 1 ? "s" : ""} (practices excluded)
+                    </span>
+                  )}
+                  {currentNav.level === "season" && currentNav.id === "practice" && (
+                    <span>
+                      Season totals for {practiceCount} practice session
+                      {practiceCount !== 1 ? "s" : ""} only
+                    </span>
+                  )}
+                  {currentNav.level === "event" && (
+                    <span>Filtered to event: {currentNav.name}</span>
+                  )}
+                  {currentNav.level === "match" && (
+                    <span>Filtered to match: {currentNav.name}</span>
+                  )}
+                  {currentNav.level === "set" && (
+                    <span>Filtered to {currentNav.name}</span>
+                  )}
+                </p>
+              </div>
               <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 w-full sm:w-auto">
                 <button
                   type="button"
@@ -8561,7 +9080,7 @@ export default function App() {
                     {
                       Object.values(uccStats).filter(
                         (p) =>
-                          !hiddenPlayerIds.includes(p.id) &&
+                          !isPlayerHidden(p) &&
                           (showRetired || !p.isRetired)
                       ).length
                     }
@@ -8575,7 +9094,14 @@ export default function App() {
                   </span>
                   {hiddenPlayerIds.length > 0 && (
                     <span className="bg-amber-500 text-white rounded-full px-1.5 py-0.5 text-[9px] font-black">
-                      {hiddenPlayerIds.length} hidden
+                      {
+                        Object.values(uccStats).filter(
+                          (p) =>
+                            isPlayerHidden(p) &&
+                            (showRetired || !p.isRetired)
+                        ).length
+                      }{" "}
+                      hidden
                     </span>
                   )}
                 </button>
@@ -8613,34 +9139,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Hidden players alert banner */}
-            {hiddenPlayerIds.length > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 sm:p-3 mb-4 flex items-center justify-between text-xs text-amber-900 font-bold shadow-sm">
-                <div className="flex items-center gap-2">
-                  <EyeOff size={16} className="text-amber-600 shrink-0" />
-                  <span>
-                    <strong>{hiddenPlayerIds.length}</strong> player
-                    {hiddenPlayerIds.length !== 1 ? "s" : ""} hidden. Hidden
-                    players' rows are removed. <strong>Team Totals</strong> reflect the whole team average, while <strong>Shown Players (Avg)</strong> reflects only visible players.
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => setHiddenPlayerIds([])}
-                    className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded-lg text-xs font-black transition-colors"
-                  >
-                    Show All
-                  </button>
-                  <button
-                    onClick={() => setShowPlayerFilterModal(true)}
-                    className="bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 px-2.5 py-1 rounded-lg text-xs font-black transition-colors"
-                  >
-                    Manage
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Main Lancers Stats Table */}
             {(() => {
               const allUccPlayers = Object.values(uccStats).filter((p) => {
@@ -8649,7 +9147,7 @@ export default function App() {
               });
 
               const visibleUccPlayers = allUccPlayers.filter((p) => {
-                if (hiddenPlayerIds.includes(p.id)) return false;
+                if (isPlayerHidden(p)) return false;
                 if (statFilter !== "all" && statFilter !== "") {
                   const searchLower = statFilter.toLowerCase();
                   return (
@@ -8660,7 +9158,8 @@ export default function App() {
                 return true;
               });
 
-              const hasHiddenPlayers = allUccPlayers.some((p) => hiddenPlayerIds.includes(p.id));
+              const hasHiddenPlayers = allUccPlayers.some((p) => isPlayerHidden(p));
+              const hiddenCount = allUccPlayers.filter((p) => isPlayerHidden(p)).length;
 
               // Whole Team Totals & Averages
               const teamTot = allUccPlayers.reduce(
@@ -8835,17 +9334,83 @@ export default function App() {
               const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
               return (
-                <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
-                  {/* Scroll indicator for mobile */}
-                  <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
+                <div className="flex flex-col">
+                  {/* Hidden players alert banner with interactive unhide chips */}
+                  {hasHiddenPlayers && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 sm:p-3.5 mb-4 flex flex-col gap-2.5 text-xs text-amber-900 font-bold shadow-sm">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <EyeOff size={16} className="text-amber-600 shrink-0" />
+                          <span>
+                            <strong>{hiddenCount}</strong> player{hiddenCount !== 1 ? "s" : ""} hidden. Hidden player rows are removed from table & PDF. <strong>Team Totals</strong> reflect the whole team average, while <strong>Shown Players (Avg)</strong> reflects only visible players.
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setHiddenPlayerIds([])}
+                            className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded-lg text-xs font-black transition-colors cursor-pointer"
+                          >
+                            Show All
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowPlayerFilterModal(true)}
+                            className="bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 px-2.5 py-1 rounded-lg text-xs font-black transition-colors cursor-pointer"
+                          >
+                            Manage
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-amber-200/70">
+                        <span className="text-[10px] uppercase font-black tracking-wider text-amber-800 mr-1">
+                          Click to restore row:
+                        </span>
+                        {allUccPlayers
+                          .filter((p) => isPlayerHidden(p))
+                          .map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => toggleHidePlayer(p)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-amber-300 text-amber-900 text-xs hover:bg-amber-100 hover:border-amber-400 transition-colors font-semibold shadow-2xs group cursor-pointer"
+                              title={`Click to show ${p.name}'s row in stats table`}
+                            >
+                              <span className="font-black text-[10px] text-amber-700">
+                                #{p.number || "-"}
+                              </span>
+                              <span>{p.name}</span>
+                              <span className="text-amber-500 group-hover:text-amber-800 font-bold ml-1 text-xs">
+                                ✕
+                              </span>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[800px]">
-                      <thead>
-                        <tr className="bg-slate-100 text-slate-500 text-[9px] sm:text-[10px] tracking-widest uppercase border-b-2 border-slate-200">
-                          <th className="p-2 sm:p-3 font-black w-36 sm:w-44 sticky left-0 bg-slate-100 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
-                            PLAYER
-                          </th>
+                  <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
+                    {/* Scroll indicator for mobile */}
+                    <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse min-w-[800px]">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-500 text-[9px] sm:text-[10px] tracking-widest uppercase border-b-2 border-slate-200">
+                            <th className="p-2 sm:p-3 font-black w-40 sm:w-48 sticky left-0 bg-slate-100 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                              <div className="flex items-center justify-between gap-1">
+                                <span>PLAYER</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPlayerFilterModal(true)}
+                                  className="text-[9px] font-bold text-slate-400 hover:text-indigo-600 tracking-normal normal-case flex items-center gap-0.5 cursor-pointer"
+                                  title="Manage visible players"
+                                >
+                                  <Filter size={10} />
+                                  <span>Filter</span>
+                                </button>
+                              </div>
+                            </th>
                           <th
                             onClick={() =>
                               setStatBreakdownModal({
@@ -9403,36 +9968,37 @@ export default function App() {
                                 key={p.id}
                                 className="hover:bg-blue-50/30 text-[10px] sm:text-xs transition-colors group"
                               >
-                                <td
-                                  onClick={() => setCareerPlayerName(p.name)}
-                                  className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400 cursor-pointer"
-                                  title="Click player name for Career Profile"
-                                >
-                                  <div className="flex items-center space-x-1.5 sm:space-x-2">
+                                <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400">
+                                  <div className="flex items-center justify-between gap-1.5 sm:gap-2">
+                                    <div className="flex items-center space-x-1.5 sm:space-x-2 min-w-0">
+                                      <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#0033A0]/10 text-[#0033A0] font-black flex items-center justify-center text-[9px] sm:text-[10px] shrink-0">
+                                        {p.number || "-"}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setCareerPlayerName(p.name)}
+                                        className="font-bold text-indigo-700 hover:underline hover:text-indigo-950 truncate text-left cursor-pointer"
+                                        title={`Click to view ${p.name}'s Career Profile`}
+                                      >
+                                        {p.name}
+                                      </button>
+                                    </div>
+
                                     <button
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        setHiddenPlayerIds((prev) =>
-                                          prev.includes(p.id)
-                                            ? prev.filter((id) => id !== p.id)
-                                            : [...prev, p.id]
-                                        );
+                                        toggleHidePlayer(p);
                                       }}
-                                      className="text-slate-300 hover:text-amber-600 p-0.5 rounded transition-colors shrink-0"
-                                      title="Hide player from stats & PDF"
+                                      className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md bg-slate-100 hover:bg-amber-100 text-slate-600 hover:text-amber-800 border border-slate-200 hover:border-amber-300 transition-all flex items-center gap-1 text-[10px] font-bold shrink-0 shadow-2xs group/btn cursor-pointer"
+                                      title={`Hide ${p.name}'s row from stats`}
                                     >
-                                      <Eye
-                                        size={13}
-                                        className="text-slate-400 hover:text-amber-600"
+                                      <EyeOff
+                                        size={12}
+                                        className="text-slate-400 group-hover/btn:text-amber-600 shrink-0"
                                       />
+                                      <span className="hidden sm:inline">Hide</span>
                                     </button>
-                                    <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#0033A0]/10 text-[#0033A0] font-black flex items-center justify-center text-[9px] sm:text-[10px] shrink-0">
-                                      {p.number || "-"}
-                                    </span>
-                                    <span className="font-bold text-indigo-700 hover:underline truncate max-w-[80px] sm:max-w-none">
-                                      {p.name}
-                                    </span>
                                   </div>
                                 </td>
                                 {/* PASSING */}
@@ -10037,7 +10603,8 @@ export default function App() {
                     </table>
                   </div>
                 </div>
-              );
+              </div>
+            );
             })()}
 
             <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
@@ -10315,7 +10882,7 @@ export default function App() {
                     {
                       appData.roster.filter(
                         (p) =>
-                          !hiddenPlayerIds.includes(p.id) &&
+                          !isPlayerHidden(p) &&
                           (showRetired || !p.isRetired)
                       ).length
                     }
@@ -10332,7 +10899,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setHiddenPlayerIds([])}
-                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
+                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
                   >
                     Select All
                   </button>
@@ -10342,10 +10909,10 @@ export default function App() {
                       setHiddenPlayerIds(
                         appData.roster
                           .filter((p) => showRetired || !p.isRetired)
-                          .map((p) => p.id)
+                          .map((p) => String(p.id ?? p.name))
                       )
                     }
-                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
+                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
                   >
                     Hide All
                   </button>
@@ -10356,17 +10923,11 @@ export default function App() {
                 {appData.roster
                   .filter((p) => showRetired || !p.isRetired)
                   .map((player) => {
-                    const isHidden = hiddenPlayerIds.includes(player.id);
+                    const isHidden = isPlayerHidden(player);
                     return (
                       <div
                         key={player.id}
-                        onClick={() => {
-                          setHiddenPlayerIds((prev) =>
-                            isHidden
-                              ? prev.filter((id) => id !== player.id)
-                              : [...prev, player.id]
-                          );
-                        }}
+                        onClick={() => toggleHidePlayer(player)}
                         className="py-2.5 px-2 flex items-center justify-between hover:bg-slate-50 rounded-xl cursor-pointer transition-colors"
                       >
                         <div className="flex items-center space-x-3">
