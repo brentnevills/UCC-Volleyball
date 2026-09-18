@@ -12,9 +12,9 @@
     <meta property="og:description" content="Comprehensive volleyball statistics tracking app for UCC Lancers, featuring multi-team management, live match tracking, practice stat analysis, live scout mode with team autocomplete, data correction, and career stats aggregation." />
     <link rel="icon" href="./lancer-logo.png" />
     <link rel="apple-touch-icon" href="./lancer-logo.png" />
-    <script type="module" crossorigin src="./assets/index-Dw0il1wD.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DzM2-k2j.css">
-  <link rel="manifest" href="./manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="./registerSW.js"></script></head>
+    <script type="module" crossorigin src="./assets/index-DRHGvfgG.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BKyKNied.css">
+  <link rel="manifest" href="./manifest.webmanifest"></head>
   <body>
     <div id="root">
       <div id="loading-indicator" style="background: #0f172a; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-family: sans-serif;">
@@ -28,28 +28,16 @@
         if (loadingIndicator) {
           loadingIndicator.innerHTML = `
             <div style="background: #1e1b4b; padding: 30px; border-radius: 24px; border: 1px solid #4338ca; max-width: 400px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
-              <div style="font-size: 40px; margin-bottom: 15px;">🚧</div>
-              <h1 style="color: #fca5a5; font-size: 20px; font-weight: 800; margin-bottom: 10px; text-transform: uppercase;">Build Required</h1>
+              <div style="font-size: 40px; margin-bottom: 15px;">🏐</div>
+              <h1 style="color: #fca5a5; font-size: 20px; font-weight: 800; margin-bottom: 10px; text-transform: uppercase;">App Loading Error</h1>
               <p style="color: #94a3b8; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
-                Your browser is trying to load raw code (<code>.tsx</code>) which it doesn't understand. 
-                This means you are viewing the <b>source code</b> instead of the <b>built app</b>.
+                An issue occurred while loading the application scripts.
               </p>
-              <div style="background: #0f172a; padding: 15px; border-radius: 12px; font-family: monospace; font-size: 12px; color: #818cf8; text-align: left; margin-bottom: 20px;">
-                1. Go to <b>Repo Settings > Pages</b><br>
-                2. Change Branch to <b>gh-pages</b><br>
-                3. Save and refresh
-              </div>
-              <button onclick="window.location.reload()" style="background: #4f46e5; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: 700; cursor: pointer;">Try Again</button>
+              <button onclick="window.location.reload()" style="background: #4f46e5; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: 700; cursor: pointer;">Reload App</button>
             </div>
           `;
         }
       }
-      setTimeout(() => {
-        const loadingIndicator = document.getElementById('loading-indicator');
-        if (loadingIndicator && !window.React) {
-          handleScriptError();
-        }
-      }, 6000);
     </script>
   </body>
 </html>
