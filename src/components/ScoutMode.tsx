@@ -380,17 +380,16 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
           { merge: true },
         );
       } catch (err) {
-        console.error("Failed to sync scout roster to opponent doc:", err);
+        console.warn("Cloud opponent sync skipped or failed (offline?):", err);
       }
-    } else {
-      writeLocalDb({
-        ...appData,
-        opponents: {
-          ...appData.opponents,
-          [safeName]: updatedOpp,
-        },
-      });
     }
+    writeLocalDb({
+      ...appData,
+      opponents: {
+        ...appData.opponents,
+        [safeName]: updatedOpp,
+      },
+    });
   };
 
   // Start Live Scouting Session
@@ -456,15 +455,14 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
         batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
         await batch.commit();
       } catch (e) {
-        console.error("Failed to write scout match to Firebase:", e);
+        console.warn("Cloud write scout match skipped (offline?):", e);
       }
-    } else {
-      writeLocalDb({
-        ...appData,
-        matches: [newMatch, ...appData.matches],
-        sets: [...appData.sets, newSet],
-      });
     }
+    writeLocalDb({
+      ...appData,
+      matches: [newMatch, ...appData.matches],
+      sets: [...appData.sets, newSet],
+    });
 
     setScoutPhase("live");
     showNotification(`Live Scout session started for ${scoutTeamName}!`);
@@ -516,14 +514,13 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
           newStat,
         );
       } catch (err) {
-        console.error("Failed to save scout stat to cloud:", err);
+        console.warn("Cloud save scout stat failed (offline?):", err);
       }
-    } else {
-      writeLocalDb({
-        ...appData,
-        stats: [...appData.stats, newStat],
-      });
     }
+    writeLocalDb({
+      ...appData,
+      stats: [...appData.stats, newStat],
+    });
 
     const activeP = scoutRoster.find((p) => p.id === selectedPlayerId);
     showNotification(
@@ -555,14 +552,13 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
           doc(db, `${publicPath}/${activeTeam}/stats/${lastStat.id}`),
         );
       } catch (err) {
-        console.error("Failed to delete stat:", err);
+        console.warn("Failed to delete stat in cloud (offline?):", err);
       }
-    } else {
-      writeLocalDb({
-        ...appData,
-        stats: appData.stats.filter((s: any) => s.id !== lastStat.id),
-      });
     }
+    writeLocalDb({
+      ...appData,
+      stats: appData.stats.filter((s: any) => s.id !== lastStat.id),
+    });
 
     showNotification(`Undid last action (${lastStat.category}: ${lastStat.metric})`);
   };
@@ -629,9 +625,13 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
           newSet,
         );
       } catch (e) {
-        console.error(e);
+        console.warn("Could not save new set to cloud (offline?):", e);
       }
     }
+    writeLocalDb({
+      ...appData,
+      sets: [...appData.sets, newSet],
+    });
     showNotification(`Started Set ${nextSetNum}`);
   };
 

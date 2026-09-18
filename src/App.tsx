@@ -551,26 +551,59 @@ export default function App() {
     } catch (e) {}
   };
 
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== "undefined" ? navigator.onLine : true,
+  );
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
   const [view, setView] = useState(() =>
     localStorage.getItem("ucc_vball_active_team") ? "menu" : "team_select",
   );
   const [user, setUser] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [authTimeoutReached, setAuthTimeoutReached] = useState(false);
-  const [myTeams, setMyTeams] = useState([]);
+  const [myTeams, setMyTeams] = useState(() => {
+    try {
+      const cached = localStorage.getItem("ucc_vball_cached_teams");
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return [];
+  });
   const [activeTeam, setActiveTeam] = useState(
     () => localStorage.getItem("ucc_vball_active_team") || null,
   );
 
-  // Master Cloud Data State (Scoped to activeTeam)
-  const [appData, setAppData] = useState({
-    roster: DEFAULT_ROSTER,
-    savedRosters: {},
-    savedLineups: {},
-    opponents: {},
-    matches: [],
-    sets: [],
-    stats: [],
+  // Master Cloud Data State (Scoped to activeTeam, pre-loaded from localStorage for instant offline access)
+  const [appData, setAppData] = useState(() => {
+    const savedTeam = localStorage.getItem("ucc_vball_active_team");
+    if (savedTeam) {
+      try {
+        const stored = localStorage.getItem(`ucc_vball_db_${savedTeam}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && typeof parsed === "object") return parsed;
+        }
+      } catch (e) {}
+    }
+    return {
+      roster: DEFAULT_ROSTER,
+      savedRosters: {},
+      savedLineups: {},
+      opponents: {},
+      matches: [],
+      sets: [],
+      stats: [],
+    };
   });
 
   // Current Session State
@@ -803,7 +836,6 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !db || !isFirebaseAvailable) {
-      setMyTeams([]);
       return;
     }
     let unsub = () => {};
@@ -812,17 +844,22 @@ export default function App() {
         doc(db, "users", user.uid),
         (docSnap) => {
           if (docSnap.exists() && docSnap.data().teams) {
-            setMyTeams(docSnap.data().teams);
-          } else {
-            setMyTeams([]);
+            const serverTeams = docSnap.data().teams;
+            setMyTeams(serverTeams);
+            try {
+              localStorage.setItem(
+                "ucc_vball_cached_teams",
+                JSON.stringify(serverTeams),
+              );
+            } catch (e) {}
           }
         },
         (err) => {
-          console.error("Teams Sync Error:", err);
+          console.warn("Teams Sync offline fallback:", err);
         },
       );
     } catch (err) {
-      console.error("Teams Listener Setup Error:", err);
+      console.warn("Teams Listener Setup Error:", err);
     }
     return () => unsub();
   }, [user]);
@@ -842,48 +879,51 @@ export default function App() {
     }
   }, [user, activeTeam, myTeams]);
 
-  // LOAD DATA BASED ON ACTIVE TEAM
+  // LOAD DATA BASED ON ACTIVE TEAM (Pre-load immediately from local storage for offline reliability)
   useEffect(() => {
     if (!activeTeam) return;
 
-    // Reset local state when switching teams
-    setAppData({
-      roster: DEFAULT_ROSTER,
-      savedRosters: {},
-      savedLineups: {},
-      opponents: {},
-      matches: [],
-      sets: [],
-      stats: [],
-    });
-    setActiveMatch(null);
-    setActiveSetId(null);
-
-    if (!isFirebaseAvailable) {
-      try {
-        const storedData = localStorage.getItem(`ucc_vball_db_${activeTeam}`);
-        if (storedData) setAppData(JSON.parse(storedData));
-      } catch (e) {
-        console.error("Local storage load failed", e);
+    // First load from localStorage immediately
+    try {
+      const storedData = localStorage.getItem(`ucc_vball_db_${activeTeam}`);
+      if (storedData) {
+        const parsed = JSON.parse(storedData);
+        if (parsed && typeof parsed === "object") {
+          setAppData(parsed);
+        }
       }
-      return;
+    } catch (e) {
+      console.warn("Local storage pre-load failed", e);
     }
 
-    if (!user) return;
+    if (!isFirebaseAvailable || !user) {
+      return;
+    }
 
     // Scoped Firebase Listeners
     const unsubSettings = onSnapshot(
       doc(db, `${publicPath}/${activeTeam}/settings/core`),
       (d) => {
-        if (d.exists()) setAppData((prev) => ({ ...prev, ...d.data() }));
-        else
+        if (d.exists()) {
+          setAppData((prev) => {
+            const updated = { ...prev, ...d.data() };
+            try {
+              localStorage.setItem(
+                `ucc_vball_db_${activeTeam}`,
+                JSON.stringify(updated),
+              );
+            } catch (e) {}
+            return updated;
+          });
+        } else {
           setDoc(doc(db, `${publicPath}/${activeTeam}/settings/core`), {
             roster: DEFAULT_ROSTER,
             savedRosters: {},
             savedLineups: {},
-          });
+          }).catch((e) => console.warn("Init settings skipped:", e));
+        }
       },
-      (err) => console.error("Firebase settings error:", err),
+      (err) => console.warn("Firebase settings (offline?):", err),
     );
 
     const unsubOpponents = onSnapshot(
@@ -893,9 +933,18 @@ export default function App() {
         snap.forEach((d) => {
           opps[d.id] = d.data();
         });
-        setAppData((prev) => ({ ...prev, opponents: opps }));
+        setAppData((prev) => {
+          const updated = { ...prev, opponents: opps };
+          try {
+            localStorage.setItem(
+              `ucc_vball_db_${activeTeam}`,
+              JSON.stringify(updated),
+            );
+          } catch (e) {}
+          return updated;
+        });
       },
-      (err) => console.error("Firebase opponents error:", err),
+      (err) => console.warn("Firebase opponents (offline?):", err),
     );
 
     const unsubMatches = onSnapshot(
@@ -903,9 +952,18 @@ export default function App() {
       (snap) => {
         const arr = [];
         snap.forEach((d) => arr.push(d.data()));
-        setAppData((prev) => ({ ...prev, matches: arr }));
+        setAppData((prev) => {
+          const updated = { ...prev, matches: arr };
+          try {
+            localStorage.setItem(
+              `ucc_vball_db_${activeTeam}`,
+              JSON.stringify(updated),
+            );
+          } catch (e) {}
+          return updated;
+        });
       },
-      (err) => console.error("Firebase matches error:", err),
+      (err) => console.warn("Firebase matches (offline?):", err),
     );
 
     const unsubSets = onSnapshot(
@@ -913,9 +971,18 @@ export default function App() {
       (snap) => {
         const arr = [];
         snap.forEach((d) => arr.push(d.data()));
-        setAppData((prev) => ({ ...prev, sets: arr }));
+        setAppData((prev) => {
+          const updated = { ...prev, sets: arr };
+          try {
+            localStorage.setItem(
+              `ucc_vball_db_${activeTeam}`,
+              JSON.stringify(updated),
+            );
+          } catch (e) {}
+          return updated;
+        });
       },
-      (err) => console.error("Firebase sets error:", err),
+      (err) => console.warn("Firebase sets (offline?):", err),
     );
 
     const unsubStats = onSnapshot(
@@ -923,9 +990,18 @@ export default function App() {
       (snap) => {
         const arr = [];
         snap.forEach((d) => arr.push(d.data()));
-        setAppData((prev) => ({ ...prev, stats: arr }));
+        setAppData((prev) => {
+          const updated = { ...prev, stats: arr };
+          try {
+            localStorage.setItem(
+              `ucc_vball_db_${activeTeam}`,
+              JSON.stringify(updated),
+            );
+          } catch (e) {}
+          return updated;
+        });
       },
-      (err) => console.error("Firebase stats error:", err),
+      (err) => console.warn("Firebase stats (offline?):", err),
     );
 
     return () => {
@@ -1030,8 +1106,16 @@ export default function App() {
           { merge: true },
         );
       } catch (e) {
-        console.error("Failed to sync set state:", e);
+        console.warn("Failed to sync set state to cloud (offline?):", e);
       }
+    }
+    if (activeSetId) {
+      writeLocalDb({
+        ...appData,
+        sets: appData.sets.map((s) =>
+          s.id === activeSetId ? { ...s, ...updates } : s,
+        ),
+      });
     }
   };
 
@@ -1331,14 +1415,13 @@ export default function App() {
                 newSet,
               );
             } catch (err) {
-              console.error("Error creating practice set:", err);
+              console.warn("Error creating practice set in cloud (offline?):", err);
             }
-          } else if (!isFirebaseAvailable) {
-            writeLocalDb({
-              ...appData,
-              sets: [...appData.sets, newSet],
-            });
           }
+          writeLocalDb({
+            ...appData,
+            sets: [...appData.sets, newSet],
+          });
         }
 
         setActiveMatch(existingTodayPractice);
@@ -1372,26 +1455,23 @@ export default function App() {
       };
 
       if (isFirebaseAvailable && user) {
-        const batch = writeBatch(db);
-        batch.set(
-          doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
-          newMatch,
-        );
-        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
         try {
+          const batch = writeBatch(db);
+          batch.set(
+            doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
+            newMatch,
+          );
+          batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
           await batch.commit();
         } catch (err) {
-          console.error("Practice start error", err);
-          alert("❌ Failed to start practice mode. Details: " + err.message);
-          return;
+          console.warn("Practice start cloud batch failed (offline?):", err);
         }
-      } else if (!isFirebaseAvailable) {
-        writeLocalDb({
-          ...appData,
-          matches: [...appData.matches, newMatch],
-          sets: [...appData.sets, newSet],
-        });
       }
+      writeLocalDb({
+        ...appData,
+        matches: [...appData.matches, newMatch],
+        sets: [...appData.sets, newSet],
+      });
 
       setActiveMatch(newMatch);
       setActiveSetId(setId);
@@ -1529,26 +1609,23 @@ export default function App() {
       };
 
       if (isFirebaseAvailable && user) {
-        const batch = writeBatch(db);
-        batch.set(
-          doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
-          newMatch,
-        );
-        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
         try {
+          const batch = writeBatch(db);
+          batch.set(
+            doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
+            newMatch,
+          );
+          batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
           await batch.commit();
         } catch (err) {
-          console.error("Practice start error", err);
-          alert("❌ Failed to start practice mode. Details: " + err.message);
-          return;
+          console.warn("Court practice cloud batch failed (offline?):", err);
         }
-      } else if (!isFirebaseAvailable) {
-        writeLocalDb({
-          ...appData,
-          matches: [...appData.matches, newMatch],
-          sets: [...appData.sets, newSet],
-        });
       }
+      writeLocalDb({
+        ...appData,
+        matches: [...appData.matches, newMatch],
+        sets: [...appData.sets, newSet],
+      });
 
       setActiveMatch(newMatch);
       setActiveSetId(setId);
@@ -1608,41 +1685,44 @@ export default function App() {
 
     try {
       if (isFirebaseAvailable && user) {
-        const batch = writeBatch(db);
-        batch.set(
-          doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
-          {
-            teamName: opponentName, // Explicitly store team name
-            defaultLineup: finalOppLineup,
-            notes: oppNotesMem,
-            setterId: oppSetterId,
-            liberoId: oppLiberoId,
-            updatedAt: serverTimestamp(),
-          },
-        );
-        batch.set(
-          doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
-          newMatch,
-        );
-        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
-        await batch.commit();
-      } else if (!isFirebaseAvailable) {
-        writeLocalDb({
-          ...appData,
-          opponents: {
-            ...appData.opponents,
-            [safeOppName]: {
-              teamName: opponentName,
+        try {
+          const batch = writeBatch(db);
+          batch.set(
+            doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
+            {
+              teamName: opponentName, // Explicitly store team name
               defaultLineup: finalOppLineup,
               notes: oppNotesMem,
               setterId: oppSetterId,
               liberoId: oppLiberoId,
+              updatedAt: serverTimestamp(),
             },
-          },
-          matches: [...appData.matches, newMatch],
-          sets: [...appData.sets, newSet],
-        });
+          );
+          batch.set(
+            doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
+            newMatch,
+          );
+          batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
+          await batch.commit();
+        } catch (cloudErr) {
+          console.warn("Start game cloud sync failed (offline?):", cloudErr);
+        }
       }
+      writeLocalDb({
+        ...appData,
+        opponents: {
+          ...appData.opponents,
+          [safeOppName]: {
+            teamName: opponentName,
+            defaultLineup: finalOppLineup,
+            notes: oppNotesMem,
+            setterId: oppSetterId,
+            liberoId: oppLiberoId,
+          },
+        },
+        matches: [...appData.matches, newMatch],
+        sets: [...appData.sets, newSet],
+      });
 
       setActiveMatch(newMatch);
       setActiveSetId(setId);
@@ -1651,12 +1731,16 @@ export default function App() {
       setView("game");
       setRallyPhase(serving === "ucc" ? "serve" : "receive");
       setServePromptVisible(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Start Game Error:", err);
-      alert(
-        "❌ Failed to start game. Check your connection or verified email status. Details: " +
-          err.message,
-      );
+      // Fallback local start anyway
+      setActiveMatch(newMatch);
+      setActiveSetId(setId);
+      setHistory([]);
+      setShowOppLineupPrompt(false);
+      setView("game");
+      setRallyPhase(serving === "ucc" ? "serve" : "receive");
+      setServePromptVisible(true);
     }
   };
 
@@ -1780,14 +1864,10 @@ export default function App() {
           newStat,
         );
       } catch (err) {
-        console.error("Failed to save stat to cloud:", err);
-        alert(
-          `❌ Cloud Save Failed: ${err.message}. The stat was recorded locally but may not sync until connection is restored.`,
-        );
+        console.warn("Could not save stat to cloud (offline?):", err);
       }
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({ ...appData, stats: [...appData.stats, newStat] });
     }
+    writeLocalDb({ ...appData, stats: [...appData.stats, newStat] });
   };
 
   const handleDeleteStat = async (statId: string) => {
@@ -1800,14 +1880,13 @@ export default function App() {
       try {
         await deleteDoc(doc(db, `${publicPath}/${activeTeam}/stats/${statId}`));
       } catch (err) {
-        console.error("Failed to delete stat from cloud:", err);
+        console.warn("Failed to delete stat from cloud (offline?):", err);
       }
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        stats: appData.stats.filter((s) => s.id !== statId),
-      });
     }
+    writeLocalDb({
+      ...appData,
+      stats: appData.stats.filter((s) => s.id !== statId),
+    });
   };
 
   const handleUpdateStat = async (statId: string, updatedFields: any) => {
@@ -1829,14 +1908,13 @@ export default function App() {
           { merge: true },
         );
       } catch (err) {
-        console.error("Failed to update stat in cloud:", err);
+        console.warn("Failed to update stat in cloud (offline?):", err);
       }
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        stats: appData.stats.map((s) => (s.id === statId ? mergedStat : s)),
-      });
     }
+    writeLocalDb({
+      ...appData,
+      stats: appData.stats.map((s) => (s.id === statId ? mergedStat : s)),
+    });
   };
 
   const handleAddManualStat = async (statData: {
@@ -1879,14 +1957,13 @@ export default function App() {
           newStat,
         );
       } catch (err) {
-        console.error("Failed to add stat to cloud:", err);
+        console.warn("Failed to add stat to cloud (offline?):", err);
       }
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        stats: [...appData.stats, newStat],
-      });
     }
+    writeLocalDb({
+      ...appData,
+      stats: [...appData.stats, newStat],
+    });
   };
 
   const handleBlockAction = (playerId, blockMetric) => {
@@ -2015,16 +2092,25 @@ export default function App() {
               ? "opp"
               : serving,
       });
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        sets: appData.sets.map((s) =>
-          s.id === activeSetId
-            ? { ...s, scoreUcc: newUcc, scoreOpp: newOpp }
-            : s,
-        ),
-      });
     }
+    writeLocalDb({
+      ...appData,
+      sets: appData.sets.map((s) =>
+        s.id === activeSetId
+          ? {
+              ...s,
+              scoreUcc: newUcc,
+              scoreOpp: newOpp,
+              serving:
+                serving === "opp" && team === "ucc"
+                  ? "ucc"
+                  : serving === "ucc" && team !== "ucc"
+                    ? "opp"
+                    : serving,
+            }
+          : s,
+      ),
+    });
 
     const winner = checkSetWin(newUcc, newOpp);
     if (winner) setSetWinnerModal(winner);
@@ -2076,12 +2162,16 @@ export default function App() {
     };
 
     if (isFirebaseAvailable && user) {
-      await setDoc(
-        doc(db, `${publicPath}/${activeTeam}/sets/${setId}`),
-        newSet,
-      );
-    } else if (!isFirebaseAvailable)
-      writeLocalDb({ ...appData, sets: [...appData.sets, newSet] });
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/sets/${setId}`),
+          newSet,
+        );
+      } catch (e) {
+        console.warn("Could not save new set to cloud (offline?):", e);
+      }
+    }
+    writeLocalDb({ ...appData, sets: [...appData.sets, newSet] });
 
     setActiveSetId(setId);
     setScore({ ucc: 0, opp: 0 });
@@ -2217,22 +2307,26 @@ export default function App() {
     setScore(newScore);
 
     if (isFirebaseAvailable && user) {
-      const currentSet = appData.sets.find((s) => s.id === activeSetId);
-      if (currentSet)
-        await setDoc(
-          doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
-          { ...currentSet, scoreUcc: newScore.ucc, scoreOpp: newScore.opp },
-        );
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        sets: appData.sets.map((s) =>
-          s.id === activeSetId
-            ? { ...s, scoreUcc: newScore.ucc, scoreOpp: newScore.opp }
-            : s,
-        ),
-      });
+      try {
+        const currentSet = appData.sets.find((s) => s.id === activeSetId);
+        if (currentSet)
+          await setDoc(
+            doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
+            { ...currentSet, scoreUcc: newScore.ucc, scoreOpp: newScore.opp },
+            { merge: true },
+          );
+      } catch (err) {
+        console.warn("Could not save score adjust to cloud (offline?):", err);
+      }
     }
+    writeLocalDb({
+      ...appData,
+      sets: appData.sets.map((s) =>
+        s.id === activeSetId
+          ? { ...s, scoreUcc: newScore.ucc, scoreOpp: newScore.opp }
+          : s,
+      ),
+    });
     const winner = checkSetWin(newScore.ucc, newScore.opp);
     if (winner) setSetWinnerModal(winner);
   };
@@ -4708,6 +4802,16 @@ export default function App() {
                 Download App
               </span>
             </button>
+            <button
+              onClick={() => setView("scout")}
+              className="text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 p-3 rounded-full transition-colors flex items-center shadow-sm"
+              title="Scout Mode (Watch & Track Player)"
+            >
+              <Eye size={20} className="sm:mr-2 text-emerald-400" />
+              <span className="hidden sm:inline text-xs font-bold uppercase tracking-widest">
+                Scout
+              </span>
+            </button>
           </div>
 
           <button
@@ -4859,6 +4963,15 @@ export default function App() {
                   </button>
                 )}
               </>
+            )}
+            {teamInfo.role === "player" && (
+              <button
+                onClick={() => setView("scout")}
+                className="w-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 border border-emerald-400/40 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-lg tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg"
+              >
+                <Eye className="mr-3 text-emerald-200" size={22} />{" "}
+                SCOUT MODE (WATCH & TRACK)
+              </button>
             )}
           </div>
 
@@ -5199,6 +5312,14 @@ export default function App() {
               </div>
             </div>
             <div className="flex gap-2">
+              <button
+                onClick={() => setView("scout")}
+                className="bg-emerald-600/80 hover:bg-emerald-500 border border-emerald-400 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
+                title="Scout Mode"
+              >
+                <Eye className="mr-1.5 sm:mr-2 text-emerald-200" size={16} />
+                <span className="hidden sm:inline">SCOUT</span>
+              </button>
               <button
                 onClick={handleInstallApp}
                 className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
@@ -5996,6 +6117,15 @@ export default function App() {
         <div className="flex-1 flex flex-col relative bg-slate-100 overflow-hidden min-h-0 landscape:min-w-0">
           <div className="p-2 sm:p-4 flex items-center justify-between bg-white border-b border-slate-200 shrink-0 gap-2">
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setView("scout")}
+                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-emerald-50 text-emerald-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-emerald-100 transition-colors flex items-center gap-1.5 border border-emerald-200 shadow-sm"
+                title="Switch to Scout Mode"
+              >
+                <Eye size={14} className="text-emerald-600" />
+                <span className="hidden sm:inline">Scout Mode</span>
+                <span className="sm:hidden">Scout</span>
+              </button>
               <button
                 onClick={() => setShowPositioning(true)}
                 className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors"
