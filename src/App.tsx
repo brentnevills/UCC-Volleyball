@@ -51,6 +51,7 @@ import {
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
 import { StatCorrectionModal } from "./components/StatCorrectionModal";
 import { StatBreakdownModal } from "./components/StatBreakdownModal";
+import { ScoutMode } from "./components/ScoutMode";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -4837,6 +4838,13 @@ export default function App() {
                   <Activity className="mr-3 text-slate-500" size={20} />{" "}
                   PRACTICE MODE
                 </button>
+                <button
+                  onClick={() => setView("scout")}
+                  className="md:col-span-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 border border-emerald-400/40 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-lg tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg"
+                >
+                  <Eye className="mr-3 text-emerald-200" size={22} />{" "}
+                  SCOUT MODE (WATCH & TRACK)
+                </button>
                 {appData.matches.filter((m) => m.isLive === true).length >
                   0 && (
                   <button
@@ -5136,6 +5144,26 @@ export default function App() {
     );
   }
 
+  if (view === "scout") {
+    return (
+      <ScoutMode
+        appData={appData}
+        setAppData={setAppData}
+        myTeams={myTeams}
+        activeTeam={activeTeam}
+        user={user}
+        isFirebaseAvailable={isFirebaseAvailable}
+        publicPath={publicPath}
+        db={db}
+        writeLocalDb={writeLocalDb}
+        onBackToMenu={() => setView("menu")}
+        isFullscreen={isFullscreen}
+        toggleFullscreen={toggleFullscreen}
+        handleInstallApp={handleInstallApp}
+      />
+    );
+  }
+
   if (view === "setup") {
     const tourneys = [
       ...new Set(
@@ -5273,10 +5301,19 @@ export default function App() {
                       className={`p-3 sm:p-4 bg-white rounded-xl sm:rounded-2xl border border-slate-200 font-bold text-base sm:text-lg text-[#0033A0] focus:ring-2 focus:ring-[#0033A0] outline-none ${oppNames.length > 0 ? "w-full sm:w-1/2" : "w-full"}`}
                       value={opponentName}
                       onChange={handleOpponentNameChange}
+                      list="opponent-name-autocomplete"
                       placeholder={
                         oppNames.length > 0 ? "Or type new..." : "Enter name..."
                       }
                     />
+                    <datalist id="opponent-name-autocomplete">
+                      {oppNames.map((o) => (
+                        <option
+                          key={o}
+                          value={appData.opponents[o]?.teamName || o}
+                        />
+                      ))}
+                    </datalist>
                   </div>
                 </div>
                 <div>
