@@ -2,22 +2,8 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
-import { registerSW } from 'virtual:pwa-register';
 
 console.log("UCC Lancers App: Initializing...");
-
-// Register Service Worker for robust offline caching
-if (typeof window !== "undefined") {
-  registerSW({
-    immediate: true,
-    onNeedRefresh() {
-      console.log("PWA service worker: update available");
-    },
-    onOfflineReady() {
-      console.log("PWA service worker: ready for offline use");
-    },
-  });
-}
 
 window.addEventListener('error', (event) => {
   console.error("Global Error Caught:", event.error);
