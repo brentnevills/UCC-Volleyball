@@ -653,6 +653,26 @@ export default function App() {
   const [oppSetterId, setOppSetterId] = useState(null);
   const [rallyPhase, setRallyPhase] = useState("serve");
   const [oppNotesMem, setOppNotesMem] = useState({});
+  const [autoScore, setAutoScore] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("ucc_auto_score");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleAutoScore = (val?: boolean) => {
+    setAutoScore((prev) => {
+      const next = typeof val === "boolean" ? val : !prev;
+      try {
+        localStorage.setItem("ucc_auto_score", String(next));
+      } catch (e) {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // Modals & UI
   const [servePromptVisible, setServePromptVisible] = useState(false);
@@ -2009,13 +2029,62 @@ export default function App() {
       setSelectedPlayerId(null);
     }
 
-    // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
-    if (
-      rallyPhase === "receive" ||
-      rallyPhase === "opp_receive" ||
-      category === "Pass"
-    ) {
-      changeRallyPhase("play");
+    let awardedTeam: "ucc" | "opp" | null = null;
+
+    if (autoScore) {
+      if (category === "Attack") {
+        if (metric === "Kill") {
+          awardedTeam = "ucc";
+        } else if (
+          metric === "Out" ||
+          metric === "Net" ||
+          metric === "Stuffed" ||
+          metric === "Out/Net" ||
+          metric === "Error"
+        ) {
+          awardedTeam = "opp";
+        }
+      } else if (category === "Block") {
+        if (
+          metric === "Block" ||
+          metric === "Stuff" ||
+          metric === "Stuffed"
+        ) {
+          awardedTeam = "ucc";
+        } else if (
+          metric === "Net Viol" ||
+          metric === "Net Violation" ||
+          metric === "Error"
+        ) {
+          awardedTeam = "opp";
+        }
+      } else if (category === "Serve") {
+        if (metric === "Ace") {
+          awardedTeam = "ucc";
+        } else if (
+          metric?.includes?.("Miss") ||
+          metric === "Error"
+        ) {
+          awardedTeam = "opp";
+        }
+      } else if (category === "Pass") {
+        if (metric === "Error") {
+          awardedTeam = "opp";
+        }
+      }
+    }
+
+    if (awardedTeam) {
+      handlePoint(awardedTeam, true);
+    } else {
+      // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
+      if (
+        rallyPhase === "receive" ||
+        rallyPhase === "opp_receive" ||
+        category === "Pass"
+      ) {
+        changeRallyPhase("play");
+      }
     }
   };
 
@@ -2033,13 +2102,62 @@ export default function App() {
       setSelectedOppId(null);
     }
 
-    // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
-    if (
-      rallyPhase === "receive" ||
-      rallyPhase === "opp_receive" ||
-      category === "Pass"
-    ) {
-      changeRallyPhase("play");
+    let awardedTeam: "ucc" | "opp" | null = null;
+
+    if (autoScore) {
+      if (category === "Attack") {
+        if (metric === "Kill") {
+          awardedTeam = "opp";
+        } else if (
+          metric === "Out" ||
+          metric === "Net" ||
+          metric === "Stuffed" ||
+          metric === "Out/Net" ||
+          metric === "Error"
+        ) {
+          awardedTeam = "ucc";
+        }
+      } else if (category === "Block") {
+        if (
+          metric === "Block" ||
+          metric === "Stuff" ||
+          metric === "Stuffed"
+        ) {
+          awardedTeam = "opp";
+        } else if (
+          metric === "Net Viol" ||
+          metric === "Net Violation" ||
+          metric === "Error"
+        ) {
+          awardedTeam = "ucc";
+        }
+      } else if (category === "Serve") {
+        if (metric === "Ace") {
+          awardedTeam = "opp";
+        } else if (
+          metric?.includes?.("Miss") ||
+          metric === "Error"
+        ) {
+          awardedTeam = "ucc";
+        }
+      } else if (category === "Pass") {
+        if (metric === "Error") {
+          awardedTeam = "ucc";
+        }
+      }
+    }
+
+    if (awardedTeam) {
+      handlePoint(awardedTeam, true);
+    } else {
+      // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
+      if (
+        rallyPhase === "receive" ||
+        rallyPhase === "opp_receive" ||
+        category === "Pass"
+      ) {
+        changeRallyPhase("play");
+      }
     }
   };
 
@@ -2058,6 +2176,12 @@ export default function App() {
   };
 
   const handlePoint = async (team, skipHistory = false) => {
+    if (isProcessingPointRef.current) return;
+    isProcessingPointRef.current = true;
+    setTimeout(() => {
+      isProcessingPointRef.current = false;
+    }, 350);
+
     if (!skipHistory) pushToHistory();
     setEndRallyVisible(false);
     setSelectedOppId(null);
@@ -5472,6 +5596,27 @@ export default function App() {
                     </label>
                   </div>
                 )}
+                {matchType !== "Practice" && (
+                  <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
+                    <div>
+                      <label className="text-[10px] sm:text-[12px] font-black text-slate-700 uppercase tracking-widest ml-2 block">
+                        Automatic Scoring
+                      </label>
+                      <span className="text-[9px] text-slate-400 font-bold ml-2 block">
+                        Auto-award points on Kills, Stuffs, Aces & Errors
+                      </span>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={autoScore}
+                        onChange={(e) => toggleAutoScore(e.target.checked)}
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0033A0]"></div>
+                    </label>
+                  </div>
+                )}
                 <div>
                   <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
                     Score Cap
@@ -5962,7 +6107,7 @@ export default function App() {
       if (statPrompt?.isOpp) {
         // use recordOppStatAndCheckPoint for opponents
         // Opponent categories are mostly Attack & Serve errors previously, but we can log anything via standard func
-        recordOppStatAndCheckPoint(playerId, category, metric);
+        recordOppStatAndCheckPoint(playerId, category, metric, value);
       } else {
         recordStatAndCheckPoint(playerId, category, metric, value);
       }
@@ -6140,6 +6285,27 @@ export default function App() {
                 <Edit3 size={14} className="text-indigo-600" />
                 <span className="hidden sm:inline">Data Correction</span>
                 <span className="sm:hidden">Correct</span>
+              </button>
+              <button
+                onClick={() => toggleAutoScore()}
+                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase transition-all flex items-center gap-1.5 border shadow-sm ${
+                  autoScore
+                    ? "bg-blue-50 text-blue-800 border-blue-200 hover:bg-blue-100"
+                    : "bg-slate-100 text-slate-500 border-slate-300 hover:bg-slate-200"
+                }`}
+                title={
+                  autoScore
+                    ? "Auto-Scoring: ON (Kills, Stuffs, Aces & Errors automatically update the score). Click to toggle."
+                    : "Auto-Scoring: OFF. Click to turn ON."
+                }
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    autoScore ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
+                  }`}
+                />
+                <span className="hidden sm:inline">Auto-Score:</span>
+                <span className="font-black">{autoScore ? "ON" : "OFF"}</span>
               </button>
               <div
                 className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"

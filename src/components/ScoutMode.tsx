@@ -130,7 +130,44 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
   const [currentSetNum, setCurrentSetNum] = useState(1);
   const [scoreScoutTeam, setScoreScoutTeam] = useState(0);
   const [scoreFacingTeam, setScoreFacingTeam] = useState(0);
+  const [autoScoreScout, setAutoScoreScout] = useState(true);
   const [serveErrorModalOpen, setServeErrorModalOpen] = useState(false);
+
+  const adjustScoutScore = (team: "scout" | "facing", delta: number) => {
+    let nextScout = scoreScoutTeam;
+    let nextFacing = scoreFacingTeam;
+    if (team === "scout") {
+      nextScout = Math.max(0, scoreScoutTeam + delta);
+      setScoreScoutTeam(nextScout);
+    } else {
+      nextFacing = Math.max(0, scoreFacingTeam + delta);
+      setScoreFacingTeam(nextFacing);
+    }
+
+    if (activeScoutSetId) {
+      const updatedSets = appData.sets.map((s: any) =>
+        s.id === activeScoutSetId
+          ? {
+              ...s,
+              scoreUcc: nextScout,
+              scoreOpp: nextFacing,
+            }
+          : s,
+      );
+      setAppData((prev: any) => ({ ...prev, sets: updatedSets }));
+      writeLocalDb({
+        ...appData,
+        sets: updatedSets,
+      });
+      if (isFirebaseAvailable && user && activeTeam) {
+        setDoc(
+          doc(db, `${publicPath}/${activeTeam}/sets/${activeScoutSetId}`),
+          { scoreUcc: nextScout, scoreOpp: nextFacing },
+          { merge: true },
+        ).catch(() => {});
+      }
+    }
+  };
 
   // Quick Tendency & Notes state
   const [customNote, setCustomNote] = useState("");
@@ -496,15 +533,32 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
     };
 
     // Auto update live score if a direct point or error
-    if (isPointFor) {
-      setScoreScoutTeam((prev) => prev + 1);
-    } else if (isPointAgainst) {
-      setScoreFacingTeam((prev) => prev + 1);
+    let nextScoreScout = scoreScoutTeam;
+    let nextScoreFacing = scoreFacingTeam;
+    if (autoScoreScout) {
+      if (isPointFor) {
+        nextScoreScout = scoreScoutTeam + 1;
+        setScoreScoutTeam(nextScoreScout);
+      } else if (isPointAgainst) {
+        nextScoreFacing = scoreFacingTeam + 1;
+        setScoreFacingTeam(nextScoreFacing);
+      }
     }
+
+    const updatedSets = appData.sets.map((s: any) =>
+      s.id === activeScoutSetId
+        ? {
+            ...s,
+            scoreUcc: nextScoreScout,
+            scoreOpp: nextScoreFacing,
+          }
+        : s,
+    );
 
     setAppData((prev: any) => ({
       ...prev,
       stats: [...prev.stats, newStat],
+      sets: updatedSets,
     }));
 
     if (isFirebaseAvailable && user && activeTeam) {
@@ -513,6 +567,13 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
           doc(db, `${publicPath}/${activeTeam}/stats/${statId}`),
           newStat,
         );
+        if (autoScoreScout && (isPointFor || isPointAgainst)) {
+          await setDoc(
+            doc(db, `${publicPath}/${activeTeam}/sets/${activeScoutSetId}`),
+            { scoreUcc: nextScoreScout, scoreOpp: nextScoreFacing },
+            { merge: true },
+          );
+        }
       } catch (err) {
         console.warn("Cloud save scout stat failed (offline?):", err);
       }
@@ -520,6 +581,7 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
     writeLocalDb({
       ...appData,
       stats: [...appData.stats, newStat],
+      sets: updatedSets,
     });
 
     const activeP = scoutRoster.find((p) => p.id === selectedPlayerId);
@@ -1231,23 +1293,45 @@ export const ScoutMode: React.FC<ScoutModeProps> = ({
 
             {/* Quick Score Adjustment & Controls */}
             <div className="flex items-center gap-2">
-              <div className="hidden sm:flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-                <span className="text-[10px] text-slate-400 px-1">Score:</span>
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                <span className="text-[10px] text-slate-400 px-1 hidden sm:inline">Score:</span>
                 <button
-                  onClick={() => setScoreScoutTeam((prev) => prev + 1)}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-2 py-0.5 rounded"
-                  title="Add Scout Team Point"
+                  onClick={() => adjustScoutScore("scout", 1)}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-2 py-0.5 rounded text-xs"
+                  title="Add Scout Team Point (+1)"
                 >
-                  +{scoutTeamName.slice(0, 3)}
+                  +{scoutTeamName.slice(0, 3) || "Sco"}
                 </button>
                 <button
-                  onClick={() => setScoreFacingTeam((prev) => prev + 1)}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded"
-                  title="Add Opponent Point"
+                  onClick={() => adjustScoutScore("facing", 1)}
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-2 py-0.5 rounded text-xs"
+                  title="Add Opponent Point (+1)"
                 >
                   +Opp
                 </button>
               </div>
+
+              <button
+                onClick={() => setAutoScoreScout((prev) => !prev)}
+                className={`px-2.5 py-1 rounded-xl font-bold text-xs flex items-center gap-1.5 border transition-all ${
+                  autoScoreScout
+                    ? "bg-emerald-950/60 text-emerald-300 border-emerald-700/50 hover:bg-emerald-900/50"
+                    : "bg-slate-900 text-slate-400 border-slate-700 hover:bg-slate-800"
+                }`}
+                title={
+                  autoScoreScout
+                    ? "Auto-Scoring is ON: Kills, Stuffs, Aces & Errors automatically update the score. Click to turn OFF."
+                    : "Auto-Scoring is OFF: Manual score adjustment only. Click to turn ON."
+                }
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    autoScoreScout ? "bg-emerald-400 animate-pulse" : "bg-slate-500"
+                  }`}
+                />
+                <span className="hidden sm:inline">Auto-Score:</span>
+                <span className="font-mono">{autoScoreScout ? "ON" : "OFF"}</span>
+              </button>
 
               <button
                 onClick={handleUndoLast}
