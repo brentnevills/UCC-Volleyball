@@ -627,6 +627,22 @@ export default function App() {
   const [aceReceiverPrompt, setAceReceiverPrompt] = useState(null);
   const [pendingAceData, setPendingAceData] = useState(null);
   const [selectedAceReceivers, setSelectedAceReceivers] = useState([]);
+  const [oppServeReceivePrompt, setOppServeReceivePrompt] = useState<{
+    passerId: string | null;
+  } | null>(null);
+  const [betweenSetsModal, setBetweenSetsModal] = useState<{
+    nextSetNum: number;
+    newSetsWon: { ucc: number; opp: number };
+    tempLineup: (string | null)[];
+    tempLibero: string;
+    tempServing: string;
+    tempOppLineup: string[];
+    tempOppLibero: string;
+  } | null>(null);
+  const [showLineupEditModal, setShowLineupEditModal] = useState(false);
+  const [tempInGameLineup, setTempInGameLineup] = useState<(string | null)[]>([]);
+  const [tempInGameLibero, setTempInGameLibero] = useState("");
+  const [betweenSetsPresetName, setBetweenSetsPresetName] = useState("");
   const [endRallyVisible, setEndRallyVisible] = useState(false);
   const [subModalVisible, setSubModalVisible] = useState(false);
   const [showLiberoDesignateModal, setShowLiberoDesignateModal] = useState(false);
@@ -2032,14 +2048,13 @@ export default function App() {
     }
   };
 
-  const startNextSet = async () => {
+  const handleSetFinishContinue = (switchLineup = true) => {
     const newSetsWon = { ...setsWon };
     if (setWinnerModal === "ucc") newSetsWon.ucc += 1;
     else newSetsWon.opp += 1;
     setSetsWon(newSetsWon);
 
     const nextSetNum = currentSetNum + 1;
-    setCurrentSetNum(nextSetNum);
 
     let matchOver = false;
     if (
@@ -2056,10 +2071,52 @@ export default function App() {
     if (matchFormat === "Single Set" && nextSetNum > 1) matchOver = true;
 
     if (matchOver) {
+      setCurrentSetNum(nextSetNum);
       setSetWinnerModal(null);
       viewStatsWithCurrentMatch();
       return;
     }
+
+    const nextServing = serving === "ucc" ? "opp" : "ucc";
+
+    if (switchLineup) {
+      setBetweenSetsModal({
+        nextSetNum,
+        newSetsWon,
+        tempLineup: [...lineup],
+        tempLibero: liberoId,
+        tempServing: nextServing,
+        tempOppLineup: [...oppLineup],
+        tempOppLibero: oppLiberoId,
+      });
+      setSetWinnerModal(null);
+    } else {
+      executeStartNextSet({
+        nextSetNum,
+        selectedLineup: lineup,
+        selectedLibero: liberoId,
+        selectedServing: nextServing,
+        selectedOppLineup: oppLineup,
+        selectedOppLibero: oppLiberoId,
+      });
+      setSetWinnerModal(null);
+    }
+  };
+
+  const executeStartNextSet = async ({
+    nextSetNum,
+    selectedLineup,
+    selectedLibero,
+    selectedServing,
+    selectedOppLineup,
+    selectedOppLibero,
+  }) => {
+    setCurrentSetNum(nextSetNum);
+    setLineup(selectedLineup);
+    setLiberoId(selectedLibero || "");
+    setServing(selectedServing);
+    setOppLineup(selectedOppLineup);
+    if (selectedOppLibero !== undefined) setOppLiberoId(selectedOppLibero);
 
     const setId = Date.now().toString() + "_set";
     const newSet = {
@@ -2068,9 +2125,9 @@ export default function App() {
       setNum: nextSetNum,
       scoreUcc: 0,
       scoreOpp: 0,
-      lineup: lineup,
-      oppLineup: oppLineup,
-      serving: serving,
+      lineup: selectedLineup,
+      oppLineup: selectedOppLineup,
+      serving: selectedServing,
       rallyPhase: "serve",
     };
 
@@ -2079,14 +2136,47 @@ export default function App() {
         doc(db, `${publicPath}/${activeTeam}/sets/${setId}`),
         newSet,
       );
-    } else if (!isFirebaseAvailable)
+    } else if (!isFirebaseAvailable) {
       writeLocalDb({ ...appData, sets: [...appData.sets, newSet] });
+    }
 
     setActiveSetId(setId);
     setScore({ ucc: 0, opp: 0 });
     setTeamStats({ uccSubs: 0, oppSubs: 0, uccTimeouts: 0, oppTimeouts: 0 });
-    setSetWinnerModal(null);
+    setHistory([]);
+    setBetweenSetsModal(null);
     changeRallyPhase("serve");
+    setServePromptVisible(true);
+  };
+
+  const startNextSet = async () => {
+    handleSetFinishContinue(true);
+  };
+
+  const openInGameLineupEdit = () => {
+    setTempInGameLineup([...lineup]);
+    setTempInGameLibero(liberoId);
+    setShowLineupEditModal(true);
+  };
+
+  const saveInGameLineupEdit = async () => {
+    setLineup(tempInGameLineup);
+    setLiberoId(tempInGameLibero);
+    if (isFirebaseAvailable && user && activeSetId) {
+      await setDoc(
+        doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
+        { lineup: tempInGameLineup },
+        { merge: true },
+      );
+    } else if (!isFirebaseAvailable && activeSetId) {
+      writeLocalDb({
+        ...appData,
+        sets: appData.sets.map((s) =>
+          s.id === activeSetId ? { ...s, lineup: tempInGameLineup } : s,
+        ),
+      });
+    }
+    setShowLineupEditModal(false);
   };
 
   const handleServeStat = (metric, team) => {
@@ -2113,14 +2203,14 @@ export default function App() {
     } else if (metric === "Error") setServeErrorPrompt(team);
     else if (metric === "In Play") {
       logStat(serverId, "Serve", "Attempt", 1, isOpp);
-      // New: If we serve, prompt for opponent passing (opp_receive) based on setting
-      changeRallyPhase(
-        team === "ucc"
-          ? trackOppReceives
-            ? "opp_receive"
-            : "play"
-          : "receive",
-      );
+      if (team === "opp") {
+        changeRallyPhase("receive");
+        setOppServeReceivePrompt({ passerId: null });
+      } else {
+        changeRallyPhase(
+          trackOppReceives ? "opp_receive" : "play",
+        );
+      }
     }
   };
 
@@ -2157,6 +2247,128 @@ export default function App() {
     setPendingAceData(null);
     setSelectedAceReceivers([]);
     handlePoint(team, true);
+  };
+
+  const getSevenReceivers = (receivingTeam: "ucc" | "opp") => {
+    if (receivingTeam === "ucc") {
+      const courtConfigs = [
+        { idx: 3, label: "Pos 4 • LF" },
+        { idx: 2, label: "Pos 3 • MF" },
+        { idx: 1, label: "Pos 2 • RF" },
+        { idx: 4, label: "Pos 5 • LB" },
+        { idx: 5, label: "Pos 6 • MB" },
+        { idx: 0, label: "Pos 1 • RB" },
+      ];
+
+      const list = courtConfigs.map(({ idx, label }) => {
+        const id = lineup[idx];
+        const p = appData.roster.find((r) => r.id === id);
+        const isLib = id && id === liberoId;
+        return {
+          id: id || `ucc_pos_${idx}`,
+          number: p?.number || "?",
+          name: p?.name || "Player",
+          posLabel: isLib ? "LIBERO" : label,
+          isLibero: !!isLib,
+          isCourt: true,
+        };
+      });
+
+      // Find 7th player (Libero or swapped-out court player)
+      let seventhId: string | null = null;
+      let seventhRole = "LIBERO";
+
+      if (liberoId && !lineup.includes(liberoId)) {
+        seventhId = liberoId;
+        seventhRole = "LIBERO";
+      } else if (liberoId && lineup.includes(liberoId)) {
+        if (liberoSwappedOutId && !lineup.includes(liberoSwappedOutId)) {
+          seventhId = liberoSwappedOutId;
+          seventhRole = "Swapped Out";
+        }
+      }
+
+      if (!seventhId) {
+        const currentCourtIds = list.map((item) => item.id);
+        const benchPlayer =
+          sortedRoster.find(
+            (r) => !currentCourtIds.includes(r.id) && r.id !== liberoId,
+          ) ||
+          (liberoId && !currentCourtIds.includes(liberoId)
+            ? sortedRoster.find((r) => r.id === liberoId)
+            : null);
+        if (benchPlayer) {
+          seventhId = benchPlayer.id;
+          seventhRole = benchPlayer.position || "Bench";
+        }
+      }
+
+      if (seventhId) {
+        const p = appData.roster.find((r) => r.id === seventhId);
+        list.push({
+          id: seventhId,
+          number: p?.number || (seventhId === liberoId ? "L" : "?"),
+          name: p?.name || (seventhId === liberoId ? "Libero" : "Bench"),
+          posLabel: seventhRole,
+          isLibero: seventhId === liberoId,
+          isCourt: false,
+        });
+      }
+
+      return list;
+    } else {
+      const courtConfigs = [
+        { idx: 3, label: "Pos 4 • LF" },
+        { idx: 2, label: "Pos 3 • MF" },
+        { idx: 1, label: "Pos 2 • RF" },
+        { idx: 4, label: "Pos 5 • LB" },
+        { idx: 5, label: "Pos 6 • MB" },
+        { idx: 0, label: "Pos 1 • RB" },
+      ];
+
+      const list = courtConfigs.map(({ idx, label }) => {
+        const num = oppLineup[idx] || `O${idx + 1}`;
+        const isLib = oppLiberoId && num === oppLiberoId;
+        return {
+          id: num,
+          number: num,
+          name: isLib ? "Libero" : `Opp ${num}`,
+          posLabel: isLib ? "LIBERO" : label,
+          isLibero: !!isLib,
+          isCourt: true,
+        };
+      });
+
+      let seventhOppId = "";
+      let seventhOppRole = "LIBERO";
+
+      if (oppLiberoId && !oppLineup.includes(oppLiberoId)) {
+        seventhOppId = oppLiberoId;
+        seventhOppRole = "LIBERO";
+      } else if (
+        oppLiberoId &&
+        oppLineup.includes(oppLiberoId) &&
+        oppLiberoSwappedOutId &&
+        !oppLineup.includes(oppLiberoSwappedOutId)
+      ) {
+        seventhOppId = oppLiberoSwappedOutId;
+        seventhOppRole = "Swapped Out";
+      } else {
+        seventhOppId = oppLiberoId || "LIB";
+        seventhOppRole = "LIBERO";
+      }
+
+      list.push({
+        id: seventhOppId,
+        number: seventhOppId,
+        name: seventhOppRole === "LIBERO" ? "Libero" : `Opp ${seventhOppId}`,
+        posLabel: seventhOppRole,
+        isLibero: seventhOppRole === "LIBERO",
+        isCourt: false,
+      });
+
+      return list;
+    }
   };
 
   const handleInstallApp = async (e?: React.MouseEvent) => {
@@ -6197,15 +6409,23 @@ export default function App() {
 
                     {/* Awaiting Receive Pulse Indicators */}
                     {rallyPhase === "receive" && (
-                      <div className="absolute inset-x-2 sm:inset-x-4 bottom-[20%] sm:bottom-1/3 flex justify-center pointer-events-none z-20">
-                        <div className="bg-[#0033A0]/80 backdrop-blur-sm text-white px-4 sm:px-6 py-1.5 sm:py-2 rounded-full border border-white/20 shadow-lg animate-pulse flex flex-col items-center">
-                          <span className="font-black text-[10px] sm:text-sm tracking-widest uppercase">
-                            Awaiting Receive
-                          </span>
-                          <span className="text-[8px] sm:text-[10px] font-medium opacity-80">
-                            Tap UCC passer
-                          </span>
-                        </div>
+                      <div className="absolute inset-x-2 sm:inset-x-4 bottom-[20%] sm:bottom-1/3 flex justify-center z-20">
+                        <button
+                          onClick={() =>
+                            setOppServeReceivePrompt({ passerId: null })
+                          }
+                          className="bg-[#0033A0]/90 hover:bg-[#0033A0] backdrop-blur-sm text-white px-4 sm:px-6 py-1.5 sm:py-2 rounded-full border border-white/30 shadow-lg animate-pulse flex items-center space-x-2 cursor-pointer pointer-events-auto"
+                        >
+                          <Activity size={14} className="text-amber-300" />
+                          <div className="flex flex-col items-center">
+                            <span className="font-black text-[10px] sm:text-xs tracking-widest uppercase">
+                              Opponent Served
+                            </span>
+                            <span className="text-[8px] sm:text-[9px] font-bold text-amber-200">
+                              Tap to Record Who Passed & Rating
+                            </span>
+                          </div>
+                        </button>
                       </div>
                     )}
 
@@ -6238,7 +6458,7 @@ export default function App() {
                     <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black">
                       Players on Court (6)
                     </th>
-                    {trackedCategories.Pass && (
+                    {trackedCategories.Pass && viewOppStats && (
                       <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
                         Pass
                       </th>
@@ -6431,7 +6651,7 @@ export default function App() {
                               </div>
                             </div>
                           </td>
-                          {trackedCategories.Pass && (
+                          {trackedCategories.Pass && viewOppStats && (
                             <td className="p-1.5">
                               <button
                                 onClick={() =>
@@ -6567,6 +6787,13 @@ export default function App() {
             >
               <Edit3 size={18} />
             </button>
+            <button
+              onClick={openInGameLineupEdit}
+              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-slate-700 to-slate-900 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-slate-600 hover:to-slate-800 shadow-md border-t border-slate-600 transition-all active:scale-95 text-xs sm:text-sm uppercase"
+              title="Switch / Adjust Court Lineup"
+            >
+              <Users size={18} />
+            </button>
             {appData.matches.find((m) => m.id === activeMatch?.id)?.isLive !==
             false ? (
               <button
@@ -6668,12 +6895,17 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => {
+                        const wasOpp = statPrompt.isOpp;
                         handleGameStat(
                           statPrompt.playerId,
                           statPrompt.type,
                           "Attempt",
                         );
                         setStatPrompt(null);
+                        if (wasOpp) {
+                          changeRallyPhase("receive");
+                          setOppServeReceivePrompt({ passerId: null });
+                        }
                       }}
                       className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20"
                     >
@@ -7014,67 +7246,30 @@ export default function App() {
               </div>
 
               <div className="p-3 sm:p-4 space-y-3 sm:space-y-4 bg-slate-50 overflow-y-auto w-full">
-                {rallyPhase === "receive" ? (
-                  <div className="bg-blue-50 p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-blue-200 relative">
-                    <span className="absolute -top-2.5 right-4 bg-[#0033A0] text-white text-[8px] sm:text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest shadow-sm">
-                      First Touch
-                    </span>
-                    <h4 className="text-[10px] sm:text-xs font-black text-[#0033A0] uppercase tracking-widest mb-2 flex items-center">
-                      <Activity size={12} className="mr-1" /> Serve Receive
-                    </h4>
-                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
-                      {[3, 2, 1, 0].map((val) => (
-                        <button
-                          key={val}
-                          onClick={() =>
-                            recordStatAndCheckPoint(
-                              selectedPlayerId,
-                              "Pass",
-                              "Rating",
-                              val,
-                            )
-                          }
-                          className={`p-3 sm:p-4 rounded-lg sm:rounded-xl font-black text-xl sm:text-2xl shadow-sm active:scale-95 transition-all ${
-                            val === 3
-                              ? "bg-gradient-to-b from-green-400 to-green-500 text-white border border-green-500"
-                              : val === 0
-                                ? "bg-gradient-to-b from-red-400 to-red-500 text-white border border-red-500"
-                                : "bg-white text-slate-700 border border-slate-200"
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
-                    <button
-                      onClick={() =>
-                        recordStatAndCheckPoint(selectedPlayerId, "Dig", "Dig")
-                      }
-                      className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-lg sm:text-xl shadow-sm active:scale-95 border-t border-white/20"
-                    >
-                      DIG
-                    </button>
-                    <button
-                      onClick={() =>
-                        recordStatAndCheckPoint(
-                          selectedPlayerId,
-                          "Dig",
-                          "Error",
-                        )
-                      }
-                      className="bg-slate-200 text-slate-600 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm shadow-sm active:scale-95 border border-slate-300 uppercase"
-                    >
-                      Touch
-                    </button>
-                  </div>
-                )}
+                <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+                  <button
+                    onClick={() =>
+                      recordStatAndCheckPoint(selectedPlayerId, "Dig", "Dig")
+                    }
+                    className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-lg sm:text-xl shadow-sm active:scale-95 border-t border-white/20"
+                  >
+                    DIG
+                  </button>
+                  <button
+                    onClick={() =>
+                      recordStatAndCheckPoint(
+                        selectedPlayerId,
+                        "Dig",
+                        "Error",
+                      )
+                    }
+                    className="bg-slate-200 text-slate-600 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm shadow-sm active:scale-95 border border-slate-300 uppercase"
+                  >
+                    Touch
+                  </button>
+                </div>
 
-                {!rallyPhase.includes("receive") && (
-                  <>
-                    <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
                       <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
                         <Crosshair size={12} className="mr-1 text-red-500" />{" "}
                         Attack
@@ -7161,78 +7356,74 @@ export default function App() {
                       </div>
                     </div>
 
-                    {!rallyPhase.includes("receive") &&
-                      !(
-                        [0, 4, 5].includes(lineup.indexOf(selectedPlayerId)) ||
-                        selectedPlayerId === liberoId
-                      ) && (
-                        <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                          <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
-                            <Shield size={12} className="mr-1 text-slate-500" />{" "}
-                            Block
-                          </h4>
-                          <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
-                            <button
-                              onClick={() =>
-                                handleBlockAction(selectedPlayerId, "Stuff")
-                              }
-                              className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 flex flex-col items-center justify-center leading-tight"
-                            >
-                              <span className="text-xs sm:text-sm">STUFF</span>
-                              <span className="text-[8px] sm:text-[9px] opacity-75">
-                                (Point)
-                              </span>
-                            </button>
-                            <button
-                              onClick={() =>
-                                handleBlockAction(selectedPlayerId, "Play On")
-                              }
-                              className="bg-gradient-to-b from-teal-500 to-teal-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 flex flex-col items-center justify-center leading-tight"
-                            >
-                              <span className="text-xs sm:text-sm">BLOCK</span>
-                              <span className="text-[8px] sm:text-[9px] opacity-75">
-                                (Play On)
-                              </span>
-                            </button>
-                            <button
-                              onClick={() =>
-                                handleBlockAction(selectedPlayerId, "Used")
-                              }
-                              className="bg-gradient-to-b from-slate-400 to-slate-500 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95"
-                            >
-                              USED
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
-                            <button
-                              onClick={() =>
-                                handleBlockAction(selectedPlayerId, "Late")
-                              }
-                              className={
-                                lateBlockPlayerId === selectedPlayerId
-                                  ? "bg-amber-400 text-amber-950 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-amber-500 active:scale-95 uppercase tracking-wider transition-colors shadow-inner"
-                                  : "bg-slate-100 text-slate-600 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-slate-200 active:scale-95 uppercase tracking-wider transition-colors"
-                              }
-                            >
-                              Late
-                            </button>
-                            <button
-                              onClick={() =>
-                                handleBlockAction(selectedPlayerId, "Net Viol")
-                              }
-                              className="bg-slate-100 text-slate-600 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-slate-200 active:scale-95 uppercase tracking-wider"
-                            >
-                              Net Viol
-                            </button>
-                          </div>
+                    {!(
+                      [0, 4, 5].includes(lineup.indexOf(selectedPlayerId)) ||
+                      selectedPlayerId === liberoId
+                    ) && (
+                      <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                        <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
+                          <Shield size={12} className="mr-1 text-slate-500" />{" "}
+                          Block
+                        </h4>
+                        <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
+                          <button
+                            onClick={() =>
+                              handleBlockAction(selectedPlayerId, "Stuff")
+                            }
+                            className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 flex flex-col items-center justify-center leading-tight"
+                          >
+                            <span className="text-xs sm:text-sm">STUFF</span>
+                            <span className="text-[8px] sm:text-[9px] opacity-75">
+                              (Point)
+                            </span>
+                          </button>
+                          <button
+                            onClick={() =>
+                              handleBlockAction(selectedPlayerId, "Play On")
+                            }
+                            className="bg-gradient-to-b from-teal-500 to-teal-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 flex flex-col items-center justify-center leading-tight"
+                          >
+                            <span className="text-xs sm:text-sm">BLOCK</span>
+                            <span className="text-[8px] sm:text-[9px] opacity-75">
+                              (Play On)
+                            </span>
+                          </button>
+                          <button
+                            onClick={() =>
+                              handleBlockAction(selectedPlayerId, "Used")
+                            }
+                            className="bg-gradient-to-b from-slate-400 to-slate-500 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95"
+                          >
+                            USED
+                          </button>
                         </div>
-                      )}
-                  </>
-                )}
+                        <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+                          <button
+                            onClick={() =>
+                              handleBlockAction(selectedPlayerId, "Late")
+                            }
+                            className={
+                              lateBlockPlayerId === selectedPlayerId
+                                ? "bg-amber-400 text-amber-950 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-amber-500 active:scale-95 uppercase tracking-wider transition-colors shadow-inner"
+                                : "bg-slate-100 text-slate-600 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-slate-200 active:scale-95 uppercase tracking-wider transition-colors"
+                            }
+                          >
+                            Late
+                          </button>
+                          <button
+                            onClick={() =>
+                              handleBlockAction(selectedPlayerId, "Net Viol")
+                            }
+                            className="bg-slate-100 text-slate-600 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-slate-200 active:scale-95 uppercase tracking-wider"
+                          >
+                            Net Viol
+                          </button>
+                        </div>
+                      </div>
+                    )}
               </div>
 
-              {!rallyPhase.includes("receive") && (
-                <div className="bg-slate-200 p-2 sm:p-3 flex gap-1.5 sm:gap-2">
+              <div className="bg-slate-200 p-2 sm:p-3 flex gap-1.5 sm:gap-2">
                   <button
                     onClick={() => setSubModalVisible(true)}
                     className="flex-1 bg-white text-slate-700 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm uppercase flex justify-center items-center shadow-sm active:scale-95 border border-slate-300"
@@ -7253,7 +7444,6 @@ export default function App() {
                     </button>
                   )}
                 </div>
-              )}
             </div>
           </div>
         )}
@@ -7668,79 +7858,211 @@ export default function App() {
         )}
 
         {aceReceiverPrompt && !setWinnerModal && (
-          <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl animate-in fade-in zoom-in-95">
-            <Activity
-              size={60}
-              className="text-amber-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(245,158,11,0.5)] sm:w-20 sm:h-20"
-            />
-            <h2 className="text-2xl sm:text-4xl font-black mb-4 sm:mb-6 text-center tracking-widest uppercase">
-              {aceReceiverPrompt === "opp" ? "Who Got Aced?" : "Who Passed 0?"}
-            </h2>
-            <p className="text-slate-400 font-bold mb-6 sm:mb-8 text-center text-sm uppercase max-w-sm">
-              Select up to 2 players
-            </p>
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full max-w-sm mb-4">
-              {(aceReceiverPrompt === "opp" ? lineup : oppLineup)
-                .filter((_, i) => [0, 1, 2, 3, 4, 5].includes(i))
-                .map((id, index) => {
-                  const isOpp = aceReceiverPrompt === "ucc";
-                  let displayName = isOpp
-                    ? id
-                    : appData.roster.find((p) => p.id === id)?.name;
-                  let numDisplay = isOpp
-                    ? ""
-                    : `#${appData.roster.find((p) => p.id === id)?.number}`;
+          <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-3 sm:p-6 text-white backdrop-blur-xl animate-in fade-in zoom-in-95 overflow-y-auto">
+            <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-4 sm:p-6 max-w-md w-full shadow-2xl flex flex-col items-center my-auto">
+              <div className="w-12 h-12 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center mb-2.5 border border-amber-500/30">
+                <Activity size={26} />
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black mb-1 text-center tracking-wider uppercase">
+                {aceReceiverPrompt === "opp" ? "Who Got Aced?" : "Who Passed 0?"}
+              </h2>
+              <p className="text-slate-400 font-bold mb-3.5 text-center text-xs uppercase tracking-wider">
+                {selectedAceReceivers.length > 0
+                  ? `Selected: ${selectedAceReceivers.length}/2 player(s)`
+                  : "Select up to 2 players (All 7 active numbers)"}
+              </p>
 
-                  if (!isOpp && !displayName) return null;
-                  if (isOpp && id.trim() === "") return null;
-
-                  const isSelected = selectedAceReceivers.includes(id);
-
-                  return (
-                    <button
-                      key={isOpp ? `opp_${id}_${index}` : id}
-                      onClick={() => toggleAceReceiver(id)}
-                      className={`${isSelected ? "bg-amber-500 text-white" : "bg-slate-800 hover:bg-slate-700 text-white"} py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base shadow-lg active:scale-95 flex flex-col justify-center items-center gap-1 border border-slate-600 transition-colors`}
-                    >
-                      {!isOpp && (
-                        <span
-                          className={`opacity-60 text-[10px] ${isSelected ? "text-amber-100" : ""}`}
-                        >
-                          {numDisplay}
+              {(() => {
+                const receivingTeam = aceReceiverPrompt === "opp" ? "ucc" : "opp";
+                const candidates = getSevenReceivers(receivingTeam);
+                return (
+                  <div className="w-full space-y-2.5 mb-4">
+                    {/* Front Row (3 players) */}
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-amber-400 mb-1 flex items-center justify-between px-0.5">
+                        <span>Front Row (Net)</span>
+                        <span className="text-[9px] text-slate-400 font-bold">
+                          Positions 4, 3, 2
                         </span>
-                      )}
-                      <span>{displayName.substring(0, 8)}</span>
-                    </button>
-                  );
-                })}
-            </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                        {candidates.slice(0, 3).map((item) => {
+                          const isSelected = selectedAceReceivers.includes(item.id);
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => toggleAceReceiver(item.id)}
+                              className={`p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
+                                isSelected
+                                  ? "bg-amber-500 border-amber-400 text-white shadow-[0_0_15px_rgba(245,158,11,0.5)] scale-[1.02]"
+                                  : item.isLibero
+                                  ? "bg-amber-500/15 border-amber-400/40 text-white hover:bg-amber-500/25"
+                                  : "bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+                              }`}
+                            >
+                              <span className="text-2xl sm:text-3xl font-black leading-tight">
+                                #{item.number}
+                              </span>
+                              <span className="text-[11px] font-bold truncate max-w-full">
+                                {item.name}
+                              </span>
+                              <span
+                                className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded mt-0.5 ${
+                                  isSelected
+                                    ? "bg-black/20 text-white"
+                                    : item.isLibero
+                                    ? "bg-amber-400 text-amber-950 font-black"
+                                    : "bg-slate-700 text-slate-400"
+                                }`}
+                              >
+                                {item.posLabel}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-            <div className="flex flex-col w-full max-w-sm gap-2">
-              <button
-                onClick={confirmAceReceivers}
-                disabled={selectedAceReceivers.length === 0}
-                className="bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-500 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-lg border-t border-white/20 shadow-xl active:scale-95 transition-all"
-              >
-                CONFIRM SELECTION
-              </button>
-              <button
-                onClick={skipAceReceivers}
-                className="bg-slate-600 hover:bg-slate-500 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base border border-slate-500 shadow-sm active:scale-95"
-              >
-                SKIP / UNKNOWN
-              </button>
-            </div>
+                    {/* Back Row (3 players) */}
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center justify-between px-0.5">
+                        <span>Back Row</span>
+                        <span className="text-[9px] text-slate-500 font-bold">
+                          Positions 5, 6, 1
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                        {candidates.slice(3, 6).map((item) => {
+                          const isSelected = selectedAceReceivers.includes(item.id);
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => toggleAceReceiver(item.id)}
+                              className={`p-2 sm:p-2.5 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
+                                isSelected
+                                  ? "bg-amber-500 border-amber-400 text-white shadow-[0_0_15px_rgba(245,158,11,0.5)] scale-[1.02]"
+                                  : item.isLibero
+                                  ? "bg-amber-500/15 border-amber-400/40 text-white hover:bg-amber-500/25"
+                                  : "bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+                              }`}
+                            >
+                              <span className="text-2xl sm:text-3xl font-black leading-tight">
+                                #{item.number}
+                              </span>
+                              <span className="text-[11px] font-bold truncate max-w-full">
+                                {item.name}
+                              </span>
+                              <span
+                                className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded mt-0.5 ${
+                                  isSelected
+                                    ? "bg-black/20 text-white"
+                                    : item.isLibero
+                                    ? "bg-amber-400 text-amber-950 font-black"
+                                    : "bg-slate-700 text-slate-400"
+                                }`}
+                              >
+                                {item.posLabel}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-            <button
-              onClick={() => {
-                setAceReceiverPrompt(null);
-                setPendingAceData(null);
-                setSelectedAceReceivers([]);
-              }}
-              className="mt-6 sm:mt-8 text-slate-400 font-bold text-sm sm:text-lg hover:text-white px-6 py-2 sm:py-3 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors"
-            >
-              Cancel
-            </button>
+                    {/* 7th Player (Libero / Specialist) */}
+                    {candidates[6] && (
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-400 mb-1 flex items-center justify-between px-0.5">
+                          <span>
+                            {candidates[6].isLibero
+                              ? "Libero"
+                              : "7th Player / Rotation"}
+                          </span>
+                          <span className="text-[9px] text-slate-500 font-bold">
+                            Defensive Specialist
+                          </span>
+                        </div>
+                        {(() => {
+                          const item = candidates[6];
+                          const isSelected = selectedAceReceivers.includes(item.id);
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => toggleAceReceiver(item.id)}
+                              className={`w-full p-2 sm:p-2.5 rounded-xl border flex items-center justify-between px-3.5 transition-all active:scale-95 ${
+                                isSelected
+                                  ? "bg-amber-500 border-amber-400 text-white shadow-[0_0_15px_rgba(245,158,11,0.5)]"
+                                  : item.isLibero
+                                  ? "bg-amber-500/15 border-amber-400/50 text-white hover:bg-amber-500/25"
+                                  : "bg-slate-800 border-slate-700 text-white hover:bg-slate-700"
+                              }`}
+                            >
+                              <div className="flex items-center space-x-3">
+                                <span className="text-2xl sm:text-3xl font-black leading-tight">
+                                  #{item.number}
+                                </span>
+                                <div className="text-left">
+                                  <span className="text-xs sm:text-sm font-bold block leading-snug">
+                                    {item.name}
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block">
+                                    {item.posLabel}
+                                  </span>
+                                </div>
+                              </div>
+                              <span
+                                className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${
+                                  isSelected
+                                    ? "bg-black/20 text-white"
+                                    : item.isLibero
+                                    ? "bg-amber-400 text-amber-950 font-black"
+                                    : "bg-slate-700 text-slate-400"
+                                }`}
+                              >
+                                {item.isLibero ? "LIBERO" : item.posLabel}
+                              </span>
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div className="flex flex-col w-full gap-2">
+                <button
+                  onClick={confirmAceReceivers}
+                  disabled={selectedAceReceivers.length === 0}
+                  className="bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-green-500 text-white py-3 rounded-xl font-black text-sm sm:text-base border-t border-white/20 shadow-xl active:scale-95 transition-all flex items-center justify-center space-x-2"
+                >
+                  <span>CONFIRM SELECTION</span>
+                  {selectedAceReceivers.length > 0 && (
+                    <span className="bg-white/20 px-2 py-0.5 rounded text-xs font-bold">
+                      {selectedAceReceivers.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={skipAceReceivers}
+                  className="bg-slate-700 hover:bg-slate-600 text-slate-200 py-2.5 rounded-xl font-bold text-xs sm:text-sm border border-slate-600 shadow-sm active:scale-95 transition-colors"
+                >
+                  SKIP / UNKNOWN RECEIVER
+                </button>
+                <button
+                  onClick={() => {
+                    setAceReceiverPrompt(null);
+                    setPendingAceData(null);
+                    setSelectedAceReceivers([]);
+                  }}
+                  className="text-slate-400 font-bold text-xs hover:text-white py-1.5 uppercase tracking-widest transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -7812,12 +8134,684 @@ export default function App() {
               </div>
             </div>
 
-            <button
-              onClick={startNextSet}
-              className="bg-gradient-to-b from-green-500 to-green-600 text-white w-full max-w-sm py-4 sm:py-5 rounded-xl sm:rounded-[2rem] font-black text-xl sm:text-2xl shadow-[0_10px_20px_rgba(34,197,94,0.3)] active:scale-95 border-t border-white/20 uppercase tracking-widest"
-            >
-              Continue
-            </button>
+            <div className="flex flex-col gap-3 w-full max-w-sm">
+              <button
+                onClick={() => handleSetFinishContinue(true)}
+                className="bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white w-full py-4 sm:py-5 rounded-xl sm:rounded-[2rem] font-black text-base sm:text-lg shadow-[0_10px_20px_rgba(37,99,235,0.3)] active:scale-95 border-t border-white/20 uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                <Users size={20} />
+                Switch Lineup for Set {currentSetNum + 1}
+              </button>
+              <button
+                onClick={() => handleSetFinishContinue(false)}
+                className="bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white w-full py-3.5 sm:py-4 rounded-xl sm:rounded-[2rem] font-bold text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 uppercase tracking-wider"
+              >
+                Quick Start (Keep Current Lineup)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* OPPONENT SERVE RECEIVE PROMPT (WHO PASSED & RATING) */}
+        {oppServeReceivePrompt && !setWinnerModal && (
+          <div className="fixed inset-0 bg-slate-900/80 z-[110] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
+            <div className="bg-white rounded-[2rem] p-4 sm:p-6 max-w-md w-full shadow-2xl flex flex-col items-center border border-slate-200">
+              <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-[#0033A0] mb-3">
+                <Activity size={24} />
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-widest text-center">
+                Opponent Serve
+              </h2>
+              <p className="text-xs sm:text-sm font-bold text-slate-500 mb-4 text-center">
+                {oppServeReceivePrompt.passerId
+                  ? "Record pass rating for this serve:"
+                  : "Who passed the ball?"}
+              </p>
+
+              {!oppServeReceivePrompt.passerId ? (
+                <div className="w-full space-y-2.5">
+                  {(() => {
+                    const uccCandidates = getSevenReceivers("ucc");
+                    return (
+                      <div className="space-y-2">
+                        {/* Front row */}
+                        <div>
+                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center justify-between px-0.5">
+                            <span>Front Row (Net)</span>
+                            <span className="text-[9px] text-slate-400 font-bold">
+                              Positions 4, 3, 2
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {uccCandidates.slice(0, 3).map((item) => (
+                              <button
+                                key={item.id}
+                                onClick={() =>
+                                  setOppServeReceivePrompt({ passerId: item.id })
+                                }
+                                className={`p-2 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
+                                  item.isLibero
+                                    ? "bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-900"
+                                    : "bg-slate-50 border-slate-200 hover:bg-blue-50 hover:border-blue-300 text-slate-800"
+                                }`}
+                              >
+                                <span className="text-xl font-black leading-tight">
+                                  #{item.number}
+                                </span>
+                                <span className="text-[10px] font-bold truncate max-w-full">
+                                  {item.name}
+                                </span>
+                                <span className="text-[8px] text-slate-400 font-semibold uppercase">
+                                  {item.posLabel}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Back row */}
+                        <div>
+                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center justify-between px-0.5">
+                            <span>Back Row</span>
+                            <span className="text-[9px] text-slate-400 font-bold">
+                              Positions 5, 6, 1
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {uccCandidates.slice(3, 6).map((item) => (
+                              <button
+                                key={item.id}
+                                onClick={() =>
+                                  setOppServeReceivePrompt({ passerId: item.id })
+                                }
+                                className={`p-2 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
+                                  item.isLibero
+                                    ? "bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-900"
+                                    : "bg-slate-50 border-slate-200 hover:bg-blue-50 hover:border-blue-300 text-slate-800"
+                                }`}
+                              >
+                                <span className="text-xl font-black leading-tight">
+                                  #{item.number}
+                                </span>
+                                <span className="text-[10px] font-bold truncate max-w-full">
+                                  {item.name}
+                                </span>
+                                <span className="text-[8px] text-slate-400 font-semibold uppercase">
+                                  {item.posLabel}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 7th player / Libero */}
+                        {uccCandidates[6] && (
+                          <div>
+                            <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-1 flex items-center justify-between px-0.5">
+                              <span>
+                                {uccCandidates[6].isLibero
+                                  ? "Libero"
+                                  : "7th Player / Rotation"}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-bold">
+                                Defensive Specialist
+                              </span>
+                            </div>
+                            <button
+                              onClick={() =>
+                                setOppServeReceivePrompt({
+                                  passerId: uccCandidates[6].id,
+                                })
+                              }
+                              className="w-full p-2 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl text-amber-900 flex items-center justify-between px-3 transition-colors active:scale-95"
+                            >
+                              <div className="flex items-center space-x-2">
+                                <Shield
+                                  size={16}
+                                  className="text-amber-600 shrink-0"
+                                />
+                                <span className="font-black text-xl">
+                                  #{uccCandidates[6].number}
+                                </span>
+                                <span className="font-bold text-xs truncate">
+                                  {uccCandidates[6].name}
+                                </span>
+                              </div>
+                              <span className="text-[9px] bg-amber-200 text-amber-800 font-black px-1.5 py-0.5 rounded">
+                                {uccCandidates[6].isLibero
+                                  ? "LIBERO"
+                                  : uccCandidates[6].posLabel}
+                              </span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  <div className="pt-2 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setOppServeReceivePrompt(null);
+                        changeRallyPhase("play");
+                      }}
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+                    >
+                      Skip / Play On
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full space-y-3">
+                  <div className="bg-blue-50 p-3 rounded-xl border border-blue-200 flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-lg font-black text-[#0033A0]">
+                        #
+                        {
+                          appData.roster.find(
+                            (r) => r.id === oppServeReceivePrompt.passerId,
+                          )?.number
+                        }
+                      </span>
+                      <span className="text-sm font-bold text-slate-800">
+                        {
+                          appData.roster.find(
+                            (r) => r.id === oppServeReceivePrompt.passerId,
+                          )?.name
+                        }
+                      </span>
+                    </div>
+                    <button
+                      onClick={() =>
+                        setOppServeReceivePrompt({ passerId: null })
+                      }
+                      className="text-xs text-blue-600 font-bold hover:underline"
+                    >
+                      Change Passer
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { val: 3, label: "Perfect (3)", desc: "All options", color: "from-green-500 to-green-600" },
+                      { val: 2, label: "Good (2)", desc: "Medium", color: "from-teal-500 to-teal-600" },
+                      { val: 1, label: "Poor (1)", desc: "Out of sys", color: "from-amber-500 to-amber-600" },
+                      { val: 0, label: "Error (0)", desc: "Overpass", color: "from-red-500 to-red-600" },
+                    ].map(({ val, desc, color }) => (
+                      <button
+                        key={val}
+                        onClick={() => {
+                          recordStatAndCheckPoint(
+                            oppServeReceivePrompt.passerId,
+                            "Pass",
+                            "Rating",
+                            val,
+                          );
+                          setOppServeReceivePrompt(null);
+                        }}
+                        className={`bg-gradient-to-b ${color} text-white p-3 rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all`}
+                      >
+                        <span className="text-2xl sm:text-3xl leading-none">{val}</span>
+                        <span className="text-[9px] uppercase tracking-wider opacity-90 mt-1">{desc}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="pt-2 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setOppServeReceivePrompt(null);
+                        changeRallyPhase("play");
+                      }}
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+                    >
+                      Skip Pass Rating (Play On)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* BETWEEN SETS LINEUP SWITCHER MODAL */}
+        {betweenSetsModal && (
+          <div className="fixed inset-0 bg-slate-900/90 z-[115] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md overflow-y-auto">
+            <div className="bg-white rounded-[2rem] p-4 sm:p-6 max-w-xl w-full shadow-2xl flex flex-col my-auto border border-slate-200">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-10 h-10 bg-blue-50 text-[#0033A0] rounded-xl flex items-center justify-center">
+                    <Users size={22} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-black text-slate-900 uppercase tracking-wider">
+                      Set {betweenSetsModal.nextSetNum} Lineup Setup
+                    </h2>
+                    <p className="text-[11px] font-bold text-slate-500">
+                      Match: Lancers {betweenSetsModal.newSetsWon.ucc} - {betweenSetsModal.newSetsWon.opp} {opponentName}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-black tracking-wider bg-blue-50 text-[#0033A0] px-2.5 py-1 rounded-full border border-blue-200">
+                    Switch Lineup
+                  </span>
+                </div>
+              </div>
+
+              {/* Preset Loader & Libero */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                    Load Lineup Preset
+                  </label>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      if (name && appData.savedLineups?.[name]) {
+                        const p = appData.savedLineups[name];
+                        setBetweenSetsModal((prev) => ({
+                          ...prev,
+                          tempLineup: p.lineup || [null, null, null, null, null, null],
+                          tempLibero: p.liberoId || "",
+                        }));
+                      }
+                    }}
+                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
+                  >
+                    <option value="">Choose a preset...</option>
+                    {Object.keys(appData.savedLineups || {}).map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
+                    <span>Libero</span>
+                    <Shield size={12} className="text-[#0033A0]" />
+                  </label>
+                  <select
+                    value={betweenSetsModal.tempLibero}
+                    onChange={(e) =>
+                      setBetweenSetsModal((prev) => ({
+                        ...prev,
+                        tempLibero: e.target.value,
+                      }))
+                    }
+                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
+                  >
+                    <option value="">No Libero Designated</option>
+                    {sortedRoster.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        #{p.number} {p.name} {p.position ? `(${p.position})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Court Lineup Grid */}
+              <div className="bg-slate-900 rounded-2xl p-3 sm:p-4 text-white mb-4">
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="text-[10px] font-black tracking-widest uppercase text-amber-400">
+                    Front Row (Net Side)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBetweenSetsModal((prev) => {
+                        const cur = [...prev.tempLineup];
+                        const rotated = [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
+                        return { ...prev, tempLineup: rotated };
+                      });
+                    }}
+                    className="text-[9px] font-black uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 transition-colors"
+                  >
+                    <ArrowRightLeft size={10} /> Rotate Clockwise
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 mb-2.5">
+                  {[
+                    { idx: 3, label: "Pos 4 • LF (Left Front)" },
+                    { idx: 2, label: "Pos 3 • MF (Middle Front)" },
+                    { idx: 1, label: "Pos 2 • RF (Right Front)" },
+                  ].map(({ idx, label }) => (
+                    <div key={idx} className="bg-white/10 rounded-xl p-2 border border-white/10">
+                      <div className="text-[9px] font-black text-blue-300 uppercase tracking-wider mb-1 truncate">
+                        {label}
+                      </div>
+                      <select
+                        value={betweenSetsModal.tempLineup[idx] || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setBetweenSetsModal((prev) => {
+                            const nextL = [...prev.tempLineup];
+                            nextL[idx] = val;
+                            return { ...prev, tempLineup: nextL };
+                          });
+                        }}
+                        className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                      >
+                        <option value="">Select Player...</option>
+                        {sortedRoster.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            #{p.number} {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
+                  Back Row
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { idx: 4, label: "Pos 5 • LB (Left Back)" },
+                    { idx: 5, label: "Pos 6 • MB (Middle Back)" },
+                    { idx: 0, label: "Pos 1 • RB (Server)" },
+                  ].map(({ idx, label }) => (
+                    <div
+                      key={idx}
+                      className={`rounded-xl p-2 border ${
+                        idx === 0
+                          ? "bg-amber-500/15 border-amber-400/40"
+                          : "bg-white/10 border-white/10"
+                      }`}
+                    >
+                      <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                        <span className="truncate">{label}</span>
+                        {idx === 0 && <span>🏐</span>}
+                      </div>
+                      <select
+                        value={betweenSetsModal.tempLineup[idx] || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setBetweenSetsModal((prev) => {
+                            const nextL = [...prev.tempLineup];
+                            nextL[idx] = val;
+                            return { ...prev, tempLineup: nextL };
+                          });
+                        }}
+                        className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                      >
+                        <option value="">Select Player...</option>
+                        {sortedRoster.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            #{p.number} {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* First Serve Option */}
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 mb-4 flex items-center justify-between">
+                <span className="text-xs font-black uppercase text-slate-700">
+                  First Serve for Set {betweenSetsModal.nextSetNum}:
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setBetweenSetsModal((prev) => ({
+                        ...prev,
+                        tempServing: "ucc",
+                      }))
+                    }
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                      betweenSetsModal.tempServing === "ucc"
+                        ? "bg-[#0033A0] text-white shadow-sm"
+                        : "bg-white text-slate-600 border border-slate-200"
+                    }`}
+                  >
+                    🏐 Lancers
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setBetweenSetsModal((prev) => ({
+                        ...prev,
+                        tempServing: "opp",
+                      }))
+                    }
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                      betweenSetsModal.tempServing === "opp"
+                        ? "bg-slate-800 text-white shadow-sm"
+                        : "bg-white text-slate-600 border border-slate-200"
+                    }`}
+                  >
+                    🏐 {opponentName.substring(0, 8)}
+                  </button>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const filledCount = betweenSetsModal.tempLineup.filter(Boolean).length;
+                    if (filledCount < 6) {
+                      alert("Please select players for all 6 court positions before starting the set.");
+                      return;
+                    }
+                    executeStartNextSet({
+                      nextSetNum: betweenSetsModal.nextSetNum,
+                      selectedLineup: betweenSetsModal.tempLineup,
+                      selectedLibero: betweenSetsModal.tempLibero,
+                      selectedServing: betweenSetsModal.tempServing,
+                      selectedOppLineup: betweenSetsModal.tempOppLineup,
+                      selectedOppLibero: betweenSetsModal.tempOppLibero,
+                    });
+                  }}
+                  className="w-full py-4 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white rounded-xl sm:rounded-2xl font-black text-base uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  <Check size={20} />
+                  Confirm Lineup & Start Set {betweenSetsModal.nextSetNum}
+                </button>
+
+                <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                  <input
+                    type="text"
+                    placeholder="Save this lineup as preset name..."
+                    value={betweenSetsPresetName}
+                    onChange={(e) => setBetweenSetsPresetName(e.target.value)}
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-700 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!betweenSetsPresetName.trim()) {
+                        alert("Please enter a name for this preset");
+                        return;
+                      }
+                      const updated = {
+                        ...appData.savedLineups,
+                        [betweenSetsPresetName.trim()]: {
+                          lineup: betweenSetsModal.tempLineup,
+                          liberoId: betweenSetsModal.tempLibero,
+                        },
+                      };
+                      if (isFirebaseAvailable && user) {
+                        await setDoc(
+                          doc(db, `${publicPath}/${activeTeam}/settings/core`),
+                          { savedLineups: updated },
+                          { merge: true },
+                        );
+                      } else if (!isFirebaseAvailable) {
+                        writeLocalDb({ ...appData, savedLineups: updated });
+                      }
+                      alert(`Preset "${betweenSetsPresetName.trim()}" saved!`);
+                      setBetweenSetsPresetName("");
+                    }}
+                    className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-xs rounded-lg uppercase tracking-wider transition-colors whitespace-nowrap"
+                  >
+                    Save Preset
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* IN-GAME LINEUP ADJUSTMENT MODAL */}
+        {showLineupEditModal && (
+          <div className="fixed inset-0 bg-slate-900/90 z-[115] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md overflow-y-auto">
+            <div className="bg-white rounded-[2rem] p-4 sm:p-6 max-w-xl w-full shadow-2xl flex flex-col my-auto border border-slate-200">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-10 h-10 bg-blue-50 text-[#0033A0] rounded-xl flex items-center justify-center">
+                    <Users size={22} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-black text-slate-900 uppercase tracking-wider">
+                      Adjust Court Lineup (Set {currentSetNum})
+                    </h2>
+                    <p className="text-[11px] font-bold text-slate-500">
+                      Switch court positions or change designated Libero
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowLineupEditModal(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Libero selector */}
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 mb-4">
+                <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
+                  <span>Designated Libero</span>
+                  <Shield size={12} className="text-[#0033A0]" />
+                </label>
+                <select
+                  value={tempInGameLibero}
+                  onChange={(e) => setTempInGameLibero(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
+                >
+                  <option value="">No Libero</option>
+                  {sortedRoster.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      #{p.number} {p.name} {p.position ? `(${p.position})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Court positions */}
+              <div className="bg-slate-900 rounded-2xl p-3 sm:p-4 text-white mb-4">
+                <div className="text-[10px] font-black tracking-widest uppercase text-amber-400 mb-2">
+                  Front Row (Net Side)
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {[
+                    { idx: 3, label: "Pos 4 • LF" },
+                    { idx: 2, label: "Pos 3 • MF" },
+                    { idx: 1, label: "Pos 2 • RF" },
+                  ].map(({ idx, label }) => (
+                    <div key={idx} className="bg-white/10 rounded-xl p-2 border border-white/10">
+                      <div className="text-[9px] font-black text-blue-300 uppercase tracking-wider mb-1 truncate">
+                        {label}
+                      </div>
+                      <select
+                        value={tempInGameLineup[idx] || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTempInGameLineup((prev) => {
+                            const nextL = [...prev];
+                            nextL[idx] = val;
+                            return nextL;
+                          });
+                        }}
+                        className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                      >
+                        <option value="">Select Player...</option>
+                        {sortedRoster.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            #{p.number} {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
+                  Back Row
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { idx: 4, label: "Pos 5 • LB" },
+                    { idx: 5, label: "Pos 6 • MB" },
+                    { idx: 0, label: "Pos 1 • RB (Server)" },
+                  ].map(({ idx, label }) => (
+                    <div
+                      key={idx}
+                      className={`rounded-xl p-2 border ${
+                        idx === 0
+                          ? "bg-amber-500/15 border-amber-400/40"
+                          : "bg-white/10 border-white/10"
+                      }`}
+                    >
+                      <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                        <span className="truncate">{label}</span>
+                        {idx === 0 && <span>🏐</span>}
+                      </div>
+                      <select
+                        value={tempInGameLineup[idx] || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTempInGameLineup((prev) => {
+                            const nextL = [...prev];
+                            nextL[idx] = val;
+                            return nextL;
+                          });
+                        }}
+                        className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                      >
+                        <option value="">Select Player...</option>
+                        {sortedRoster.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            #{p.number} {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLineupEditModal(false)}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveInGameLineupEdit}
+                  className="flex-1 py-3 bg-[#0033A0] hover:bg-blue-800 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Check size={16} /> Save Changes
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
