@@ -712,6 +712,7 @@ export default function App() {
   const [tempNote, setTempNote] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [setWinnerModal, setSetWinnerModal] = useState(null);
+  const [nextSetServing, setNextSetServing] = useState<"ucc" | "opp">("opp");
   const [careerPlayerName, setCareerPlayerName] = useState(null);
   const [statBreakdownModal, setStatBreakdownModal] = useState<{
     isOpen: boolean;
@@ -1017,6 +1018,12 @@ export default function App() {
     }
   }, [appData.sets, activeSetId, lineup, score, serving, rallyPhase]);
 
+  useEffect(() => {
+    if (setWinnerModal) {
+      setNextSetServing(serving === "ucc" ? "opp" : "ucc");
+    }
+  }, [setWinnerModal, serving]);
+
   // -------------------------------------------------------------
   // HELPER FUNCTIONS & DUAL-MODE DATA WRITES
   // -------------------------------------------------------------
@@ -1047,6 +1054,13 @@ export default function App() {
       } catch (e) {
         console.error("Failed to sync set state:", e);
       }
+    } else if (activeSetId) {
+      writeLocalDb({
+        ...appData,
+        sets: (appData.sets || []).map((s) =>
+          s.id === activeSetId ? { ...s, ...updates } : s,
+        ),
+      });
     }
   };
 
@@ -2042,13 +2056,15 @@ export default function App() {
     }
 
     const winner = checkSetWin(newUcc, newOpp);
-    if (winner) setSetWinnerModal(winner);
-    else {
+    if (winner) {
+      setSetWinnerModal(winner);
+      setNextSetServing(serving === "ucc" ? "opp" : "ucc");
+    } else {
       changeRallyPhase("serve");
     }
   };
 
-  const handleSetFinishContinue = (switchLineup = true) => {
+  const handleSetFinishContinue = (switchLineup = true, chosenServing?: "ucc" | "opp") => {
     const newSetsWon = { ...setsWon };
     if (setWinnerModal === "ucc") newSetsWon.ucc += 1;
     else newSetsWon.opp += 1;
@@ -2077,7 +2093,7 @@ export default function App() {
       return;
     }
 
-    const nextServing = serving === "ucc" ? "opp" : "ucc";
+    const nextServing = chosenServing || nextSetServing || (serving === "ucc" ? "opp" : "ucc");
 
     if (switchLineup) {
       setBetweenSetsModal({
@@ -2445,7 +2461,10 @@ export default function App() {
       });
     }
     const winner = checkSetWin(newScore.ucc, newScore.opp);
-    if (winner) setSetWinnerModal(winner);
+    if (winner) {
+      setSetWinnerModal(winner);
+      setNextSetServing(serving === "ucc" ? "opp" : "ucc");
+    }
   };
 
   const handleSub = (benchPlayerId) => {
@@ -5540,28 +5559,32 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
-                    First Serve
+                    First Serve (Set 1)
                   </label>
                   <div className="flex gap-2 min-h-[46px] sm:min-h-[56px]">
                     <button
+                      type="button"
                       onClick={() => setServing("ucc")}
-                      className={`flex-1 rounded-xl sm:rounded-2xl font-black transition-all border text-[10px] sm:text-xs tracking-widest uppercase ${
+                      className={`flex-1 rounded-xl sm:rounded-2xl font-black transition-all border text-[10px] sm:text-xs tracking-widest uppercase flex items-center justify-center gap-1.5 ${
                         serving === "ucc"
-                          ? "bg-[#0033A0] text-white border-[#0033A0] shadow-md"
-                          : "bg-white text-slate-400 border-slate-200"
+                          ? "bg-[#0033A0] text-white border-[#0033A0] shadow-md ring-2 ring-[#0033A0]/20"
+                          : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                       }`}
                     >
-                      UCC
+                      <span className="text-sm">🏐</span>
+                      <span>Lancers</span>
                     </button>
                     <button
+                      type="button"
                       onClick={() => setServing("opp")}
-                      className={`flex-1 rounded-xl sm:rounded-2xl font-black transition-all border text-[10px] sm:text-xs tracking-widest uppercase ${
+                      className={`flex-1 rounded-xl sm:rounded-2xl font-black transition-all border text-[10px] sm:text-xs tracking-widest uppercase flex items-center justify-center gap-1.5 ${
                         serving === "opp"
-                          ? "bg-[#0033A0] text-white border-[#0033A0] shadow-md"
-                          : "bg-white text-slate-400 border-slate-200"
+                          ? "bg-slate-800 text-white border-slate-800 shadow-md ring-2 ring-slate-800/20"
+                          : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                       }`}
                     >
-                      OPP
+                      <span className="text-sm">🏐</span>
+                      <span className="truncate max-w-[110px]">{opponentName.trim() || "Opponent"}</span>
                     </button>
                   </div>
                 </div>
@@ -5976,6 +5999,39 @@ export default function App() {
                 })}
               </div>
               <div className="p-4 sm:p-6 bg-white flex flex-col gap-3 sm:gap-4">
+                {/* First Serve for Set 1 */}
+                <div className="flex items-center justify-between bg-slate-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl border border-slate-200">
+                  <label className="font-black text-slate-600 uppercase tracking-widest text-xs flex items-center">
+                    <span className="mr-1.5 text-sm">🏐</span> First Serve
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setServing("ucc")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1 ${
+                        serving === "ucc"
+                          ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/30"
+                          : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      <span>🏐</span>
+                      <span>Lancers</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setServing("opp")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1 ${
+                        serving === "opp"
+                          ? "bg-slate-800 text-white shadow-sm ring-2 ring-slate-800/30"
+                          : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      <span>🏐</span>
+                      <span className="truncate max-w-[110px]">{opponentName.trim() || "Opponent"}</span>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between bg-slate-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl border border-slate-200">
                   <label className="font-black text-slate-500 uppercase tracking-widest text-xs sm:text-sm flex items-center">
                     <Shield size={16} className="mr-2 text-slate-400" />
@@ -6120,6 +6176,21 @@ export default function App() {
                   {setsWon.opp}
                 </span>
               </div>
+              {score.ucc === 0 && score.opp === 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newServing = serving === "ucc" ? "opp" : "ucc";
+                    setServing(newServing);
+                    updateSetState({ serving: newServing });
+                  }}
+                  className="mt-1 px-2 py-0.5 rounded-full bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 text-[7px] sm:text-[8px] font-black text-amber-300 uppercase tracking-wider flex items-center gap-1 transition-all active:scale-95 whitespace-nowrap"
+                  title="Switch first serve team for this set"
+                >
+                  <span>🏐 Serve: {serving === "ucc" ? "Lancers" : (opponentName.substring(0, 6) || "Opp")}</span>
+                  <ArrowRightLeft size={9} />
+                </button>
+              )}
             </div>
 
             <div className="flex items-center space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-2 sm:order-none">
@@ -7713,9 +7784,50 @@ export default function App() {
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-bounce drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
               🏐
             </div>
-            <h2 className="text-3xl sm:text-5xl font-black mb-3 sm:mb-4 text-center tracking-widest text-shadow-lg uppercase">
-              {serving === "ucc" ? "UCC TO SERVE" : `${opponentName} TO SERVE`}
+            <h2 className="text-3xl sm:text-5xl font-black mb-2 sm:mb-3 text-center tracking-widest text-shadow-lg uppercase">
+              {serving === "ucc" ? "LANCERS TO SERVE" : `${opponentName.trim() || "OPPONENT"} TO SERVE`}
             </h2>
+
+            {/* Quick Serving Team Toggle */}
+            <div className="mb-4 flex items-center bg-black/40 backdrop-blur-md p-1.5 rounded-2xl border border-white/20 shadow-lg">
+              <span className="text-[10px] sm:text-xs font-black uppercase text-white/60 tracking-wider px-2">
+                Serving:
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (serving !== "ucc") {
+                    setServing("ucc");
+                    updateSetState({ serving: "ucc" });
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                  serving === "ucc"
+                    ? "bg-[#0033A0] text-white shadow-md ring-1 ring-white/50"
+                    : "text-white/70 hover:text-white"
+                }`}
+              >
+                <span>🏐</span>
+                <span>Lancers</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (serving !== "opp") {
+                    setServing("opp");
+                    updateSetState({ serving: "opp" });
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                  serving === "opp"
+                    ? "bg-slate-700 text-white shadow-md ring-1 ring-white/50"
+                    : "text-white/70 hover:text-white"
+                }`}
+              >
+                <span>🏐</span>
+                <span className="truncate max-w-[120px]">{opponentName.trim() || "Opponent"}</span>
+              </button>
+            </div>
 
             <div className="mb-6 sm:mb-8 text-center bg-white/10 backdrop-blur-md px-4 sm:px-6 py-2 sm:py-3 rounded-2xl sm:rounded-3xl border border-white/20 shadow-xl">
               <span className="text-[10px] sm:text-xs font-bold text-white/50 tracking-widest uppercase block mb-0.5 sm:mb-1">
@@ -8134,16 +8246,49 @@ export default function App() {
               </div>
             </div>
 
+            {/* Serving Team Selector for Next Set */}
+            <div className="w-full max-w-sm bg-white/10 backdrop-blur-md p-3 sm:p-4 rounded-2xl sm:rounded-3xl border border-white/15 mb-4 sm:mb-6 shadow-lg">
+              <span className="text-[11px] sm:text-xs font-black uppercase tracking-widest text-amber-300 block text-center mb-2.5">
+                First Serve for Set {currentSetNum + 1}
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNextSetServing("ucc")}
+                  className={`py-3 px-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                    nextSetServing === "ucc"
+                      ? "bg-[#0033A0] text-white ring-2 ring-amber-400 shadow-[0_0_15px_rgba(0,51,160,0.5)] scale-[1.02]"
+                      : "bg-white/10 text-white/70 hover:bg-white/20 border border-white/10"
+                  }`}
+                >
+                  <span className="text-base">🏐</span>
+                  <span>Lancers</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNextSetServing("opp")}
+                  className={`py-3 px-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                    nextSetServing === "opp"
+                      ? "bg-slate-700 text-white ring-2 ring-amber-400 shadow-[0_0_15px_rgba(51,65,85,0.5)] scale-[1.02]"
+                      : "bg-white/10 text-white/70 hover:bg-white/20 border border-white/10"
+                  }`}
+                >
+                  <span className="text-base">🏐</span>
+                  <span className="truncate max-w-[110px]">{opponentName.trim() || "Opponent"}</span>
+                </button>
+              </div>
+            </div>
+
             <div className="flex flex-col gap-3 w-full max-w-sm">
               <button
-                onClick={() => handleSetFinishContinue(true)}
+                onClick={() => handleSetFinishContinue(true, nextSetServing)}
                 className="bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white w-full py-4 sm:py-5 rounded-xl sm:rounded-[2rem] font-black text-base sm:text-lg shadow-[0_10px_20px_rgba(37,99,235,0.3)] active:scale-95 border-t border-white/20 uppercase tracking-wider flex items-center justify-center gap-2"
               >
                 <Users size={20} />
                 Switch Lineup for Set {currentSetNum + 1}
               </button>
               <button
-                onClick={() => handleSetFinishContinue(false)}
+                onClick={() => handleSetFinishContinue(false, nextSetServing)}
                 className="bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white w-full py-3.5 sm:py-4 rounded-xl sm:rounded-[2rem] font-bold text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 uppercase tracking-wider"
               >
                 Quick Start (Keep Current Lineup)
@@ -8568,13 +8713,14 @@ export default function App() {
                         tempServing: "ucc",
                       }))
                     }
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
                       betweenSetsModal.tempServing === "ucc"
-                        ? "bg-[#0033A0] text-white shadow-sm"
-                        : "bg-white text-slate-600 border border-slate-200"
+                        ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/30"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
                     }`}
                   >
-                    🏐 Lancers
+                    <span>🏐</span>
+                    <span>Lancers</span>
                   </button>
                   <button
                     type="button"
@@ -8584,13 +8730,14 @@ export default function App() {
                         tempServing: "opp",
                       }))
                     }
-                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
                       betweenSetsModal.tempServing === "opp"
-                        ? "bg-slate-800 text-white shadow-sm"
-                        : "bg-white text-slate-600 border border-slate-200"
+                        ? "bg-slate-800 text-white shadow-sm ring-2 ring-slate-800/30"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
                     }`}
                   >
-                    🏐 {opponentName.substring(0, 8)}
+                    <span>🏐</span>
+                    <span className="truncate max-w-[120px]">{opponentName.trim() || "Opponent"}</span>
                   </button>
                 </div>
               </div>
