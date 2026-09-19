@@ -638,10 +638,14 @@ export default function App() {
     tempServing: string;
     tempOppLineup: string[];
     tempOppLibero: string;
+    activeTab?: "ucc" | "opp";
   } | null>(null);
   const [showLineupEditModal, setShowLineupEditModal] = useState(false);
+  const [inGameLineupTab, setInGameLineupTab] = useState<"ucc" | "opp">("ucc");
   const [tempInGameLineup, setTempInGameLineup] = useState<(string | null)[]>([]);
   const [tempInGameLibero, setTempInGameLibero] = useState("");
+  const [tempInGameOppLineup, setTempInGameOppLineup] = useState<string[]>([]);
+  const [tempInGameOppLibero, setTempInGameOppLibero] = useState("");
   const [betweenSetsPresetName, setBetweenSetsPresetName] = useState("");
   const [endRallyVisible, setEndRallyVisible] = useState(false);
   const [subModalVisible, setSubModalVisible] = useState(false);
@@ -2064,7 +2068,11 @@ export default function App() {
     }
   };
 
-  const handleSetFinishContinue = (switchLineup = true, chosenServing?: "ucc" | "opp") => {
+  const handleSetFinishContinue = (
+    switchLineup = true,
+    chosenServing?: "ucc" | "opp",
+    initialTab: "ucc" | "opp" = "ucc",
+  ) => {
     const newSetsWon = { ...setsWon };
     if (setWinnerModal === "ucc") newSetsWon.ucc += 1;
     else newSetsWon.opp += 1;
@@ -2104,6 +2112,7 @@ export default function App() {
         tempServing: nextServing,
         tempOppLineup: [...oppLineup],
         tempOppLibero: oppLiberoId,
+        activeTab: initialTab,
       });
       setSetWinnerModal(null);
     } else {
@@ -2172,23 +2181,34 @@ export default function App() {
   const openInGameLineupEdit = () => {
     setTempInGameLineup([...lineup]);
     setTempInGameLibero(liberoId);
+    setTempInGameOppLineup([...oppLineup]);
+    setTempInGameOppLibero(oppLiberoId);
+    setInGameLineupTab("ucc");
     setShowLineupEditModal(true);
   };
 
   const saveInGameLineupEdit = async () => {
     setLineup(tempInGameLineup);
     setLiberoId(tempInGameLibero);
+    const finalOpp = tempInGameOppLineup.map((val, idx) =>
+      val && val.trim() !== "" ? val.trim() : `O${idx + 1}`,
+    );
+    setOppLineup(finalOpp);
+    setOppLiberoId(tempInGameOppLibero);
+
     if (isFirebaseAvailable && user && activeSetId) {
       await setDoc(
         doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
-        { lineup: tempInGameLineup },
+        { lineup: tempInGameLineup, oppLineup: finalOpp },
         { merge: true },
       );
     } else if (!isFirebaseAvailable && activeSetId) {
       writeLocalDb({
         ...appData,
         sets: appData.sets.map((s) =>
-          s.id === activeSetId ? { ...s, lineup: tempInGameLineup } : s,
+          s.id === activeSetId
+            ? { ...s, lineup: tempInGameLineup, oppLineup: finalOpp }
+            : s,
         ),
       });
     }
@@ -8279,20 +8299,31 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 w-full max-w-sm">
+            <div className="flex flex-col gap-2.5 w-full max-w-sm">
               <button
-                onClick={() => handleSetFinishContinue(true, nextSetServing)}
-                className="bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white w-full py-4 sm:py-5 rounded-xl sm:rounded-[2rem] font-black text-base sm:text-lg shadow-[0_10px_20px_rgba(37,99,235,0.3)] active:scale-95 border-t border-white/20 uppercase tracking-wider flex items-center justify-center gap-2"
+                onClick={() => handleSetFinishContinue(true, nextSetServing, "ucc")}
+                className="bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white w-full py-4 sm:py-4.5 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base shadow-[0_10px_20px_rgba(37,99,235,0.3)] active:scale-95 border-t border-white/20 uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
               >
-                <Users size={20} />
-                Switch Lineup for Set {currentSetNum + 1}
+                <Users size={18} />
+                Adjust Lineups for Set {currentSetNum + 1}
               </button>
-              <button
-                onClick={() => handleSetFinishContinue(false, nextSetServing)}
-                className="bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white w-full py-3.5 sm:py-4 rounded-xl sm:rounded-[2rem] font-bold text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 uppercase tracking-wider"
-              >
-                Quick Start (Keep Current Lineup)
-              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSetFinishContinue(true, nextSetServing, "opp")}
+                  className="bg-slate-800 hover:bg-slate-700 text-amber-300 py-3 px-2 rounded-xl sm:rounded-2xl font-black text-xs uppercase tracking-wider border border-white/10 shadow-sm active:scale-95 flex items-center justify-center gap-1.5 transition-all"
+                >
+                  <ArrowRightLeft size={13} />
+                  <span className="truncate">Opponent Lineup</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetFinishContinue(false, nextSetServing)}
+                  className="bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white py-3 px-2 rounded-xl sm:rounded-2xl font-bold text-xs uppercase tracking-wider border-t border-white/20 shadow-sm active:scale-95 transition-all truncate"
+                >
+                  Quick Start
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -8544,160 +8575,447 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Preset Loader & Libero */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
-                    Load Lineup Preset
-                  </label>
-                  <select
-                    defaultValue=""
-                    onChange={(e) => {
-                      const name = e.target.value;
-                      if (name && appData.savedLineups?.[name]) {
-                        const p = appData.savedLineups[name];
-                        setBetweenSetsModal((prev) => ({
-                          ...prev,
-                          tempLineup: p.lineup || [null, null, null, null, null, null],
-                          tempLibero: p.liberoId || "",
-                        }));
-                      }
-                    }}
-                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
-                  >
-                    <option value="">Choose a preset...</option>
-                    {Object.keys(appData.savedLineups || {}).map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                  <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
-                    <span>Libero</span>
-                    <Shield size={12} className="text-[#0033A0]" />
-                  </label>
-                  <select
-                    value={betweenSetsModal.tempLibero}
-                    onChange={(e) =>
-                      setBetweenSetsModal((prev) => ({
-                        ...prev,
-                        tempLibero: e.target.value,
-                      }))
-                    }
-                    className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
-                  >
-                    <option value="">No Libero Designated</option>
-                    {sortedRoster.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        #{p.number} {p.name} {p.position ? `(${p.position})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Court Lineup Grid */}
-              <div className="bg-slate-900 rounded-2xl p-3 sm:p-4 text-white mb-4">
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-[10px] font-black tracking-widest uppercase text-amber-400">
-                    Front Row (Net Side)
+              {/* Lineup Switcher Tabs: Lancers vs Opponent */}
+              <div className="flex bg-slate-100 p-1 rounded-xl mb-4 border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBetweenSetsModal((prev) =>
+                      prev ? { ...prev, activeTab: "ucc" } : null,
+                    )
+                  }
+                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                    (betweenSetsModal.activeTab || "ucc") === "ucc"
+                      ? "bg-[#0033A0] text-white shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <span>🏐</span>
+                  <span>Lancers Lineup</span>
+                  <span className="text-[10px] opacity-80 font-bold ml-1">
+                    ({betweenSetsModal.tempLineup.filter(Boolean).length}/6)
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBetweenSetsModal((prev) => {
-                        const cur = [...prev.tempLineup];
-                        const rotated = [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
-                        return { ...prev, tempLineup: rotated };
-                      });
-                    }}
-                    className="text-[9px] font-black uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 transition-colors"
-                  >
-                    <ArrowRightLeft size={10} /> Rotate Clockwise
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 mb-2.5">
-                  {[
-                    { idx: 3, label: "Pos 4 • LF (Left Front)" },
-                    { idx: 2, label: "Pos 3 • MF (Middle Front)" },
-                    { idx: 1, label: "Pos 2 • RF (Right Front)" },
-                  ].map(({ idx, label }) => (
-                    <div key={idx} className="bg-white/10 rounded-xl p-2 border border-white/10">
-                      <div className="text-[9px] font-black text-blue-300 uppercase tracking-wider mb-1 truncate">
-                        {label}
-                      </div>
-                      <select
-                        value={betweenSetsModal.tempLineup[idx] || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setBetweenSetsModal((prev) => {
-                            const nextL = [...prev.tempLineup];
-                            nextL[idx] = val;
-                            return { ...prev, tempLineup: nextL };
-                          });
-                        }}
-                        className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
-                      >
-                        <option value="">Select Player...</option>
-                        {sortedRoster.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            #{p.number} {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
-                  Back Row
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { idx: 4, label: "Pos 5 • LB (Left Back)" },
-                    { idx: 5, label: "Pos 6 • MB (Middle Back)" },
-                    { idx: 0, label: "Pos 1 • RB (Server)" },
-                  ].map(({ idx, label }) => (
-                    <div
-                      key={idx}
-                      className={`rounded-xl p-2 border ${
-                        idx === 0
-                          ? "bg-amber-500/15 border-amber-400/40"
-                          : "bg-white/10 border-white/10"
-                      }`}
-                    >
-                      <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
-                        <span className="truncate">{label}</span>
-                        {idx === 0 && <span>🏐</span>}
-                      </div>
-                      <select
-                        value={betweenSetsModal.tempLineup[idx] || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setBetweenSetsModal((prev) => {
-                            const nextL = [...prev.tempLineup];
-                            nextL[idx] = val;
-                            return { ...prev, tempLineup: nextL };
-                          });
-                        }}
-                        className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
-                      >
-                        <option value="">Select Player...</option>
-                        {sortedRoster.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            #{p.number} {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
-                </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBetweenSetsModal((prev) =>
+                      prev ? { ...prev, activeTab: "opp" } : null,
+                    )
+                  }
+                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                    betweenSetsModal.activeTab === "opp"
+                      ? "bg-slate-800 text-white shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <span>🛡️</span>
+                  <span className="truncate max-w-[120px]">
+                    {opponentName.trim() || "Opponent"}
+                  </span>
+                  <span className="text-[10px] opacity-80 font-bold ml-1">
+                    {(betweenSetsModal.tempOppLineup || []).filter(
+                      (x) => x && !x.startsWith("O"),
+                    ).length > 0
+                      ? `${(betweenSetsModal.tempOppLineup || []).filter((x) => x && !x.startsWith("O")).length} set`
+                      : "Default"}
+                  </span>
+                </button>
               </div>
+
+              {(betweenSetsModal.activeTab || "ucc") === "ucc" ? (
+                <>
+                  {/* Preset Loader & Libero */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                        Load Lineup Preset
+                      </label>
+                      <select
+                        defaultValue=""
+                        onChange={(e) => {
+                          const name = e.target.value;
+                          if (name && appData.savedLineups?.[name]) {
+                            const p = appData.savedLineups[name];
+                            setBetweenSetsModal((prev) => ({
+                              ...prev,
+                              tempLineup: p.lineup || [null, null, null, null, null, null],
+                              tempLibero: p.liberoId || "",
+                            }));
+                          }
+                        }}
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
+                      >
+                        <option value="">Choose a preset...</option>
+                        {Object.keys(appData.savedLineups || {}).map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
+                        <span>Libero</span>
+                        <Shield size={12} className="text-[#0033A0]" />
+                      </label>
+                      <select
+                        value={betweenSetsModal.tempLibero}
+                        onChange={(e) =>
+                          setBetweenSetsModal((prev) => ({
+                            ...prev,
+                            tempLibero: e.target.value,
+                          }))
+                        }
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
+                      >
+                        <option value="">No Libero Designated</option>
+                        {sortedRoster.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            #{p.number} {p.name} {p.position ? `(${p.position})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Court Lineup Grid */}
+                  <div className="bg-slate-900 rounded-2xl p-3 sm:p-4 text-white mb-4">
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className="text-[10px] font-black tracking-widest uppercase text-amber-400">
+                        Front Row (Net Side)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBetweenSetsModal((prev) => {
+                            const cur = [...prev.tempLineup];
+                            const rotated = [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
+                            return { ...prev, tempLineup: rotated };
+                          });
+                        }}
+                        className="text-[9px] font-black uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 transition-colors"
+                      >
+                        <ArrowRightLeft size={10} /> Rotate Clockwise
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 mb-2.5">
+                      {[
+                        { idx: 3, label: "Pos 4 • LF (Left Front)" },
+                        { idx: 2, label: "Pos 3 • MF (Middle Front)" },
+                        { idx: 1, label: "Pos 2 • RF (Right Front)" },
+                      ].map(({ idx, label }) => (
+                        <div key={idx} className="bg-white/10 rounded-xl p-2 border border-white/10">
+                          <div className="text-[9px] font-black text-blue-300 uppercase tracking-wider mb-1 truncate">
+                            {label}
+                          </div>
+                          <select
+                            value={betweenSetsModal.tempLineup[idx] || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setBetweenSetsModal((prev) => {
+                                const nextL = [...prev.tempLineup];
+                                nextL[idx] = val;
+                                return { ...prev, tempLineup: nextL };
+                              });
+                            }}
+                            className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                          >
+                            <option value="">Select Player...</option>
+                            {sortedRoster.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                #{p.number} {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
+                      Back Row
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { idx: 4, label: "Pos 5 • LB (Left Back)" },
+                        { idx: 5, label: "Pos 6 • MB (Middle Back)" },
+                        { idx: 0, label: "Pos 1 • RB (Server)" },
+                      ].map(({ idx, label }) => (
+                        <div
+                          key={idx}
+                          className={`rounded-xl p-2 border ${
+                            idx === 0
+                              ? "bg-amber-500/15 border-amber-400/40"
+                              : "bg-white/10 border-white/10"
+                          }`}
+                        >
+                          <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                            <span className="truncate">{label}</span>
+                            {idx === 0 && <span>🏐</span>}
+                          </div>
+                          <select
+                            value={betweenSetsModal.tempLineup[idx] || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setBetweenSetsModal((prev) => {
+                                const nextL = [...prev.tempLineup];
+                                nextL[idx] = val;
+                                return { ...prev, tempLineup: nextL };
+                              });
+                            }}
+                            className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                          >
+                            <option value="">Select Player...</option>
+                            {sortedRoster.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                #{p.number} {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Opponent Libero & Lineup Actions */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
+                        <span>Opponent Libero #</span>
+                        <Shield size={12} className="text-slate-700" />
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Jersey # (e.g. 5)"
+                        value={betweenSetsModal.tempOppLibero || ""}
+                        onChange={(e) =>
+                          setBetweenSetsModal((prev) =>
+                            prev ? { ...prev, tempOppLibero: e.target.value } : null,
+                          )
+                        }
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none uppercase"
+                      />
+                    </div>
+
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col justify-between">
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                        Opponent Lineup Actions
+                      </label>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBetweenSetsModal((prev) => {
+                              if (!prev) return null;
+                              const cur = [...prev.tempOppLineup];
+                              const rotated = [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
+                              return { ...prev, tempOppLineup: rotated };
+                            });
+                          }}
+                          className="flex-1 py-1.5 px-2 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center justify-center gap-1 transition-all active:scale-95"
+                          title="Rotate opponent rotation 1 step clockwise"
+                        >
+                          <ArrowRightLeft size={11} /> Rotate CW
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const defaultL =
+                              appData.opponents?.[opponentName]?.defaultLineup || [
+                                "O1",
+                                "O2",
+                                "O3",
+                                "O4",
+                                "O5",
+                                "O6",
+                              ];
+                            setBetweenSetsModal((prev) =>
+                              prev ? { ...prev, tempOppLineup: [...defaultL] } : null,
+                            );
+                          }}
+                          className="py-1.5 px-2.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider text-slate-600 transition-all active:scale-95"
+                          title="Reset to default lineup"
+                        >
+                          Reset
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBetweenSetsModal((prev) =>
+                              prev
+                                ? { ...prev, tempOppLineup: ["", "", "", "", "", ""] }
+                                : null,
+                            );
+                          }}
+                          className="py-1.5 px-2.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider text-slate-400 hover:text-red-500 transition-all active:scale-95"
+                          title="Clear all opponent positions"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Opponent Court Lineup Grid */}
+                  <div className="bg-slate-900 rounded-2xl p-3 sm:p-4 text-white mb-4">
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className="text-[10px] font-black tracking-widest uppercase text-amber-400">
+                        Front Row (Net Side)
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                        LF • MF • RF
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 mb-2.5">
+                      {[
+                        { idx: 3, label: "Pos 4 • LF" },
+                        { idx: 2, label: "Pos 3 • MF" },
+                        { idx: 1, label: "Pos 2 • RF" },
+                      ].map(({ idx, label }) => {
+                        const currentVal = betweenSetsModal.tempOppLineup[idx] || "";
+                        const hasNote =
+                          currentVal &&
+                          oppNotesMem[currentVal] &&
+                          oppNotesMem[currentVal].trim() !== "";
+                        return (
+                          <div
+                            key={idx}
+                            className="bg-white/10 rounded-xl p-2 border border-white/10 flex flex-col"
+                          >
+                            <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 truncate flex items-center justify-between">
+                              <span>{label}</span>
+                              {hasNote && <FileText size={10} className="text-amber-300" />}
+                            </div>
+                            <input
+                              type="text"
+                              placeholder={`Opp ${idx === 0 ? 1 : idx === 1 ? 2 : idx === 2 ? 3 : idx === 3 ? 4 : idx === 4 ? 5 : 6}`}
+                              value={currentVal}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setBetweenSetsModal((prev) => {
+                                  if (!prev) return null;
+                                  const nextL = [...prev.tempOppLineup];
+                                  nextL[idx] = val;
+                                  return { ...prev, tempOppLineup: nextL };
+                                });
+                              }}
+                              className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-sm font-black text-center uppercase outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
+                      Back Row
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { idx: 4, label: "Pos 5 • LB" },
+                        { idx: 5, label: "Pos 6 • MB" },
+                        { idx: 0, label: "Pos 1 • RB (Server)" },
+                      ].map(({ idx, label }) => {
+                        const currentVal = betweenSetsModal.tempOppLineup[idx] || "";
+                        const isServer =
+                          idx === 0 && betweenSetsModal.tempServing === "opp";
+                        const hasNote =
+                          currentVal &&
+                          oppNotesMem[currentVal] &&
+                          oppNotesMem[currentVal].trim() !== "";
+                        return (
+                          <div
+                            key={idx}
+                            className={`rounded-xl p-2 border flex flex-col ${
+                              isServer
+                                ? "bg-amber-500/15 border-amber-400/40"
+                                : "bg-white/10 border-white/10"
+                            }`}
+                          >
+                            <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                              <span className="truncate">{label}</span>
+                              <div className="flex items-center gap-1">
+                                {hasNote && <FileText size={10} className="text-amber-300" />}
+                                {idx === 0 && <span>🏐</span>}
+                              </div>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder={`Opp ${idx === 0 ? 1 : idx === 4 ? 5 : 6}`}
+                              value={currentVal}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setBetweenSetsModal((prev) => {
+                                  if (!prev) return null;
+                                  const nextL = [...prev.tempOppLineup];
+                                  nextL[idx] = val;
+                                  return { ...prev, tempOppLineup: nextL };
+                                });
+                              }}
+                              className={`w-full bg-slate-800 text-white border rounded-lg px-2 py-1.5 text-sm font-black text-center uppercase outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ${
+                                isServer ? "border-amber-400/50" : "border-white/20"
+                              }`}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Quick Known Opponent Numbers Chips */}
+                    {(() => {
+                      const knownNums = Array.from(
+                        new Set([
+                          ...(betweenSetsModal.tempOppLineup || []),
+                          ...(oppLineup || []),
+                          ...((opponentName &&
+                            appData.opponents?.[opponentName]?.defaultLineup) ||
+                            []),
+                          ...Object.keys(oppNotesMem || {}),
+                        ]),
+                      )
+                        .map((n) => String(n).trim())
+                        .filter((n) => n && n !== "" && !n.startsWith("O"));
+                      if (knownNums.length === 0) return null;
+                      return (
+                        <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-wrap items-center gap-1.5">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mr-1">
+                            Known Numbers:
+                          </span>
+                          {knownNums.map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => {
+                                setBetweenSetsModal((prev) => {
+                                  if (!prev) return null;
+                                  const nextL = [...prev.tempOppLineup];
+                                  const emptyIdx = nextL.findIndex(
+                                    (v) => !v || v.trim() === "" || v.startsWith("O"),
+                                  );
+                                  if (emptyIdx !== -1) {
+                                    nextL[emptyIdx] = num;
+                                  }
+                                  return { ...prev, tempOppLineup: nextL };
+                                });
+                              }}
+                              className="px-2 py-0.5 rounded-md bg-white/15 hover:bg-amber-400 hover:text-slate-900 text-white font-black text-[10px] uppercase border border-white/10 transition-colors"
+                              title={`Click to place #${num} into next open slot`}
+                            >
+                              #{num}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
 
               {/* First Serve Option */}
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 mb-4 flex items-center justify-between">
@@ -8749,22 +9067,59 @@ export default function App() {
                   onClick={() => {
                     const filledCount = betweenSetsModal.tempLineup.filter(Boolean).length;
                     if (filledCount < 6) {
-                      alert("Please select players for all 6 court positions before starting the set.");
+                      alert("Please select players for all 6 Lancers court positions before starting the set.");
+                      setBetweenSetsModal((prev) =>
+                        prev ? { ...prev, activeTab: "ucc" } : null,
+                      );
                       return;
                     }
+                    const finalOppLineup = betweenSetsModal.tempOppLineup.map((val, idx) =>
+                      val && val.trim() !== "" ? val.trim() : `O${idx + 1}`,
+                    );
+
+                    // Persist opponent lineup & libero in DB for memory
+                    if (opponentName && opponentName.trim()) {
+                      const safeOppName = opponentName.trim().replace(/\//g, "-");
+                      if (isFirebaseAvailable && user) {
+                        setDoc(
+                          doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
+                          {
+                            defaultLineup: finalOppLineup,
+                            liberoId: betweenSetsModal.tempOppLibero || "",
+                            updatedAt: serverTimestamp(),
+                          },
+                          { merge: true },
+                        ).catch(() => {});
+                      } else {
+                        const existingOpp = appData.opponents?.[safeOppName] || {};
+                        writeLocalDb({
+                          ...appData,
+                          opponents: {
+                            ...appData.opponents,
+                            [safeOppName]: {
+                              ...existingOpp,
+                              teamName: opponentName,
+                              defaultLineup: finalOppLineup,
+                              liberoId: betweenSetsModal.tempOppLibero || "",
+                            },
+                          },
+                        });
+                      }
+                    }
+
                     executeStartNextSet({
                       nextSetNum: betweenSetsModal.nextSetNum,
                       selectedLineup: betweenSetsModal.tempLineup,
                       selectedLibero: betweenSetsModal.tempLibero,
                       selectedServing: betweenSetsModal.tempServing,
-                      selectedOppLineup: betweenSetsModal.tempOppLineup,
+                      selectedOppLineup: finalOppLineup,
                       selectedOppLibero: betweenSetsModal.tempOppLibero,
                     });
                   }}
                   className="w-full py-4 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white rounded-xl sm:rounded-2xl font-black text-base uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center gap-2"
                 >
                   <Check size={20} />
-                  Confirm Lineup & Start Set {betweenSetsModal.nextSetNum}
+                  Confirm Lineups & Start Set {betweenSetsModal.nextSetNum}
                 </button>
 
                 <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
@@ -8838,108 +9193,284 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Libero selector */}
-              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 mb-4">
-                <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
-                  <span>Designated Libero</span>
-                  <Shield size={12} className="text-[#0033A0]" />
-                </label>
-                <select
-                  value={tempInGameLibero}
-                  onChange={(e) => setTempInGameLibero(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
+              {/* Tabs: Lancers vs Opponent */}
+              <div className="flex bg-slate-100 p-1 rounded-xl mb-4 border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setInGameLineupTab("ucc")}
+                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                    inGameLineupTab === "ucc"
+                      ? "bg-[#0033A0] text-white shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
                 >
-                  <option value="">No Libero</option>
-                  {sortedRoster.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      #{p.number} {p.name} {p.position ? `(${p.position})` : ""}
-                    </option>
-                  ))}
-                </select>
+                  <span>🏐</span>
+                  <span>Lancers Lineup</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInGameLineupTab("opp")}
+                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all ${
+                    inGameLineupTab === "opp"
+                      ? "bg-slate-800 text-white shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <span>🛡️</span>
+                  <span className="truncate max-w-[140px]">
+                    {opponentName.trim() || "Opponent"} Lineup
+                  </span>
+                </button>
               </div>
 
-              {/* Court positions */}
-              <div className="bg-slate-900 rounded-2xl p-3 sm:p-4 text-white mb-4">
-                <div className="text-[10px] font-black tracking-widest uppercase text-amber-400 mb-2">
-                  Front Row (Net Side)
-                </div>
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  {[
-                    { idx: 3, label: "Pos 4 • LF" },
-                    { idx: 2, label: "Pos 3 • MF" },
-                    { idx: 1, label: "Pos 2 • RF" },
-                  ].map(({ idx, label }) => (
-                    <div key={idx} className="bg-white/10 rounded-xl p-2 border border-white/10">
-                      <div className="text-[9px] font-black text-blue-300 uppercase tracking-wider mb-1 truncate">
-                        {label}
-                      </div>
-                      <select
-                        value={tempInGameLineup[idx] || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setTempInGameLineup((prev) => {
-                            const nextL = [...prev];
-                            nextL[idx] = val;
-                            return nextL;
-                          });
-                        }}
-                        className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
-                      >
-                        <option value="">Select Player...</option>
-                        {sortedRoster.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            #{p.number} {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
-                  Back Row
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { idx: 4, label: "Pos 5 • LB" },
-                    { idx: 5, label: "Pos 6 • MB" },
-                    { idx: 0, label: "Pos 1 • RB (Server)" },
-                  ].map(({ idx, label }) => (
-                    <div
-                      key={idx}
-                      className={`rounded-xl p-2 border ${
-                        idx === 0
-                          ? "bg-amber-500/15 border-amber-400/40"
-                          : "bg-white/10 border-white/10"
-                      }`}
+              {inGameLineupTab === "ucc" ? (
+                <>
+                  {/* Libero selector */}
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 mb-4">
+                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
+                      <span>Designated Libero</span>
+                      <Shield size={12} className="text-[#0033A0]" />
+                    </label>
+                    <select
+                      value={tempInGameLibero}
+                      onChange={(e) => setTempInGameLibero(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
                     >
-                      <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
-                        <span className="truncate">{label}</span>
-                        {idx === 0 && <span>🏐</span>}
-                      </div>
-                      <select
-                        value={tempInGameLineup[idx] || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setTempInGameLineup((prev) => {
-                            const nextL = [...prev];
-                            nextL[idx] = val;
-                            return nextL;
-                          });
-                        }}
-                        className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
-                      >
-                        <option value="">Select Player...</option>
-                        {sortedRoster.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            #{p.number} {p.name}
-                          </option>
-                        ))}
-                      </select>
+                      <option value="">No Libero</option>
+                      {sortedRoster.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          #{p.number} {p.name} {p.position ? `(${p.position})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Court positions */}
+                  <div className="bg-slate-900 rounded-2xl p-3 sm:p-4 text-white mb-4">
+                    <div className="text-[10px] font-black tracking-widest uppercase text-amber-400 mb-2">
+                      Front Row (Net Side)
                     </div>
-                  ))}
-                </div>
-              </div>
+                    <div className="grid grid-cols-3 gap-2 mb-3">
+                      {[
+                        { idx: 3, label: "Pos 4 • LF" },
+                        { idx: 2, label: "Pos 3 • MF" },
+                        { idx: 1, label: "Pos 2 • RF" },
+                      ].map(({ idx, label }) => (
+                        <div key={idx} className="bg-white/10 rounded-xl p-2 border border-white/10">
+                          <div className="text-[9px] font-black text-blue-300 uppercase tracking-wider mb-1 truncate">
+                            {label}
+                          </div>
+                          <select
+                            value={tempInGameLineup[idx] || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTempInGameLineup((prev) => {
+                                const nextL = [...prev];
+                                nextL[idx] = val;
+                                return nextL;
+                              });
+                            }}
+                            className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                          >
+                            <option value="">Select Player...</option>
+                            {sortedRoster.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                #{p.number} {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
+                      Back Row
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { idx: 4, label: "Pos 5 • LB" },
+                        { idx: 5, label: "Pos 6 • MB" },
+                        { idx: 0, label: "Pos 1 • RB (Server)" },
+                      ].map(({ idx, label }) => (
+                        <div
+                          key={idx}
+                          className={`rounded-xl p-2 border ${
+                            idx === 0
+                              ? "bg-amber-500/15 border-amber-400/40"
+                              : "bg-white/10 border-white/10"
+                          }`}
+                        >
+                          <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                            <span className="truncate">{label}</span>
+                            {idx === 0 && <span>🏐</span>}
+                          </div>
+                          <select
+                            value={tempInGameLineup[idx] || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTempInGameLineup((prev) => {
+                                const nextL = [...prev];
+                                nextL[idx] = val;
+                                return nextL;
+                              });
+                            }}
+                            className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                          >
+                            <option value="">Select Player...</option>
+                            {sortedRoster.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                #{p.number} {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Opponent Libero & Rotation Controls */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
+                        <span>Opponent Libero #</span>
+                        <Shield size={12} className="text-slate-700" />
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Jersey # (e.g. 5)"
+                        value={tempInGameOppLibero}
+                        onChange={(e) => setTempInGameOppLibero(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none uppercase"
+                      />
+                    </div>
+
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col justify-between">
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                        Opponent Lineup Actions
+                      </label>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTempInGameOppLineup((prev) => {
+                              const cur = [...prev];
+                              return [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
+                            });
+                          }}
+                          className="flex-1 py-1.5 px-2 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center justify-center gap-1 transition-all active:scale-95"
+                          title="Rotate opponent rotation 1 step clockwise"
+                        >
+                          <ArrowRightLeft size={11} /> Rotate CW
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const defaultL =
+                              appData.opponents?.[opponentName]?.defaultLineup || [
+                                "O1",
+                                "O2",
+                                "O3",
+                                "O4",
+                                "O5",
+                                "O6",
+                              ];
+                            setTempInGameOppLineup([...defaultL]);
+                          }}
+                          className="py-1.5 px-2.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider text-slate-600 transition-all active:scale-95"
+                          title="Reset to default lineup"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Opponent Court Lineup Grid */}
+                  <div className="bg-slate-900 rounded-2xl p-3 sm:p-4 text-white mb-4">
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className="text-[10px] font-black tracking-widest uppercase text-amber-400">
+                        Front Row (Net Side)
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                        LF • MF • RF
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 mb-2.5">
+                      {[
+                        { idx: 3, label: "Pos 4 • LF" },
+                        { idx: 2, label: "Pos 3 • MF" },
+                        { idx: 1, label: "Pos 2 • RF" },
+                      ].map(({ idx, label }) => (
+                        <div
+                          key={idx}
+                          className="bg-white/10 rounded-xl p-2 border border-white/10 flex flex-col"
+                        >
+                          <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 truncate">
+                            {label}
+                          </div>
+                          <input
+                            type="text"
+                            placeholder={`Opp ${idx === 0 ? 1 : idx === 1 ? 2 : idx === 2 ? 3 : idx === 3 ? 4 : idx === 4 ? 5 : 6}`}
+                            value={tempInGameOppLineup[idx] || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTempInGameOppLineup((prev) => {
+                                const nextL = [...prev];
+                                nextL[idx] = val;
+                                return nextL;
+                              });
+                            }}
+                            className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-sm font-black text-center uppercase outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
+                      Back Row
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { idx: 4, label: "Pos 5 • LB" },
+                        { idx: 5, label: "Pos 6 • MB" },
+                        { idx: 0, label: "Pos 1 • RB (Server)" },
+                      ].map(({ idx, label }) => (
+                        <div
+                          key={idx}
+                          className={`rounded-xl p-2 border flex flex-col ${
+                            idx === 0 && serving === "opp"
+                              ? "bg-amber-500/15 border-amber-400/40"
+                              : "bg-white/10 border-white/10"
+                          }`}
+                        >
+                          <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                            <span className="truncate">{label}</span>
+                            {idx === 0 && serving === "opp" && <span>🏐</span>}
+                          </div>
+                          <input
+                            type="text"
+                            placeholder={`Opp ${idx === 0 ? 1 : idx === 4 ? 5 : 6}`}
+                            value={tempInGameOppLineup[idx] || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTempInGameOppLineup((prev) => {
+                                const nextL = [...prev];
+                                nextL[idx] = val;
+                                return nextL;
+                              });
+                            }}
+                            className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-sm font-black text-center uppercase outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Action Buttons */}
               <div className="flex gap-2">
