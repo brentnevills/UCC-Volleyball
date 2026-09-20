@@ -51,6 +51,10 @@ import {
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
 import { StatCorrectionModal } from "./components/StatCorrectionModal";
 import { StatBreakdownModal } from "./components/StatBreakdownModal";
+import { TeamNameEditModal } from "./components/TeamNameEditModal";
+import { SetScoreEditModal } from "./components/SetScoreEditModal";
+import { OpponentReportModal } from "./components/OpponentReportModal";
+import { OpponentSubModal } from "./components/OpponentSubModal";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -655,6 +659,9 @@ export default function App() {
   const [showOppLineupPrompt, setShowOppLineupPrompt] = useState(false);
   const [tempOppLineup, setTempOppLineup] = useState(["", "", "", "", "", ""]);
   const [newOppNumber, setNewOppNumber] = useState("");
+  const [showOpponentReportModal, setShowOpponentReportModal] = useState(false);
+  const [reportOpponentName, setReportOpponentName] = useState("");
+  const [showOppSubModal, setShowOppSubModal] = useState(false);
   const [selectedOppId, setSelectedOppId] = useState(null);
   const [lateBlockPlayerId, setLateBlockPlayerId] = useState(null);
   const [statPrompt, setStatPrompt] = useState<{
@@ -705,6 +712,43 @@ export default function App() {
   const [showPlayerFilterModal, setShowPlayerFilterModal] = useState(false);
   const [showPracticeStats, setShowPracticeStats] = useState(false);
   const [showStatCorrectionModal, setShowStatCorrectionModal] = useState(false);
+  const [customTeamName, setCustomTeamName] = useState<string>(
+    () => localStorage.getItem("ucc_vball_custom_team_name") || "Lancers",
+  );
+  const effectiveTeamName =
+    myTeams.find((t) => t.id === activeTeam)?.name || customTeamName || "Lancers";
+  const [teamNameModalConfig, setTeamNameModalConfig] = useState<{
+    isOpen: boolean;
+    ourTeamName: string;
+    opponentTeamName?: string;
+    targetMatchId?: string;
+    targetMatchTitle?: string;
+    showOpponentEdit?: boolean;
+  }>({
+    isOpen: false,
+    ourTeamName: "Lancers",
+    opponentTeamName: "",
+    showOpponentEdit: true,
+  });
+  const [setScoreModalConfig, setSetScoreModalConfig] = useState<{
+    isOpen: boolean;
+    set: any;
+    matchTitle?: string;
+  }>({
+    isOpen: false,
+    set: null,
+  });
+  const [statCorrectionConfig, setStatCorrectionConfig] = useState<{
+    isOpen: boolean;
+    initialMatchId?: string | null;
+    initialSetId?: string | null;
+    initialPlayerId?: string | null;
+  }>({
+    isOpen: false,
+    initialMatchId: null,
+    initialSetId: null,
+    initialPlayerId: null,
+  });
   const [showPositioning, setShowPositioning] = useState(false);
   const [viewOppStats, setViewOppStats] = useState(false);
   const [subPairs, setSubPairs] = useState<{ [key: string]: string }>({});
@@ -1415,7 +1459,7 @@ export default function App() {
           await batch.commit();
         } catch (err) {
           console.error("Practice start error", err);
-          alert("❌ Failed to start practice mode. Details: " + err.message);
+          alert("Failed to start practice mode. Details: " + err.message);
           return;
         }
       } else if (!isFirebaseAvailable) {
@@ -1572,7 +1616,7 @@ export default function App() {
           await batch.commit();
         } catch (err) {
           console.error("Practice start error", err);
-          alert("❌ Failed to start practice mode. Details: " + err.message);
+          alert("Failed to start practice mode. Details: " + err.message);
           return;
         }
       } else if (!isFirebaseAvailable) {
@@ -1679,6 +1723,10 @@ export default function App() {
 
       setActiveMatch(newMatch);
       setActiveSetId(setId);
+      setScore({ ucc: 0, opp: 0 });
+      setSetsWon({ ucc: 0, opp: 0 });
+      setCurrentSetNum(1);
+      setTeamStats({ uccSubs: 0, oppSubs: 0, uccTimeouts: 0, oppTimeouts: 0 });
       setHistory([]);
       setShowOppLineupPrompt(false);
       setView("game");
@@ -1687,7 +1735,7 @@ export default function App() {
     } catch (err) {
       console.error("Start Game Error:", err);
       alert(
-        "❌ Failed to start game. Check your connection or verified email status. Details: " +
+        "Failed to start game. Check your connection or verified email status. Details: " +
           err.message,
       );
     }
@@ -1781,7 +1829,7 @@ export default function App() {
     if (!activeMatch || !activeSetId) {
       console.error("Attempted to log stat without active match/set context.");
       alert(
-        "⚠️ Error: Game context lost. Please restart the match from the menu.",
+        "Error: Game context lost. Please restart the match from the menu.",
       );
       return;
     }
@@ -1815,7 +1863,7 @@ export default function App() {
       } catch (err) {
         console.error("Failed to save stat to cloud:", err);
         alert(
-          `❌ Cloud Save Failed: ${err.message}. The stat was recorded locally but may not sync until connection is restored.`,
+          `Cloud Save Failed: ${err.message}. The stat was recorded locally but may not sync until connection is restored.`,
         );
       }
     } else if (!isFirebaseAvailable) {
@@ -1879,17 +1927,23 @@ export default function App() {
     value?: number;
     isOpponent?: boolean;
     row?: string;
+    matchId?: string;
+    setId?: string;
   }) => {
-    if (!activeMatch) return;
+    const targetMatchId =
+      statData.matchId ||
+      activeMatch?.id ||
+      (appData.matches.length > 0 ? appData.matches[0].id : "general_match");
     const targetSetId =
+      statData.setId ||
       activeSetId ||
-      appData.sets.find((s) => s.matchId === activeMatch.id)?.id ||
+      appData.sets.find((s) => s.matchId === targetMatchId)?.id ||
       "manual_set";
     const statId =
       Date.now().toString() + Math.random().toString(36).substring(7);
     const newStat = {
       id: statId,
-      matchId: activeMatch.id,
+      matchId: targetMatchId,
       setId: targetSetId,
       playerId: statData.playerId,
       category: statData.category,
@@ -1918,6 +1972,139 @@ export default function App() {
       writeLocalDb({
         ...appData,
         stats: [...appData.stats, newStat],
+      });
+    }
+  };
+
+  const handleSaveTeamNames = async (
+    newOurName: string,
+    newOppName?: string,
+    targetMatchId?: string,
+  ) => {
+    const trimmedOur = newOurName?.trim();
+    const trimmedOpp = newOppName?.trim();
+
+    if (trimmedOur) {
+      setCustomTeamName(trimmedOur);
+      try {
+        localStorage.setItem("ucc_vball_custom_team_name", trimmedOur);
+      } catch (e) {}
+
+      if (activeTeam) {
+        const updatedTeams = myTeams.map((t) =>
+          t.id === activeTeam ? { ...t, name: trimmedOur } : t,
+        );
+        setMyTeams(updatedTeams);
+
+        if (isFirebaseAvailable && user) {
+          try {
+            const batch = writeBatch(db);
+            batch.set(
+              doc(db, "users", user.uid),
+              { teams: updatedTeams },
+              { merge: true },
+            );
+            batch.set(
+              doc(db, `${publicPath}/${activeTeam}`),
+              { name: trimmedOur },
+              { merge: true },
+            );
+            batch.set(
+              doc(db, `${publicPath}/${activeTeam}/settings/core`),
+              { teamName: trimmedOur },
+              { merge: true },
+            );
+            await batch.commit();
+          } catch (e) {
+            console.error("Failed to rename team in Firebase:", e);
+          }
+        }
+      }
+    }
+
+    if (trimmedOpp) {
+      if (activeMatch && (!targetMatchId || targetMatchId === activeMatch.id)) {
+        setOpponentName(trimmedOpp);
+        setActiveMatch((prev) =>
+          prev ? { ...prev, opponent: trimmedOpp } : prev,
+        );
+      }
+
+      const matchIdToUpdate = targetMatchId || activeMatch?.id;
+      if (matchIdToUpdate) {
+        setAppData((prev) => ({
+          ...prev,
+          matches: prev.matches.map((m) =>
+            m.id === matchIdToUpdate ? { ...m, opponent: trimmedOpp } : m,
+          ),
+        }));
+
+        setStatsPath((prev) =>
+          prev.map((item) =>
+            item.level === "match" && item.id === matchIdToUpdate
+              ? { ...item, name: `vs ${trimmedOpp}` }
+              : item,
+          ),
+        );
+
+        if (isFirebaseAvailable && user && activeTeam) {
+          try {
+            await setDoc(
+              doc(db, `${publicPath}/${activeTeam}/matches/${matchIdToUpdate}`),
+              { opponent: trimmedOpp },
+              { merge: true },
+            );
+          } catch (e) {
+            console.error("Failed to update opponent in Firebase:", e);
+          }
+        } else if (!isFirebaseAvailable) {
+          writeLocalDb({
+            ...appData,
+            matches: appData.matches.map((m) =>
+              m.id === matchIdToUpdate ? { ...m, opponent: trimmedOpp } : m,
+            ),
+          });
+        }
+      }
+    }
+  };
+
+  const handleSaveSetScore = async (
+    setId: string,
+    newUccScore: number,
+    newOppScore: number,
+  ) => {
+    setAppData((prev) => ({
+      ...prev,
+      sets: prev.sets.map((s) =>
+        s.id === setId
+          ? { ...s, scoreUcc: newUccScore, scoreOpp: newOppScore }
+          : s,
+      ),
+    }));
+
+    if (activeSetId === setId) {
+      setScore({ ucc: newUccScore, opp: newOppScore });
+    }
+
+    if (isFirebaseAvailable && user && activeTeam) {
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/sets/${setId}`),
+          { scoreUcc: newUccScore, scoreOpp: newOppScore },
+          { merge: true },
+        );
+      } catch (e) {
+        console.error("Failed to update set score in Firebase:", e);
+      }
+    } else if (!isFirebaseAvailable) {
+      writeLocalDb({
+        ...appData,
+        sets: appData.sets.map((s) =>
+          s.id === setId
+            ? { ...s, scoreUcc: newUccScore, scoreOpp: newOppScore }
+            : s,
+        ),
       });
     }
   };
@@ -4121,7 +4308,7 @@ export default function App() {
       await batch.commit();
       console.log("Team creation successful");
       alert(
-        `✅ Team created successfully!\n\nCoach Code: ${coachCode}\nPlayer Code: ${playerCode}`,
+        `Team created successfully!\n\nCoach Code: ${coachCode}\nPlayer Code: ${playerCode}`,
       );
     } catch (e) {
       console.error("DEBUG - Team Creation Error:", e);
@@ -4130,7 +4317,7 @@ export default function App() {
         errorMsg =
           "Forbidden: Your account does not have permission to create teams. This usually happens if your email is not verified or your session has expired.";
       }
-      alert(`❌ Failed to create team.\n\nDetails: ${errorMsg}`);
+      alert(`Failed to create team.\n\nDetails: ${errorMsg}`);
     }
   };
 
@@ -4245,7 +4432,7 @@ export default function App() {
 
     const confirmMsg =
       team.role === "coach"
-        ? `⚠️ DISBAND / LEAVE TEAM: Are you sure you want to remove "${team.name}"?`
+        ? `DISBAND / LEAVE TEAM: Are you sure you want to remove "${team.name}"?`
         : `LEAVE TEAM: Are you sure you want to remove "${team.name}" from your list?`;
 
     if (!window.confirm(confirmMsg)) return;
@@ -4373,7 +4560,7 @@ export default function App() {
 
     if (
       !window.confirm(
-        `⚠️ DELETE GAME: Are you sure you want to delete the match vs ${match.opponent}?\n\nThis will permanently erase all stats and sets for this game. This cannot be undone.`,
+        `DELETE GAME: Are you sure you want to delete the match vs ${match.opponent}?\n\nThis will permanently erase all stats and sets for this game. This cannot be undone.`,
       )
     )
       return;
@@ -4433,7 +4620,7 @@ export default function App() {
     if (!s) return;
     if (
       !window.confirm(
-        `⚠️ DELETE SET: Are you sure you want to delete Set ${s.setNum}?\n\nAll stats recorded during this set will be permanently erased.`,
+        `DELETE SET: Are you sure you want to delete Set ${s.setNum}?\n\nAll stats recorded during this set will be permanently erased.`,
       )
     )
       return;
@@ -5122,6 +5309,16 @@ export default function App() {
               <Activity className="mr-2 sm:mr-3 text-[#0033A0]" size={24} />{" "}
               VIEW STATS
             </button>
+            <button
+              onClick={() => {
+                setReportOpponentName("");
+                setShowOpponentReportModal(true);
+              }}
+              className="w-full bg-gradient-to-r from-blue-900 to-indigo-950 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:from-blue-800 hover:to-indigo-900 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] border border-blue-400/30"
+            >
+              <Shield className="mr-2 sm:mr-3 text-blue-400" size={24} />{" "}
+              VIEW OPPONENTS
+            </button>
           </div>
         </div>
 
@@ -5476,6 +5673,47 @@ export default function App() {
               </h2>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1 flex items-center justify-between">
+                    <span>Your Team Name</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTeamNameModalConfig({
+                          isOpen: true,
+                          ourTeamName: effectiveTeamName,
+                          opponentTeamName,
+                          showOpponentEdit: false,
+                        })
+                      }
+                      className="text-[#0033A0] hover:underline cursor-pointer text-[9px] font-bold"
+                    >
+                      Adjust Name
+                    </button>
+                  </label>
+                  <div className="flex items-center bg-white rounded-xl sm:rounded-2xl border border-slate-200 px-3 sm:px-4 py-3 shadow-2xs">
+                    <Shield className="text-[#0033A0] mr-2 flex-shrink-0" size={18} />
+                    <span className="font-black text-base sm:text-lg text-slate-800 flex-1 truncate">
+                      {effectiveTeamName}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTeamNameModalConfig({
+                          isOpen: true,
+                          ourTeamName: effectiveTeamName,
+                          opponentTeamName,
+                          showOpponentEdit: false,
+                        })
+                      }
+                      className="p-1.5 text-slate-400 hover:text-[#0033A0] hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                      title="Adjust your team name"
+                    >
+                      <Edit3 size={15} />
+                    </button>
+                  </div>
+                </div>
+
                 {matchType === "Tournament" && (
                   <div className="sm:col-span-2">
                     <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
@@ -5497,9 +5735,22 @@ export default function App() {
                 )}
 
                 <div>
-                  <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
-                    Opponent Name
-                  </label>
+                  <div className="flex items-center justify-between ml-2 mb-1">
+                    <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Opponent Name
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReportOpponentName(opponentName);
+                        setShowOpponentReportModal(true);
+                      }}
+                      className="text-[10px] font-black text-blue-600 hover:text-blue-800 uppercase tracking-wider flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Shield size={12} />
+                      <span>View Opponents</span>
+                    </button>
+                  </div>
                   <div className="flex flex-col sm:flex-row gap-2">
                     {oppNames.length > 0 && (
                       <select
@@ -5591,7 +5842,7 @@ export default function App() {
                           : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                       }`}
                     >
-                      <span className="text-sm">🏐</span>
+                      <span className="text-[10px] font-black uppercase bg-amber-400/20 text-amber-950 px-1.5 py-0.5 rounded border border-amber-400/40">Serve</span>
                       <span>Lancers</span>
                     </button>
                     <button
@@ -5603,7 +5854,7 @@ export default function App() {
                           : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                       }`}
                     >
-                      <span className="text-sm">🏐</span>
+                      <span className="text-[10px] font-black uppercase bg-amber-400/20 text-amber-950 px-1.5 py-0.5 rounded border border-amber-400/40">Serve</span>
                       <span className="truncate max-w-[110px]">{opponentName.trim() || "Opponent"}</span>
                     </button>
                   </div>
@@ -5726,7 +5977,7 @@ export default function App() {
                         <span>Pos {pos}</span>
                         {pos === 1 && serving === "ucc" && (
                           <span className="text-xs sm:text-sm leading-none">
-                            🏐
+                            <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
                           </span>
                         )}
                       </div>
@@ -5999,7 +6250,7 @@ export default function App() {
                       <label className="text-[9px] sm:text-[10px] font-black text-slate-400 mb-1 uppercase tracking-widest text-center">
                         Pos {pos}{" "}
                         {pos === 1 && serving === "opp" ? (
-                          <span className="ml-0.5">🏐</span>
+                          <span className="text-[9px] font-black uppercase text-amber-600 ml-1">Serve</span>
                         ) : (
                           ""
                         )}
@@ -6022,7 +6273,7 @@ export default function App() {
                 {/* First Serve for Set 1 */}
                 <div className="flex items-center justify-between bg-slate-50 px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl border border-slate-200">
                   <label className="font-black text-slate-600 uppercase tracking-widest text-xs flex items-center">
-                    <span className="mr-1.5 text-sm">🏐</span> First Serve
+                    First Serve
                   </label>
                   <div className="flex gap-2">
                     <button
@@ -6034,7 +6285,7 @@ export default function App() {
                           : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
                       }`}
                     >
-                      <span>🏐</span>
+                      
                       <span>Lancers</span>
                     </button>
                     <button
@@ -6046,7 +6297,7 @@ export default function App() {
                           : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
                       }`}
                     >
-                      <span>🏐</span>
+                      
                       <span className="truncate max-w-[110px]">{opponentName.trim() || "Opponent"}</span>
                     </button>
                   </div>
@@ -6082,6 +6333,23 @@ export default function App() {
             </div>
           </div>
         )}
+        <TeamNameEditModal
+          isOpen={teamNameModalConfig.isOpen}
+          onClose={() =>
+            setTeamNameModalConfig((prev) => ({ ...prev, isOpen: false }))
+          }
+          ourTeamName={teamNameModalConfig.ourTeamName || effectiveTeamName}
+          opponentTeamName={teamNameModalConfig.opponentTeamName}
+          targetMatchTitle={teamNameModalConfig.targetMatchTitle}
+          showOpponentEdit={teamNameModalConfig.showOpponentEdit}
+          onSave={(newOur, newOpp) =>
+            handleSaveTeamNames(
+              newOur,
+              newOpp,
+              teamNameModalConfig.targetMatchId,
+            )
+          }
+        />
         {renderInstallModal()}
       </div>
     );
@@ -6125,9 +6393,28 @@ export default function App() {
               >
                 <div className="flex flex-col">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-blue-200 opacity-70">
-                      Lancers
-                    </h2>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTeamNameModalConfig({
+                          isOpen: true,
+                          ourTeamName: effectiveTeamName,
+                          opponentTeamName,
+                          targetMatchId: activeMatch?.id,
+                          showOpponentEdit: true,
+                        })
+                      }
+                      className="group flex items-center gap-1 text-left cursor-pointer"
+                      title="Adjust team names"
+                    >
+                      <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-blue-200 group-hover:text-amber-300 transition-colors">
+                        {effectiveTeamName}
+                      </h2>
+                      <Edit3
+                        size={10}
+                        className="text-blue-300/60 group-hover:text-amber-300 transition-colors"
+                      />
+                    </button>
                     <span className="text-[8px] sm:text-[9px] font-black text-amber-300 bg-amber-400/20 px-1.5 py-0.2 rounded border border-amber-400/30 whitespace-nowrap" title="Official team substitutions (Libero swaps excluded)">
                       Subs: {teamStats.uccSubs}
                     </span>
@@ -6152,7 +6439,7 @@ export default function App() {
                 </div>
                 {serving === "ucc" && (
                   <div className="text-xl sm:text-2xl animate-bounce drop-shadow-md">
-                    🏐
+                    <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
                   </div>
                 )}
               </div>
@@ -6207,7 +6494,7 @@ export default function App() {
                   className="mt-1 px-2 py-0.5 rounded-full bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 text-[7px] sm:text-[8px] font-black text-amber-300 uppercase tracking-wider flex items-center gap-1 transition-all active:scale-95 whitespace-nowrap"
                   title="Switch first serve team for this set"
                 >
-                  <span>🏐 Serve: {serving === "ucc" ? "Lancers" : (opponentName.substring(0, 6) || "Opp")}</span>
+                  <span><span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span> Serve: {serving === "ucc" ? effectiveTeamName : (opponentName.substring(0, 6) || "Opp")}</span>
                   <ArrowRightLeft size={9} />
                 </button>
               )}
@@ -6223,7 +6510,7 @@ export default function App() {
               >
                 {serving === "opp" && (
                   <div className="text-xl sm:text-2xl animate-bounce drop-shadow-md">
-                    🏐
+                    <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
                   </div>
                 )}
                 <div className="flex flex-col items-end">
@@ -6231,9 +6518,28 @@ export default function App() {
                     <span className="text-[8px] sm:text-[9px] font-black text-slate-300 bg-white/10 px-1.5 py-0.2 rounded border border-white/20 whitespace-nowrap" title="Opponent team substitutions">
                       Subs: {teamStats.oppSubs}
                     </span>
-                    <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-slate-300 opacity-70 truncate max-w-[60px] sm:max-w-[100px]">
-                      {opponentName}
-                    </h2>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTeamNameModalConfig({
+                          isOpen: true,
+                          ourTeamName: effectiveTeamName,
+                          opponentTeamName,
+                          targetMatchId: activeMatch?.id,
+                          showOpponentEdit: true,
+                        })
+                      }
+                      className="group flex items-center gap-1 text-right cursor-pointer"
+                      title="Adjust opponent name"
+                    >
+                      <Edit3
+                        size={10}
+                        className="text-slate-400/60 group-hover:text-amber-300 transition-colors"
+                      />
+                      <h2 className="text-[8px] sm:text-xs font-black leading-tight tracking-[0.1em] uppercase text-slate-300 truncate max-w-[60px] sm:max-w-[100px] group-hover:text-amber-300 transition-colors">
+                        {opponentName || "Opponent"}
+                      </h2>
+                    </button>
                   </div>
                   <div className="flex items-center space-x-1 sm:space-x-2">
                     <button
@@ -6267,6 +6573,18 @@ export default function App() {
                 className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors"
               >
                 Show Court
+              </button>
+              <button
+                onClick={() => {
+                  setReportOpponentName(opponentName);
+                  setShowOpponentReportModal(true);
+                }}
+                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-50 text-blue-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-blue-100 transition-colors flex items-center gap-1.5 border border-blue-200 shadow-xs cursor-pointer"
+                title="View Opponent Scouting & History"
+              >
+                <Shield size={14} className="text-blue-600" />
+                <span className="hidden sm:inline">Opponents</span>
+                <span className="sm:hidden">Opp</span>
               </button>
               <button
                 onClick={() => setShowStatCorrectionModal(true)}
@@ -6483,7 +6801,7 @@ export default function App() {
                             >
                               {isServer && (
                                 <div className="absolute -bottom-1 -right-1 sm:-bottom-3 sm:-right-3 text-lg sm:text-3xl drop-shadow-md animate-bounce z-30">
-                                  🏐
+                                  <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
                                 </div>
                               )}
                               <span className="text-xl sm:text-3xl font-black drop-shadow-md leading-none">
@@ -6695,10 +7013,10 @@ export default function App() {
                                 <button
                                   onClick={() => {
                                     setSelectedOppId(id);
-                                    setShowOppLineupPrompt(true);
+                                    setShowOppSubModal(true);
                                   }}
-                                  className="flex-1 py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-slate-200"
-                                  title="Opponent substitution"
+                                  className="flex-1 py-2 px-2 bg-blue-50 hover:bg-blue-100 text-blue-800 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-blue-200 active:scale-95"
+                                  title="Quick Opponent substitution"
                                 >
                                   Sub
                                 </button>
@@ -6728,7 +7046,7 @@ export default function App() {
                                   )}
                                   {isServer && (
                                     <span className="text-xs" title="Currently Serving">
-                                      🏐
+                                      <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
                                     </span>
                                   )}
                                 </div>
@@ -6928,6 +7246,22 @@ export default function App() {
                 </button>
               </div>
               <div className="p-4 bg-slate-50 space-y-4 overflow-y-auto">
+                {/* Always Visible Score Banner */}
+                <div className="bg-slate-900 text-white rounded-xl p-2.5 flex items-center justify-between shadow-sm">
+                  <div className="text-left">
+                    <span className="text-[10px] font-black uppercase text-blue-400 block">{effectiveTeamName}</span>
+                    <span className="text-xl font-black">{score.ucc}</span>
+                  </div>
+                  <div className="text-center px-2">
+                    <span className="text-[9px] font-bold text-amber-400 uppercase tracking-widest block">SET {currentSetNum}</span>
+                    <span className="text-[10px] font-black text-white/70">SETS {setsWon.ucc}-{setsWon.opp}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] font-black uppercase text-slate-300 block truncate max-w-[100px]">{opponentName || "Opp"}</span>
+                    <span className="text-xl font-black">{score.opp}</span>
+                  </div>
+                </div>
+
                 <div className="text-center font-bold text-slate-700 text-lg mb-2">
                   {(!statPrompt.isOpp
                     ? appData.roster.find((r) => r.id === statPrompt.playerId)
@@ -7123,7 +7457,7 @@ export default function App() {
                         }}
                         className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
                       >
-                        <span className="text-xl mb-1">🥅</span>Net
+                        Net
                       </button>
                       <button
                         onClick={() => {
@@ -7136,7 +7470,7 @@ export default function App() {
                         }}
                         className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
                       >
-                        <span className="text-xl mb-1">🧱</span>Stuffed
+                        Stuffed
                       </button>
                     </div>
                   </div>
@@ -7172,52 +7506,81 @@ export default function App() {
                   </div>
                 )}
                 {statPrompt.type === "Block" && !statPrompt.step && (
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-2.5">
+                    {/* Late controls: Just Late or Combined */}
+                    <div className="bg-amber-50 border border-amber-300 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStatPrompt({
+                            ...statPrompt,
+                            latePressed: !statPrompt.latePressed,
+                          });
+                        }}
+                        className={`flex-1 py-2 px-3 rounded-lg font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer ${
+                          statPrompt.latePressed
+                            ? "bg-amber-500 text-white shadow-sm ring-2 ring-amber-400"
+                            : "bg-white text-amber-900 border border-amber-300 hover:bg-amber-100"
+                        }`}
+                        title="Toggle Late to combine with Stuff, Touch, Used, or Net Violation"
+                      >
+                        <Check size={14} className={statPrompt.latePressed ? "opacity-100" : "opacity-30"} />
+                        <span>Late Block {statPrompt.latePressed ? "(Active)" : "(Toggle)"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleGameStat(
+                            statPrompt.playerId,
+                            statPrompt.type,
+                            "Late",
+                          );
+                          setStatPrompt(null);
+                        }}
+                        className="py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-black text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                        title="Record Late as a standalone stat"
+                      >
+                        Just Late
+                      </button>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() =>
                           setStatPrompt({ ...statPrompt, step: "Stuff" })
                         }
-                        className="bg-gradient-to-b from-green-500 to-green-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20"
+                        className="bg-gradient-to-b from-green-500 to-green-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20 flex flex-col items-center justify-center cursor-pointer"
                       >
-                        STUFF
+                        <span>STUFF</span>
+                        {statPrompt.latePressed && (
+                          <span className="text-[10px] font-bold text-green-100 uppercase tracking-wider">
+                            + LATE
+                          </span>
+                        )}
                       </button>
                       <button
                         onClick={() =>
                           setStatPrompt({ ...statPrompt, step: "Touch" })
                         }
-                        className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20"
+                        className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20 flex flex-col items-center justify-center cursor-pointer"
                       >
-                        TOUCH
+                        <span>TOUCH</span>
+                        {statPrompt.latePressed && (
+                          <span className="text-[10px] font-bold text-blue-100 uppercase tracking-wider">
+                            + LATE
+                          </span>
+                        )}
                       </button>
                     </div>
-                    <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2 mb-1 flex items-center justify-center">
-                      <span className="h-px bg-slate-200 flex-1 mr-2"></span>{" "}
-                      ERRORS & NOTES{" "}
+
+                    <div className="text-xs font-black text-slate-400 uppercase tracking-widest mt-1 mb-0.5 flex items-center justify-center">
+                      <span className="h-px bg-slate-200 flex-1 mr-2"></span>
+                      ERRORS & NOTES
                       <span className="h-px bg-slate-200 flex-1 ml-2"></span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        onClick={() => {
-                          if (statPrompt.latePressed) {
-                            handleGameStat(
-                              statPrompt.playerId,
-                              statPrompt.type,
-                              "Late",
-                            );
-                            setStatPrompt(null);
-                          } else {
-                            setStatPrompt({ ...statPrompt, latePressed: true });
-                          }
-                        }}
-                        className={
-                          statPrompt.latePressed
-                            ? "bg-amber-400 text-amber-950 p-3 rounded-xl font-bold uppercase shadow-inner active:scale-95 flex items-center justify-center text-sm border-2 border-amber-500"
-                            : "bg-slate-50 text-slate-600 p-3 rounded-xl font-bold uppercase border border-slate-200 shadow-sm active:scale-95 flex items-center justify-center text-sm"
-                        }
-                      >
-                        LATE
-                      </button>
+
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => {
                           if (statPrompt.latePressed)
@@ -7233,9 +7596,14 @@ export default function App() {
                           );
                           setStatPrompt(null);
                         }}
-                        className="bg-slate-50 text-slate-600 p-3 rounded-xl font-bold border border-slate-200 shadow-sm active:scale-95 flex items-center justify-center text-sm"
+                        className="bg-slate-50 hover:bg-slate-100 text-slate-700 p-3 rounded-xl font-black border border-slate-300 shadow-sm active:scale-95 flex flex-col items-center justify-center text-xs sm:text-sm cursor-pointer"
                       >
-                        USED
+                        <span>USED / TOOL</span>
+                        {statPrompt.latePressed && (
+                          <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wider">
+                            + LATE
+                          </span>
+                        )}
                       </button>
                       <button
                         onClick={() => {
@@ -7252,9 +7620,14 @@ export default function App() {
                           );
                           setStatPrompt(null);
                         }}
-                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold uppercase border border-red-100 shadow-sm active:scale-95 flex items-center justify-center text-sm overflow-hidden whitespace-nowrap overflow-ellipsis"
+                        className="bg-red-50 hover:bg-red-100 text-red-600 p-3 rounded-xl font-black border border-red-200 shadow-sm active:scale-95 flex flex-col items-center justify-center text-xs sm:text-sm cursor-pointer"
                       >
-                        NET VIOL
+                        <span>NET VIOLATION</span>
+                        {statPrompt.latePressed && (
+                          <span className="text-[9px] font-bold text-red-700 uppercase tracking-wider">
+                            + LATE
+                          </span>
+                        )}
                       </button>
                     </div>
                   </div>
@@ -7742,7 +8115,7 @@ export default function App() {
                           }`}
                         >
                           {oppSetterId === selectedOppId
-                            ? "✓ Setter"
+                            ? "Setter"
                             : "Mark Setter"}
                         </button>
                         {oppLiberoId &&
@@ -7802,11 +8175,27 @@ export default function App() {
             }`}
           >
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-bounce drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
-              🏐
+              <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
             </div>
             <h2 className="text-3xl sm:text-5xl font-black mb-2 sm:mb-3 text-center tracking-widest text-shadow-lg uppercase">
               {serving === "ucc" ? "LANCERS TO SERVE" : `${opponentName.trim() || "OPPONENT"} TO SERVE`}
             </h2>
+
+            {/* Live Score Display */}
+            <div className="mb-4 flex items-center justify-between gap-4 bg-white/10 backdrop-blur-md px-6 py-2.5 rounded-2xl border border-white/20 shadow-xl min-w-[280px]">
+              <div className="text-left">
+                <span className="text-[10px] font-black uppercase text-blue-300 block">{effectiveTeamName}</span>
+                <span className="text-3xl font-black text-white">{score.ucc}</span>
+              </div>
+              <div className="text-center px-3 border-x border-white/20">
+                <span className="text-[9px] font-bold text-amber-400 uppercase tracking-widest block">SET {currentSetNum}</span>
+                <span className="text-[11px] font-black text-white/70">SETS {setsWon.ucc}-{setsWon.opp}</span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] font-black uppercase text-slate-300 block truncate max-w-[110px]">{opponentName || "Opponent"}</span>
+                <span className="text-3xl font-black text-white">{score.opp}</span>
+              </div>
+            </div>
 
             {/* Quick Serving Team Toggle */}
             <div className="mb-4 flex items-center bg-black/40 backdrop-blur-md p-1.5 rounded-2xl border border-white/20 shadow-lg">
@@ -7827,7 +8216,7 @@ export default function App() {
                     : "text-white/70 hover:text-white"
                 }`}
               >
-                <span>🏐</span>
+                
                 <span>Lancers</span>
               </button>
               <button
@@ -7844,7 +8233,7 @@ export default function App() {
                     : "text-white/70 hover:text-white"
                 }`}
               >
-                <span>🏐</span>
+                
                 <span className="truncate max-w-[120px]">{opponentName.trim() || "Opponent"}</span>
               </button>
             </div>
@@ -7887,6 +8276,22 @@ export default function App() {
 
         {serveErrorPrompt && !setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+            {/* Live Score Display */}
+            <div className="mb-4 flex items-center justify-between gap-4 bg-white/10 backdrop-blur-md px-6 py-2 rounded-2xl border border-white/20 shadow-xl min-w-[280px]">
+              <div className="text-left">
+                <span className="text-[10px] font-black uppercase text-blue-300 block">{effectiveTeamName}</span>
+                <span className="text-2xl font-black text-white">{score.ucc}</span>
+              </div>
+              <div className="text-center px-3 border-x border-white/20">
+                <span className="text-[9px] font-bold text-amber-400 uppercase tracking-widest block">SET {currentSetNum}</span>
+                <span className="text-[10px] font-black text-white/70">SETS {setsWon.ucc}-{setsWon.opp}</span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] font-black uppercase text-slate-300 block truncate max-w-[110px]">{opponentName || "Opponent"}</span>
+                <span className="text-2xl font-black text-white">{score.opp}</span>
+              </div>
+            </div>
+
             <XCircle
               size={60}
               className="text-red-500 mb-3 sm:mb-4 drop-shadow-[0_0_30px_rgba(239,68,68,0.5)] sm:w-16 sm:h-16"
@@ -8201,7 +8606,7 @@ export default function App() {
         {endRallyVisible && !setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-40 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-pulse drop-shadow-[0_0_30px_rgba(251,191,36,0.4)]">
-              🏆
+              Trophy
             </div>
             <h2 className="text-3xl sm:text-5xl font-black mb-8 sm:mb-10 text-center tracking-widest uppercase">
               Who Scored?
@@ -8246,8 +8651,8 @@ export default function App() {
 
             <div className="flex gap-3 sm:gap-6 items-center bg-black/40 p-4 sm:p-8 rounded-2xl sm:rounded-[3rem] border border-white/10 mb-8 sm:mb-10 shadow-inner w-full max-w-sm justify-center">
               <div className="text-center">
-                <p className="text-[10px] sm:text-xs font-black text-blue-300/70 uppercase tracking-widest mb-1">
-                  Lancers
+                <p className="text-[10px] sm:text-xs font-black text-blue-300/70 uppercase tracking-widest mb-1 truncate max-w-[120px]">
+                  {effectiveTeamName}
                 </p>
                 <p className="text-5xl sm:text-6xl font-black text-white">
                   {score.ucc}
@@ -8257,8 +8662,8 @@ export default function App() {
                 -
               </div>
               <div className="text-center">
-                <p className="text-[10px] sm:text-xs font-black text-slate-400/70 uppercase tracking-widest mb-1">
-                  {opponentName.substring(0, 6)}
+                <p className="text-[10px] sm:text-xs font-black text-slate-400/70 uppercase tracking-widest mb-1 truncate max-w-[120px]">
+                  {opponentName || "Opponent"}
                 </p>
                 <p className="text-5xl sm:text-6xl font-black text-white">
                   {score.opp}
@@ -8281,8 +8686,8 @@ export default function App() {
                       : "bg-white/10 text-white/70 hover:bg-white/20 border border-white/10"
                   }`}
                 >
-                  <span className="text-base">🏐</span>
-                  <span>Lancers</span>
+                  <span className="text-base"><span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span></span>
+                  <span className="truncate max-w-[110px]">{effectiveTeamName}</span>
                 </button>
                 <button
                   type="button"
@@ -8293,7 +8698,7 @@ export default function App() {
                       : "bg-white/10 text-white/70 hover:bg-white/20 border border-white/10"
                   }`}
                 >
-                  <span className="text-base">🏐</span>
+                  <span className="text-base"><span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span></span>
                   <span className="truncate max-w-[110px]">{opponentName.trim() || "Opponent"}</span>
                 </button>
               </div>
@@ -8324,6 +8729,40 @@ export default function App() {
                   Quick Start
                 </button>
               </div>
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setStatCorrectionConfig({
+                      isOpen: true,
+                      initialMatchId: activeMatch?.id,
+                      initialSetId: activeSetId,
+                    })
+                  }
+                  className="bg-indigo-600/90 hover:bg-indigo-500 text-white py-2.5 px-2 rounded-xl sm:rounded-2xl font-black text-xs uppercase tracking-wider border border-indigo-400/30 shadow-sm active:scale-95 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  title="Review and edit recorded stats for this set"
+                >
+                  <Edit3 size={13} className="text-amber-300" />
+                  <span className="truncate">Edit Set Stats</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTeamNameModalConfig({
+                      isOpen: true,
+                      ourTeamName: effectiveTeamName,
+                      opponentTeamName,
+                      targetMatchId: activeMatch?.id,
+                      showOpponentEdit: true,
+                    })
+                  }
+                  className="bg-slate-800/90 hover:bg-slate-700 text-slate-200 py-2.5 px-2 rounded-xl sm:rounded-2xl font-black text-xs uppercase tracking-wider border border-white/10 shadow-sm active:scale-95 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  title="Adjust team names"
+                >
+                  <Shield size={13} className="text-blue-400" />
+                  <span className="truncate">Adjust Names</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -8332,135 +8771,102 @@ export default function App() {
         {oppServeReceivePrompt && !setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/80 z-[110] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
             <div className="bg-white rounded-[2rem] p-4 sm:p-6 max-w-md w-full shadow-2xl flex flex-col items-center border border-slate-200">
-              <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-[#0033A0] mb-3">
-                <Activity size={24} />
+              {/* Always Visible Score Banner */}
+              <div className="w-full bg-slate-900 text-white rounded-2xl p-3 mb-3 flex items-center justify-between shadow-md">
+                <div className="text-left">
+                  <span className="text-[10px] font-black uppercase text-blue-400 block">{effectiveTeamName}</span>
+                  <span className="text-2xl font-black">{score.ucc}</span>
+                </div>
+                <div className="text-center px-2">
+                  <span className="text-[9px] font-bold text-amber-400 uppercase tracking-widest block">SET {currentSetNum}</span>
+                  <span className="text-[10px] font-black text-white/70">SETS {setsWon.ucc}-{setsWon.opp}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-black uppercase text-slate-300 block truncate max-w-[100px]">{opponentName || "Opp"}</span>
+                  <span className="text-2xl font-black">{score.opp}</span>
+                </div>
               </div>
+
               <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-widest text-center">
                 Opponent Serve
               </h2>
-              <p className="text-xs sm:text-sm font-bold text-slate-500 mb-4 text-center">
+              <p className="text-xs sm:text-sm font-bold text-slate-500 mb-3 text-center">
                 {oppServeReceivePrompt.passerId
                   ? "Record pass rating for this serve:"
-                  : "Who passed the ball?"}
+                  : "Who passed the ball, or did the serve end?"}
               </p>
 
               {!oppServeReceivePrompt.passerId ? (
                 <div className="w-full space-y-2.5">
+                  {/* Quick outcome buttons alongside who passed screen */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handlePoint("ucc");
+                        setOppServeReceivePrompt(null);
+                      }}
+                      className="py-2.5 px-2 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Opponent Missed Serve (Net/Out) -> Point for Lancers"
+                    >
+                      <CheckCircle2 size={16} />
+                      <span>Opp Error (+Pt)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handlePoint("opp");
+                        setOppServeReceivePrompt(null);
+                      }}
+                      className="py-2.5 px-2 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Opponent Aced UCC -> Point for Opponent"
+                    >
+                      <XCircle size={16} />
+                      <span>Opp Ace (+Pt)</span>
+                    </button>
+                  </div>
+
                   {(() => {
                     const uccCandidates = getSevenReceivers("ucc");
+                    const sortedReceivers = [...uccCandidates].sort((a, b) => {
+                      const nA = parseInt((a.number || "").replace(/\D/g, ""), 10);
+                      const nB = parseInt((b.number || "").replace(/\D/g, ""), 10);
+                      if (!isNaN(nA) && !isNaN(nB)) return nA - nB;
+                      return (a.number || "").localeCompare(b.number || "");
+                    });
+
                     return (
-                      <div className="space-y-2">
-                        {/* Front row */}
-                        <div>
-                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center justify-between px-0.5">
-                            <span>Front Row (Net)</span>
-                            <span className="text-[9px] text-slate-400 font-bold">
-                              Positions 4, 3, 2
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-1.5">
-                            {uccCandidates.slice(0, 3).map((item) => (
-                              <button
-                                key={item.id}
-                                onClick={() =>
-                                  setOppServeReceivePrompt({ passerId: item.id })
-                                }
-                                className={`p-2 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
-                                  item.isLibero
-                                    ? "bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-900"
-                                    : "bg-slate-50 border-slate-200 hover:bg-blue-50 hover:border-blue-300 text-slate-800"
-                                }`}
-                              >
-                                <span className="text-xl font-black leading-tight">
-                                  #{item.number}
-                                </span>
-                                <span className="text-[10px] font-bold truncate max-w-full">
-                                  {item.name}
-                                </span>
-                                <span className="text-[8px] text-slate-400 font-semibold uppercase">
-                                  {item.posLabel}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
+                      <div className="space-y-2 pt-1">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-between px-1">
+                          <span>Receivers (Sorted by Number)</span>
+                          <span className="text-[9px] text-slate-500 font-bold">7 Active Players</span>
                         </div>
-
-                        {/* Back row */}
-                        <div>
-                          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center justify-between px-0.5">
-                            <span>Back Row</span>
-                            <span className="text-[9px] text-slate-400 font-bold">
-                              Positions 5, 6, 1
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-1.5">
-                            {uccCandidates.slice(3, 6).map((item) => (
-                              <button
-                                key={item.id}
-                                onClick={() =>
-                                  setOppServeReceivePrompt({ passerId: item.id })
-                                }
-                                className={`p-2 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 ${
-                                  item.isLibero
-                                    ? "bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-900"
-                                    : "bg-slate-50 border-slate-200 hover:bg-blue-50 hover:border-blue-300 text-slate-800"
-                                }`}
-                              >
-                                <span className="text-xl font-black leading-tight">
-                                  #{item.number}
-                                </span>
-                                <span className="text-[10px] font-bold truncate max-w-full">
-                                  {item.name}
-                                </span>
-                                <span className="text-[8px] text-slate-400 font-semibold uppercase">
-                                  {item.posLabel}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* 7th player / Libero */}
-                        {uccCandidates[6] && (
-                          <div>
-                            <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-1 flex items-center justify-between px-0.5">
-                              <span>
-                                {uccCandidates[6].isLibero
-                                  ? "Libero"
-                                  : "7th Player / Rotation"}
-                              </span>
-                              <span className="text-[9px] text-slate-400 font-bold">
-                                Defensive Specialist
-                              </span>
-                            </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                          {sortedReceivers.map((item) => (
                             <button
+                              key={item.id}
                               onClick={() =>
-                                setOppServeReceivePrompt({
-                                  passerId: uccCandidates[6].id,
-                                })
+                                setOppServeReceivePrompt({ passerId: item.id })
                               }
-                              className="w-full p-2 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl text-amber-900 flex items-center justify-between px-3 transition-colors active:scale-95"
+                              className={`p-2.5 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer ${
+                                item.isLibero
+                                  ? "bg-amber-50 border-amber-300 hover:bg-amber-100 text-amber-900 ring-1 ring-amber-300/50"
+                                  : "bg-slate-50 border-slate-200 hover:bg-blue-50 hover:border-blue-300 text-slate-800"
+                              }`}
                             >
-                              <div className="flex items-center space-x-2">
-                                <Shield
-                                  size={16}
-                                  className="text-amber-600 shrink-0"
-                                />
-                                <span className="font-black text-xl">
-                                  #{uccCandidates[6].number}
-                                </span>
-                                <span className="font-bold text-xs truncate">
-                                  {uccCandidates[6].name}
-                                </span>
-                              </div>
-                              <span className="text-[9px] bg-amber-200 text-amber-800 font-black px-1.5 py-0.5 rounded">
-                                {uccCandidates[6].isLibero
-                                  ? "LIBERO"
-                                  : uccCandidates[6].posLabel}
+                              <span className="text-xl sm:text-2xl font-black leading-tight">
+                                #{item.number}
+                              </span>
+                              <span className="text-[11px] font-bold truncate max-w-full">
+                                {item.name}
+                              </span>
+                              <span className="text-[8px] font-black uppercase mt-0.5 text-slate-400">
+                                {item.isLibero ? "Libero" : item.posLabel}
                               </span>
                             </button>
-                          </div>
-                        )}
+                          ))}
+                        </div>
                       </div>
                     );
                   })()}
@@ -8471,7 +8877,7 @@ export default function App() {
                         setOppServeReceivePrompt(null);
                         changeRallyPhase("play");
                       }}
-                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
                     >
                       Skip / Play On
                     </button>
@@ -8590,7 +8996,7 @@ export default function App() {
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  <span>🏐</span>
+                  
                   <span>Lancers Lineup</span>
                   <span className="text-[10px] opacity-80 font-bold ml-1">
                     ({betweenSetsModal.tempLineup.filter(Boolean).length}/6)
@@ -8609,7 +9015,7 @@ export default function App() {
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  <span>🛡️</span>
+                  <Shield size={12} className="inline text-amber-600" />
                   <span className="truncate max-w-[120px]">
                     {opponentName.trim() || "Opponent"}
                   </span>
@@ -8754,7 +9160,7 @@ export default function App() {
                         >
                           <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
                             <span className="truncate">{label}</span>
-                            {idx === 0 && <span>🏐</span>}
+                            {idx === 0 && <span className="text-[9px] font-black uppercase text-amber-400">Serve</span>}
                           </div>
                           <select
                             value={betweenSetsModal.tempLineup[idx] || ""}
@@ -8942,7 +9348,7 @@ export default function App() {
                               <span className="truncate">{label}</span>
                               <div className="flex items-center gap-1">
                                 {hasNote && <FileText size={10} className="text-amber-300" />}
-                                {idx === 0 && <span>🏐</span>}
+                                {idx === 0 && <span className="text-[9px] font-black uppercase text-amber-400">Serve</span>}
                               </div>
                             </div>
                             <input
@@ -9037,7 +9443,7 @@ export default function App() {
                         : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
                     }`}
                   >
-                    <span>🏐</span>
+                    
                     <span>Lancers</span>
                   </button>
                   <button
@@ -9054,7 +9460,7 @@ export default function App() {
                         : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
                     }`}
                   >
-                    <span>🏐</span>
+                    
                     <span className="truncate max-w-[120px]">{opponentName.trim() || "Opponent"}</span>
                   </button>
                 </div>
@@ -9161,6 +9567,39 @@ export default function App() {
                     Save Preset
                   </button>
                 </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatCorrectionConfig({
+                        isOpen: true,
+                        initialMatchId: activeMatch?.id,
+                        initialSetId: activeSetId,
+                      });
+                    }}
+                    className="flex-1 py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-black text-xs rounded-lg uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Edit3 size={13} />
+                    <span>Edit Stats</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTeamNameModalConfig({
+                        isOpen: true,
+                        ourTeamName: effectiveTeamName,
+                        opponentTeamName,
+                        targetMatchId: activeMatch?.id,
+                        showOpponentEdit: true,
+                      });
+                    }}
+                    className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs rounded-lg uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Shield size={13} />
+                    <span>Adjust Team Names</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -9204,7 +9643,7 @@ export default function App() {
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  <span>🏐</span>
+                  
                   <span>Lancers Lineup</span>
                 </button>
                 <button
@@ -9216,7 +9655,7 @@ export default function App() {
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  <span>🛡️</span>
+                  <Shield size={12} className="inline text-amber-600" />
                   <span className="truncate max-w-[140px]">
                     {opponentName.trim() || "Opponent"} Lineup
                   </span>
@@ -9302,7 +9741,7 @@ export default function App() {
                         >
                           <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
                             <span className="truncate">{label}</span>
-                            {idx === 0 && <span>🏐</span>}
+                            {idx === 0 && <span className="text-[9px] font-black uppercase text-amber-400">Serve</span>}
                           </div>
                           <select
                             value={tempInGameLineup[idx] || ""}
@@ -9449,7 +9888,7 @@ export default function App() {
                         >
                           <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
                             <span className="truncate">{label}</span>
-                            {idx === 0 && serving === "opp" && <span>🏐</span>}
+                            {idx === 0 && serving === "opp" && <span className="text-[9px] font-black uppercase text-amber-400">Serve</span>}
                           </div>
                           <input
                             type="text"
@@ -9743,19 +10182,56 @@ export default function App() {
             </div>
           </div>
         )}
-        {showStatCorrectionModal && (
+        {(showStatCorrectionModal || statCorrectionConfig.isOpen) && (
           <StatCorrectionModal
-            isOpen={showStatCorrectionModal}
-            onClose={() => setShowStatCorrectionModal(false)}
+            isOpen={showStatCorrectionModal || statCorrectionConfig.isOpen}
+            onClose={() => {
+              setShowStatCorrectionModal(false);
+              setStatCorrectionConfig((prev) => ({ ...prev, isOpen: false }));
+            }}
             stats={appData.stats}
             roster={sortedRoster}
             activeSetId={activeSetId}
             activeMatch={activeMatch}
+            matches={appData.matches}
+            sets={appData.sets}
+            initialMatchId={statCorrectionConfig.initialMatchId}
+            initialSetId={statCorrectionConfig.initialSetId}
+            initialPlayerId={statCorrectionConfig.initialPlayerId}
             onDeleteStat={handleDeleteStat}
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
+            ourTeamName={effectiveTeamName}
           />
         )}
+        <TeamNameEditModal
+          isOpen={teamNameModalConfig.isOpen}
+          onClose={() =>
+            setTeamNameModalConfig((prev) => ({ ...prev, isOpen: false }))
+          }
+          ourTeamName={teamNameModalConfig.ourTeamName || effectiveTeamName}
+          opponentTeamName={teamNameModalConfig.opponentTeamName}
+          targetMatchTitle={teamNameModalConfig.targetMatchTitle}
+          showOpponentEdit={teamNameModalConfig.showOpponentEdit}
+          onSave={(newOur, newOpp) =>
+            handleSaveTeamNames(
+              newOur,
+              newOpp,
+              teamNameModalConfig.targetMatchId,
+            )
+          }
+        />
+        <SetScoreEditModal
+          isOpen={setScoreModalConfig.isOpen}
+          onClose={() =>
+            setSetScoreModalConfig((prev) => ({ ...prev, isOpen: false }))
+          }
+          set={setScoreModalConfig.set}
+          matchTitle={setScoreModalConfig.matchTitle}
+          ourTeamName={effectiveTeamName}
+          opponentName={opponentName || "Opponent"}
+          onSave={handleSaveSetScore}
+        />
         {renderInstallModal()}
       </div>
     );
@@ -10307,7 +10783,7 @@ export default function App() {
                         }}
                         className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
                       >
-                        <span className="text-xl mb-1">🥅</span>Net
+                        Net
                       </button>
                       <button
                         onClick={() => {
@@ -10320,7 +10796,7 @@ export default function App() {
                         }}
                         className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
                       >
-                        <span className="text-xl mb-1">🧱</span>Stuffed
+                        Stuffed
                       </button>
                     </div>
                   </div>
@@ -11094,6 +11570,21 @@ export default function App() {
               >
                 <FileText className="mr-1 sm:mr-1.5" size={14} /> PDF
               </button>
+              <button
+                onClick={() => {
+                  const currentMatchNav = statsPath.find((p) => p.level === "match");
+                  const currentSetNav = statsPath.find((p) => p.level === "set");
+                  setStatCorrectionConfig({
+                    isOpen: true,
+                    initialMatchId: currentMatchNav?.id || activeMatch?.id || null,
+                    initialSetId: currentSetNav?.id || activeSetId || null,
+                  });
+                }}
+                className="flex-1 sm:flex-none bg-amber-400 hover:bg-amber-500 text-slate-950 px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer"
+                title="Edit recorded stats"
+              >
+                <Edit3 className="mr-1 sm:mr-1.5" size={14} /> Edit Stats
+              </button>
               {activeMatch ? (
                 <button
                   onClick={() => setView("game")}
@@ -11160,9 +11651,9 @@ export default function App() {
                       ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
                       : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
                   }`}
-                  title="Drill down: All Games ➔ Day / Tournament ➔ Specific Game ➔ Set"
+                  title="Drill down: All Games -> Day / Tournament -> Specific Game -> Set"
                 >
-                  <span>🏐 Games Drill-Down</span>
+                  <span><span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span> Games Drill-Down</span>
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                       isGamesBranch
@@ -11182,9 +11673,9 @@ export default function App() {
                       ? "bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20"
                       : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
                   }`}
-                  title="Drill down: All Practices ➔ Practice Day ➔ Drill"
+                  title="Drill down: All Practices -> Practice Day -> Drill"
                 >
-                  <span>📋 Practices Drill-Down</span>
+                  <span>Practices Drill-Down</span>
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                       isPracticeBranch
@@ -11206,7 +11697,7 @@ export default function App() {
                   }`}
                   title="Combined season totals across all matches and practice sessions"
                 >
-                  <span>🌟 Season Totals (Game & Practice)</span>
+                  <span>Season Totals (Game & Practice)</span>
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                       isCombinedBranch
@@ -11235,20 +11726,20 @@ export default function App() {
                 >
                   <optgroup label="── SEASON TOTALS ──">
                     <option value="season_all">
-                      🌟 Season Totals (Game & Practice)
+                      Season Totals (Game & Practice)
                     </option>
                     <option value="season_games">
-                      🏐 All Games (Season)
+                      <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span> All Games (Season)
                     </option>
                     <option value="season_practice">
-                      📋 All Practices (Season)
+                      All Practices (Season)
                     </option>
                   </optgroup>
                   {tournamentsList.length > 0 && (
                     <optgroup label="── TOURNAMENTS ──">
                       {tournamentsList.map((t: any) => (
                         <option key={t.id} value={`event_${t.id}`}>
-                          🏆 {t.name} ({t.count} game{t.count !== 1 ? "s" : ""})
+                          Tourney: {t.name} ({t.count} game{t.count !== 1 ? "s" : ""})
                         </option>
                       ))}
                     </optgroup>
@@ -11257,7 +11748,7 @@ export default function App() {
                     <optgroup label="── SPECIFIC GAMES ──">
                       {gameMatchesList.map((m: any) => (
                         <option key={m.id} value={`match_${m.id}`}>
-                          🏐 vs {m.opponent} ({m.dateStr})
+                          <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span> vs {m.opponent} ({m.dateStr})
                         </option>
                       ))}
                     </optgroup>
@@ -11266,7 +11757,7 @@ export default function App() {
                     <optgroup label="── PRACTICE DAYS ──">
                       {practiceDaysList.map((p: any) => (
                         <option key={p.id} value={`event_${p.id}`}>
-                          📋 {p.name} ({p.drillCount} drill{p.drillCount !== 1 ? "s" : ""})
+                          {p.name} ({p.drillCount} drill{p.drillCount !== 1 ? "s" : ""})
                         </option>
                       ))}
                     </optgroup>
@@ -11312,7 +11803,7 @@ export default function App() {
                     <option value="all_events">── All Days & Tournaments ──</option>
                     {gameEventsList.map((e) => (
                       <option key={e.id} value={e.id}>
-                        {e.isTournament ? "🏆" : "📅"} {e.name} ({e.matchCount} game{e.matchCount !== 1 ? "s" : ""})
+                        {e.isTournament ? "Tourney: " : "Date: "} {e.name} ({e.matchCount} game{e.matchCount !== 1 ? "s" : ""})
                       </option>
                     ))}
                   </select>
@@ -11342,7 +11833,7 @@ export default function App() {
                       : gameMatchesList
                     ).map((m) => (
                       <option key={m.id} value={m.id}>
-                        🏐 vs {m.opponent} {m.dateStr ? `(${m.dateStr})` : ""}
+                        <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span> vs {m.opponent} {m.dateStr ? `(${m.dateStr})` : ""}
                       </option>
                     ))}
                   </select>
@@ -11418,7 +11909,7 @@ export default function App() {
                     <option value="all_practice_days">── All Practice Days ──</option>
                     {practiceDaysList.map((p) => (
                       <option key={p.id} value={p.id}>
-                        📋 {p.name} ({p.drillCount} drill{p.drillCount !== 1 ? "s" : ""})
+                        {p.name} ({p.drillCount} drill{p.drillCount !== 1 ? "s" : ""})
                       </option>
                     ))}
                   </select>
@@ -11447,7 +11938,7 @@ export default function App() {
                     {activeEventNav &&
                       getDrillsForPracticeEvent(activeEventNav.id).map((d) => (
                         <option key={d.id} value={d.id}>
-                          🎯 {d.name}
+                          Drill: {d.name}
                         </option>
                       ))}
                   </select>
@@ -11589,6 +12080,47 @@ export default function App() {
                             </span>
                           )}
                         </button>
+                        {opt.level === "match" && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const matchObj = appData.matches.find((m) => m.id === opt.id);
+                              setTeamNameModalConfig({
+                                isOpen: true,
+                                ourTeamName: effectiveTeamName,
+                                opponentTeamName: matchObj?.opponent || "",
+                                targetMatchId: opt.id,
+                                targetMatchTitle: opt.name,
+                                showOpponentEdit: true,
+                              });
+                            }}
+                            className="px-2.5 py-2 text-slate-400 hover:text-[#0033A0] hover:bg-blue-50 transition-colors border-l border-slate-200 cursor-pointer"
+                            title="Adjust Team & Opponent Names"
+                          >
+                            <Edit3 size={13} />
+                          </button>
+                        )}
+                        {opt.level === "set" && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const setObj = appData.sets.find((s) => s.id === opt.id);
+                              if (setObj) {
+                                setSetScoreModalConfig({
+                                  isOpen: true,
+                                  set: setObj,
+                                  matchTitle: currentNav.name,
+                                });
+                              }
+                            }}
+                            className="px-2.5 py-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors border-l border-slate-200 cursor-pointer"
+                            title="Adjust Set Score"
+                          >
+                            <Edit3 size={13} />
+                          </button>
+                        )}
                         {teamInfo.role === "coach" && (
                           <button
                             onClick={(e) => {
@@ -11596,7 +12128,7 @@ export default function App() {
                               if (opt.level === "drill") {
                                 if (
                                   window.confirm(
-                                    `⚠️ DELETE DRILL: Are you sure you want to delete "${opt.name}"? All stats recorded during this drill will be permanently erased.`,
+                                    `DELETE DRILL: Are you sure you want to delete "${opt.name}"? All stats recorded during this drill will be permanently erased.`,
                                   )
                                 ) {
                                   if (opt.setId) handleDeleteSet(opt.setId);
@@ -11610,7 +12142,7 @@ export default function App() {
                               if (opt.level === "event") {
                                 if (
                                   window.confirm(
-                                    `⚠️ DELETE DAY: Are you sure you want to delete this entire day/event "${opt.name}"? This will permanently erase all games and stats within it.`,
+                                    `DELETE DAY: Are you sure you want to delete this entire day/event "${opt.name}"? This will permanently erase all games and stats within it.`,
                                   )
                                 ) {
                                   handleDeleteEvent(
@@ -11639,7 +12171,7 @@ export default function App() {
               <div className="flex flex-col gap-0.5">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-lg sm:text-xl font-black text-slate-800 tracking-widest uppercase flex items-center">
-                    <Shield className="mr-2 text-[#0033A0]" size={18} /> Lancers
+                    <Shield className="mr-2 text-[#0033A0]" size={18} /> {effectiveTeamName}
                   </h2>
                   <span className="bg-[#0033A0]/10 text-[#0033A0] text-xs font-black px-2.5 py-0.5 rounded-full border border-[#0033A0]/20">
                     {currentNav.name}
@@ -11755,6 +12287,68 @@ export default function App() {
                     </button>
                   )}
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const activeMatchNav = statsPath.find((p) => p.level === "match");
+                    const matchObj = activeMatchNav
+                      ? appData.matches.find((m) => m.id === activeMatchNav.id)
+                      : activeMatch;
+                    setTeamNameModalConfig({
+                      isOpen: true,
+                      ourTeamName: effectiveTeamName,
+                      opponentTeamName: matchObj?.opponent || "",
+                      targetMatchId: matchObj?.id,
+                      targetMatchTitle: matchObj ? `vs ${matchObj.opponent}` : undefined,
+                      showOpponentEdit: !!matchObj,
+                    });
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-black flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                  title="Adjust team or opponent names"
+                >
+                  <Shield size={13} className="text-[#0033A0]" />
+                  <span>Adjust Names</span>
+                </button>
+
+                {currentNav.level === "set" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const setObj = appData.sets.find((s) => s.id === currentNav.id);
+                      if (setObj) {
+                        setSetScoreModalConfig({
+                          isOpen: true,
+                          set: setObj,
+                          matchTitle: statsPath.find((p) => p.level === "match")?.name,
+                        });
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-black flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                    title="Adjust set score"
+                  >
+                    <Edit3 size={13} className="text-indigo-600" />
+                    <span>Adjust Score</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const activeMatchNav = statsPath.find((p) => p.level === "match");
+                    const activeSetNav = statsPath.find((p) => p.level === "set");
+                    setStatCorrectionConfig({
+                      isOpen: true,
+                      initialMatchId: activeMatchNav?.id || activeMatch?.id || null,
+                      initialSetId: activeSetNav?.id || activeSetId || null,
+                    });
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                  title="Edit, correct, or add stats"
+                >
+                  <Edit3 size={13} />
+                  <span>Edit Stats</span>
+                </button>
               </div>
             </div>
 
@@ -12000,7 +12594,7 @@ export default function App() {
                               </span>
                               <span>{p.name}</span>
                               <span className="text-amber-500 group-hover:text-amber-800 font-bold ml-1 text-xs">
-                                ✕
+                                X
                               </span>
                             </button>
                           ))}
@@ -12167,7 +12761,7 @@ export default function App() {
                           >
                             <div className="flex items-center space-x-1.5 sm:space-x-2">
                               <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-amber-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
-                                ★
+                                ALL
                               </span>
                               <div className="flex flex-col">
                                 <span className="font-black text-amber-300 uppercase tracking-widest text-xs">
@@ -13032,7 +13626,7 @@ export default function App() {
                           <td className="p-2.5 sm:p-3 sticky left-0 bg-[#001f5c] text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-blue-400">
                             <div className="flex items-center space-x-1.5 sm:space-x-2">
                               <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-amber-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
-                                ★
+                                ALL
                               </span>
                               <div className="flex flex-col">
                                 <span className="font-black text-amber-300 uppercase tracking-widest text-xs sm:text-sm">
@@ -13622,10 +14216,140 @@ export default function App() {
         )}
         <StatBreakdownModal
           isOpen={statBreakdownModal.isOpen}
-          onClose={() => setStatBreakdownModal((prev) => ({ ...prev, isOpen: false }))}
+          onClose={() =>
+            setStatBreakdownModal((prev) => ({ ...prev, isOpen: false }))
+          }
           selectedPlayer={statBreakdownModal.selectedPlayer}
           initialCategory={statBreakdownModal.category}
           titleContext={statBreakdownModal.titleContext}
+          onOpenCorrection={(playerId) => {
+            setStatBreakdownModal((prev) => ({ ...prev, isOpen: false }));
+            const currentMatchNav = statsPath.find((p) => p.level === "match");
+            const currentSetNav = statsPath.find((p) => p.level === "set");
+            setStatCorrectionConfig({
+              isOpen: true,
+              initialPlayerId: playerId,
+              initialMatchId: currentMatchNav?.id || activeMatch?.id || null,
+              initialSetId: currentSetNav?.id || activeSetId || null,
+            });
+          }}
+        />
+        {(showStatCorrectionModal || statCorrectionConfig.isOpen) && (
+          <StatCorrectionModal
+            isOpen={showStatCorrectionModal || statCorrectionConfig.isOpen}
+            onClose={() => {
+              setShowStatCorrectionModal(false);
+              setStatCorrectionConfig((prev) => ({ ...prev, isOpen: false }));
+            }}
+            stats={appData.stats}
+            roster={sortedRoster}
+            activeSetId={activeSetId}
+            activeMatch={activeMatch}
+            matches={appData.matches}
+            sets={appData.sets}
+            initialMatchId={statCorrectionConfig.initialMatchId}
+            initialSetId={statCorrectionConfig.initialSetId}
+            initialPlayerId={statCorrectionConfig.initialPlayerId}
+            onDeleteStat={handleDeleteStat}
+            onUpdateStat={handleUpdateStat}
+            onAddStat={handleAddManualStat}
+            ourTeamName={effectiveTeamName}
+          />
+        )}
+        <TeamNameEditModal
+          isOpen={teamNameModalConfig.isOpen}
+          onClose={() =>
+            setTeamNameModalConfig((prev) => ({ ...prev, isOpen: false }))
+          }
+          ourTeamName={teamNameModalConfig.ourTeamName || effectiveTeamName}
+          opponentTeamName={teamNameModalConfig.opponentTeamName}
+          targetMatchTitle={teamNameModalConfig.targetMatchTitle}
+          showOpponentEdit={teamNameModalConfig.showOpponentEdit}
+          onSave={(newOur, newOpp) =>
+            handleSaveTeamNames(
+              newOur,
+              newOpp,
+              teamNameModalConfig.targetMatchId,
+            )
+          }
+        />
+        <SetScoreEditModal
+          isOpen={setScoreModalConfig.isOpen}
+          onClose={() =>
+            setSetScoreModalConfig((prev) => ({ ...prev, isOpen: false }))
+          }
+          set={setScoreModalConfig.set}
+          matchTitle={setScoreModalConfig.matchTitle}
+          ourTeamName={effectiveTeamName}
+          opponentName={
+            (setScoreModalConfig.set &&
+              appData.matches.find(
+                (m) => m.id === setScoreModalConfig.set.matchId,
+              )?.opponent) ||
+            opponentName ||
+            "Opponent"
+          }
+          onSave={handleSaveSetScore}
+        />
+        <OpponentReportModal
+          isOpen={showOpponentReportModal}
+          onClose={() => setShowOpponentReportModal(false)}
+          initialOpponentName={reportOpponentName || opponentName || ""}
+          matches={appData.matches}
+          sets={appData.sets}
+          stats={appData.stats}
+          ourTeamName={effectiveTeamName}
+          oppNotesMem={oppNotesMem}
+          onSaveOppNotes={async (oppName, notes) => {
+            setOppNotesMem((prev) => ({ ...prev, [oppName]: notes }));
+            if (isFirebaseAvailable && user && activeTeam) {
+              try {
+                await setDoc(
+                  doc(db, `${publicPath}/${activeTeam}/opponent_notes/${oppName}`),
+                  { notes, updatedAt: new Date().toISOString() },
+                  { merge: true },
+                );
+              } catch (err) {
+                console.error("Failed to save opp notes:", err);
+              }
+            }
+          }}
+        />
+        <OpponentSubModal
+          isOpen={showOppSubModal}
+          onClose={() => setShowOppSubModal(false)}
+          oppLineup={oppLineup}
+          opponentName={opponentName}
+          subPairs={subPairs || {}}
+          oppLiberoId={oppLiberoId}
+          oppSetterId={oppSetterId}
+          knownOppNumbers={(() => {
+            const oppSet = new Set<string>();
+            appData.stats.forEach((s) => {
+              if (s.isOpp && s.playerId) oppSet.add(s.playerId);
+            });
+            oppLineup.forEach((p) => p && oppSet.add(p));
+            return Array.from(oppSet);
+          })()}
+          onConfirmSub={(outPlayer, inPlayer) => {
+            pushToHistory();
+            const index = oppLineup.indexOf(outPlayer);
+            if (index !== -1) {
+              const newLineup = [...oppLineup];
+              newLineup[index] = inPlayer;
+              setOppLineup(newLineup);
+              updateSetState({ oppLineup: newLineup });
+              const isOppLibSub = inPlayer === oppLiberoId || outPlayer === oppLiberoId;
+              if (!isOppLibSub) {
+                setTeamStats((s) => ({ ...s, oppSubs: s.oppSubs + 1 }));
+              }
+              const newPairs = { ...subPairs };
+              newPairs[outPlayer] = inPlayer;
+              newPairs[inPlayer] = outPlayer;
+              setSubPairs(newPairs);
+              setSelectedOppId(null);
+            }
+          }}
         />
         {renderInstallModal()}
       </div>

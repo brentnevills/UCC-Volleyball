@@ -15,6 +15,7 @@ import {
   BarChart3,
   Copy,
   Check,
+  Edit3,
 } from "lucide-react";
 
 export type StatCategoryType = "all" | "serve" | "attack" | "block" | "pass" | "dig";
@@ -69,6 +70,7 @@ interface StatBreakdownModalProps {
   allPlayers?: PlayerBreakdownStats[];
   teamStats?: PlayerBreakdownStats;
   onSelectPlayer?: (player: PlayerBreakdownStats) => void;
+  onOpenCorrection?: (playerId: string) => void;
   titleContext?: string;
 }
 
@@ -80,6 +82,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
   allPlayers = [],
   teamStats,
   onSelectPlayer,
+  onOpenCorrection,
   titleContext,
 }) => {
   const [activeCategory, setActiveCategory] =
@@ -224,14 +227,14 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
 
   const handleCopySummary = () => {
     const lines = [
-      `📊 ${selectedPlayer.name} (#${selectedPlayer.number || "-"}) - Detailed Volleyball Stats`,
+      `${selectedPlayer.name} (#${selectedPlayer.number || "-"}) - Detailed Volleyball Stats`,
       `Context: ${titleContext || "Season / Match"}`,
-      `⭐ Net Point Differential: ${netImpact > 0 ? `+${netImpact}` : netImpact} (Points Won: ${pointsWon} | Errors: ${errorsGiven})`,
-      `🏐 Serves: ${totalServes} (Aces: ${selectedPlayer.srvAce}, In-Play: ${selectedPlayer.srvCount}, Errs: ${selectedPlayer.srvErr} [Net: ${selectedPlayer.srvErrNet}, Wide: ${selectedPlayer.srvErrWide}, Long: ${selectedPlayer.srvErrLong}, Foot: ${selectedPlayer.srvErrFoot}])`,
-      `⚡ Attacks: ${totalSwings} swings (Kills: ${selectedPlayer.attKill} [${killPct}%], Errs: ${selectedPlayer.attErr} [${attEfficiency}% Eff.], Net: ${selectedPlayer.attErrNet}, Out: ${selectedPlayer.attErrOut}, Stuffed: ${selectedPlayer.attErrStuffed})`,
-      `🛡️ Blocks: ${selectedPlayer.blkStuff} Stuffs, ${selectedPlayer.blkCount} Touches, ${totalFaults} Faults (Late: ${selectedPlayer.blkLate}, Net: ${selectedPlayer.blkNet}, Used: ${selectedPlayer.blkUsed})`,
-      `📥 Passing: ${passAvg} Avg (${totalPasses} total | Perfect 3s: ${selectedPlayer.pass3}, Good 2s: ${selectedPlayer.pass2}, Poor 1s: ${selectedPlayer.pass1}, Error 0s: ${selectedPlayer.pass0})`,
-      `🤾 Digs: ${selectedPlayer.digCount} Digs, ${selectedPlayer.digErr} Errs (${digSuccessPct}% Success)`,
+      `Net Point Differential: ${netImpact > 0 ? `+${netImpact}` : netImpact} (Points Won: ${pointsWon} | Errors: ${errorsGiven})`,
+      `Serves: ${totalServes} (Aces: ${selectedPlayer.srvAce}, In-Play: ${selectedPlayer.srvCount}, Errs: ${selectedPlayer.srvErr} [Net: ${selectedPlayer.srvErrNet}, Wide: ${selectedPlayer.srvErrWide}, Long: ${selectedPlayer.srvErrLong}, Foot: ${selectedPlayer.srvErrFoot}])`,
+      `Attacks: ${totalSwings} swings (Kills: ${selectedPlayer.attKill} [${killPct}%], Errs: ${selectedPlayer.attErr} [${attEfficiency}% Eff.], Net: ${selectedPlayer.attErrNet}, Out: ${selectedPlayer.attErrOut}, Stuffed: ${selectedPlayer.attErrStuffed})`,
+      `Blocks: ${selectedPlayer.blkStuff} Stuffs, ${selectedPlayer.blkCount} Touches, ${totalFaults} Faults (Late: ${selectedPlayer.blkLate}, Net: ${selectedPlayer.blkNet}, Used: ${selectedPlayer.blkUsed})`,
+      `Passing: ${passAvg} Avg (${totalPasses} total | Perfect 3s: ${selectedPlayer.pass3}, Good 2s: ${selectedPlayer.pass2}, Poor 1s: ${selectedPlayer.pass1}, Error 0s: ${selectedPlayer.pass0})`,
+      `Digs: ${selectedPlayer.digCount} Digs, ${selectedPlayer.digErr} Errs (${digSuccessPct}% Success)`,
     ];
     navigator.clipboard.writeText(lines.join("\n"));
     setCopied(true);
@@ -262,7 +265,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                     : "bg-white/10 text-white border border-white/20"
                 }`}
               >
-                {isTeam ? "★" : selectedPlayer.number || "#"}
+                {isTeam ? "ALL" : selectedPlayer.number || "#"}
               </div>
               <div className="truncate">
                 <div className="flex items-center gap-2">
@@ -290,6 +293,19 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
+              {/* Edit Stats */}
+              {onOpenCorrection && !isTeam && (
+                <button
+                  type="button"
+                  onClick={() => onOpenCorrection(selectedPlayer.id)}
+                  className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+                  title="Correct / Edit recorded stats for this player"
+                >
+                  <Edit3 size={14} />
+                  <span className="hidden sm:inline">Edit Stats</span>
+                </button>
+              )}
+
               {/* Copy Summary */}
               <button
                 type="button"
@@ -353,7 +369,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       : "bg-white/10 text-white hover:bg-white/20"
                   }`}
                 >
-                  ★ TEAM TOTALS
+                  TEAM TOTALS
                 </button>
               )}
               {allPlayers
@@ -797,7 +813,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       {/* NET */}
                       <div className="bg-red-50/60 border border-red-200 rounded-xl p-3 flex flex-col items-center text-center">
                         <span className="text-[10px] font-black uppercase tracking-wider text-red-800">
-                          🥅 Into Net
+                          Into Net
                         </span>
                         <span className="text-2xl font-black text-red-600 my-0.5">
                           {selectedPlayer.srvErrNet}
@@ -817,7 +833,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       {/* WIDE */}
                       <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3 flex flex-col items-center text-center">
                         <span className="text-[10px] font-black uppercase tracking-wider text-amber-800">
-                          ↔️ Wide
+                          Wide
                         </span>
                         <span className="text-2xl font-black text-amber-600 my-0.5">
                           {selectedPlayer.srvErrWide}
@@ -837,7 +853,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       {/* LONG / OUT */}
                       <div className="bg-orange-50/60 border border-orange-200 rounded-xl p-3 flex flex-col items-center text-center">
                         <span className="text-[10px] font-black uppercase tracking-wider text-orange-800">
-                          ⬆️ Long / Out
+                          Long / Out
                         </span>
                         <span className="text-2xl font-black text-orange-600 my-0.5">
                           {selectedPlayer.srvErrLong}
@@ -857,7 +873,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       {/* FOOT FAULT / OTHER */}
                       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col items-center text-center">
                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-700">
-                          🦶 Foot / Other
+                          Foot / Other
                         </span>
                         <span className="text-2xl font-black text-slate-600 my-0.5">
                           {selectedPlayer.srvErrFoot +
@@ -1042,7 +1058,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   {/* NET */}
                   <div className="bg-red-50/60 border border-red-200 rounded-xl p-3 text-center">
                     <span className="text-[10px] font-black uppercase tracking-wider text-red-800 block">
-                      🥅 Net Hit
+                      Net Hit
                     </span>
                     <span className="text-2xl font-black text-red-600 my-0.5 block">
                       {selectedPlayer.attErrNet}
@@ -1055,7 +1071,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   {/* OUT / WIDE */}
                   <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-3 text-center">
                     <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 block">
-                      ↗️ Out / Wide
+                      Out / Wide
                     </span>
                     <span className="text-2xl font-black text-amber-600 my-0.5 block">
                       {selectedPlayer.attErrOut}
@@ -1068,7 +1084,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   {/* STUFFED */}
                   <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-center">
                     <span className="text-[10px] font-black uppercase tracking-wider text-rose-800 block">
-                      🛑 Stuffed Block
+                      Stuffed Block
                     </span>
                     <span className="text-2xl font-black text-rose-600 my-0.5 block">
                       {selectedPlayer.attErrStuffed}
@@ -1081,7 +1097,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   {/* BLOCKED PLAY ON */}
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-700 block">
-                      🔄 Blocked (Play On)
+                      Blocked (Play On)
                     </span>
                     <span className="text-2xl font-black text-slate-700 my-0.5 block">
                       {selectedPlayer.attBlk}
@@ -1192,7 +1208,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   <div className="bg-red-50/70 border border-red-200 rounded-xl p-3.5 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-black uppercase tracking-wider text-red-900 flex items-center gap-1.5">
-                        🥅 Net Violation
+                        Net Violation
                       </span>
                       <span className="text-2xl font-black text-red-600">
                         {selectedPlayer.blkNet}
@@ -1208,7 +1224,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   <div className="bg-slate-100 border border-slate-200 rounded-xl p-3.5 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                        💥 Used / Tooled
+                        Used / Tooled
                       </span>
                       <span className="text-2xl font-black text-slate-700">
                         {selectedPlayer.blkUsed}

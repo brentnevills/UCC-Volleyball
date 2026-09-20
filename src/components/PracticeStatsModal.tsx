@@ -205,7 +205,7 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
     const totals = {
       id: "TEAM_TOTALS",
       name: "TEAM TOTAL",
-      number: "★",
+      number: "ALL",
       passCount: 0,
       passSum: 0,
       p3: 0,
