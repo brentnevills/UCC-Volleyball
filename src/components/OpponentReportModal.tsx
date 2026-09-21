@@ -19,47 +19,69 @@ import {
 export interface OpponentReportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  matches: any[];
-  sets: any[];
-  stats: any[];
-  opponents: Record<string, any>;
+  matches?: any[];
+  sets?: any[];
+  stats?: any[];
+  opponents?: Record<string, any>;
+  oppNotesMem?: Record<string, any>;
   effectiveTeamName?: string;
+  ourTeamName?: string;
   initialOpponent?: string;
+  initialOpponentName?: string;
   onSaveOpponentNote?: (oppName: string, playerId: string, note: string) => void;
+  onSaveOppNotes?: (oppName: string, notes: any) => Promise<void> | void;
 }
 
 export const OpponentReportModal: React.FC<OpponentReportModalProps> = ({
   isOpen,
   onClose,
-  matches,
-  sets,
-  stats,
+  matches = [],
+  sets = [],
+  stats = [],
   opponents,
-  effectiveTeamName = "Lancers",
+  oppNotesMem,
+  effectiveTeamName,
+  ourTeamName,
   initialOpponent = "",
+  initialOpponentName = "",
   onSaveOpponentNote,
+  onSaveOppNotes,
 }) => {
-  // Collect all unique opponent names from matches and opponents map
+  const effectiveOurTeam = effectiveTeamName || ourTeamName || "Lancers";
+  const effectiveOpponentsMap = opponents || oppNotesMem || {};
+  const effectiveInitOpp = (initialOpponent || initialOpponentName || "").trim();
+
+  const [customOpponents, setCustomOpponents] = useState<string[]>([]);
+  const [newOppInput, setNewOppInput] = useState("");
+  const [showAddOppInput, setShowAddOppInput] = useState(false);
+
+  // Collect all unique opponent names from matches, opponents map, and custom inputs
   const opponentList = useMemo(() => {
     const set = new Set<string>();
+    if (effectiveInitOpp && effectiveInitOpp.toLowerCase() !== "practice") {
+      set.add(effectiveInitOpp);
+    }
     matches.forEach((m) => {
       if (m.opponent && m.opponent.trim().toLowerCase() !== "practice") {
         set.add(m.opponent.trim());
       }
     });
-    Object.keys(opponents || {}).forEach((k) => {
-      const opp = opponents[k];
-      const name = opp?.teamName || k;
+    Object.keys(effectiveOpponentsMap || {}).forEach((k) => {
+      const opp = effectiveOpponentsMap[k];
+      const name = (typeof opp === "object" && opp?.teamName) ? opp.teamName : k;
       if (name && name.trim().toLowerCase() !== "practice") {
         set.add(name.trim());
       }
     });
+    customOpponents.forEach((c) => {
+      if (c && c.trim()) set.add(c.trim());
+    });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [matches, opponents]);
+  }, [matches, effectiveOpponentsMap, effectiveInitOpp, customOpponents]);
 
   const [selectedOpponent, setSelectedOpponent] = useState<string>(() => {
-    if (initialOpponent && opponentList.includes(initialOpponent)) {
-      return initialOpponent;
+    if (effectiveInitOpp) {
+      return effectiveInitOpp;
     }
     return opponentList[0] || "";
   });
@@ -72,12 +94,24 @@ export const OpponentReportModal: React.FC<OpponentReportModalProps> = ({
 
   // Update selected opponent if initialOpponent changes
   React.useEffect(() => {
-    if (initialOpponent && opponentList.includes(initialOpponent)) {
-      setSelectedOpponent(initialOpponent);
+    if (effectiveInitOpp) {
+      setSelectedOpponent(effectiveInitOpp);
     } else if (!selectedOpponent && opponentList.length > 0) {
       setSelectedOpponent(opponentList[0]);
     }
-  }, [initialOpponent, opponentList]);
+  }, [effectiveInitOpp, opponentList]);
+
+  const handleAddCustomOpponent = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const clean = newOppInput.trim();
+    if (!clean) return;
+    if (!opponentList.includes(clean)) {
+      setCustomOpponents((prev) => [...prev, clean]);
+    }
+    setSelectedOpponent(clean);
+    setNewOppInput("");
+    setShowAddOppInput(false);
+  };
 
   // Compute Opponent Dossier for selectedOpponent
   const dossier = useMemo(() => {
@@ -388,19 +422,57 @@ export const OpponentReportModal: React.FC<OpponentReportModalProps> = ({
           <span className="text-xs font-black uppercase tracking-wider text-slate-400 px-1">
             Opponent:
           </span>
-          <div className="relative min-w-[200px] flex-1 max-w-xs">
-            <select
-              value={selectedOpponent}
-              onChange={(e) => setSelectedOpponent(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-600 text-white rounded-xl px-3 py-2 font-black text-sm outline-none focus:ring-2 focus:ring-blue-500"
+          {opponentList.length > 0 ? (
+            <div className="relative min-w-[180px] flex-1 max-w-xs">
+              <select
+                value={selectedOpponent}
+                onChange={(e) => setSelectedOpponent(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-600 text-white rounded-xl px-3 py-2 font-black text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {opponentList.map((opp) => (
+                  <option key={opp} value={opp} className="bg-slate-900 text-white">
+                    {opp}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <span className="text-xs text-slate-400 italic">No opponents yet</span>
+          )}
+
+          {showAddOppInput ? (
+            <form onSubmit={handleAddCustomOpponent} className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={newOppInput}
+                onChange={(e) => setNewOppInput(e.target.value)}
+                placeholder="Opponent Name..."
+                autoFocus
+                className="bg-slate-900 border border-blue-500 text-white text-xs font-bold rounded-lg px-2.5 py-1.5 outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddOppInput(false)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-1.5"
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAddOppInput(true)}
+              className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
             >
-              {opponentList.map((opp) => (
-                <option key={opp} value={opp} className="bg-slate-900 text-white">
-                  {opp}
-                </option>
-              ))}
-            </select>
-          </div>
+              + Scout New
+            </button>
+          )}
 
           {/* TAB BUTTONS */}
           <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-700 ml-auto">
@@ -455,11 +527,26 @@ export const OpponentReportModal: React.FC<OpponentReportModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
           {!dossier ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-400">
-              <Shield size={48} className="text-slate-600 mb-3" />
-              <h3 className="text-lg font-black text-slate-300">No Opponent Selected</h3>
-              <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                Select an opponent from the top dropdown or record a game to generate a comprehensive dossier.
+              <Shield size={48} className="text-blue-500 mb-3" />
+              <h3 className="text-lg font-black text-slate-200">No Opponent Selected</h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-sm mb-4">
+                Select an opponent from the dropdown or enter a team name below to begin scouting and reviewing reports.
               </p>
+              <form onSubmit={handleAddCustomOpponent} className="flex items-center gap-2 max-w-sm w-full">
+                <input
+                  type="text"
+                  value={newOppInput}
+                  onChange={(e) => setNewOppInput(e.target.value)}
+                  placeholder="Enter opponent name (e.g. Ursuline, St. Pat's)..."
+                  className="flex-1 bg-slate-900 border border-slate-700 focus:border-blue-500 text-white text-xs font-bold rounded-xl px-3 py-2.5 outline-none"
+                />
+                <button
+                  type="submit"
+                  className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-colors shrink-0"
+                >
+                  Scout Team
+                </button>
+              </form>
             </div>
           ) : (
             <>

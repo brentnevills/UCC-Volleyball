@@ -31,6 +31,7 @@ interface StatCorrectionModalProps {
   onUpdateStat: (statId: string, updatedFields: any) => void;
   onAddStat: (statData: any) => void;
   ourTeamName?: string;
+  isReadOnly?: boolean;
 }
 
 export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
@@ -49,6 +50,7 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
   onUpdateStat,
   onAddStat,
   ourTeamName = "Lancers",
+  isReadOnly = false,
 }) => {
   // Navigation & Scope state
   const [selectedMatchId, setSelectedMatchId] = useState<string>(() => {
@@ -304,13 +306,19 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
           </div>
           
           <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
-            >
-              <PlusCircle size={16} />
-              <span>{showAddForm ? "Cancel Add" : "+ Add Stat"}</span>
-            </button>
+            {isReadOnly ? (
+              <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 px-3 py-1.5 rounded-xl text-xs font-bold">
+                Player View-Only (Editing Restricted)
+              </span>
+            ) : (
+              <button
+                onClick={() => setShowAddForm(!showAddForm)}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                <PlusCircle size={16} />
+                <span>{showAddForm ? "Cancel Add" : "+ Add Stat"}</span>
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors shrink-0 cursor-pointer"
@@ -892,26 +900,28 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-2 self-end sm:self-center shrink-0">
-                        <button
-                          onClick={() => handleStartEdit(stat)}
-                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                          title="Edit Stat"
-                        >
-                          <Edit3 size={16} />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (window.confirm("Are you sure you want to delete this recorded stat?")) {
-                              onDeleteStat(stat.id);
-                            }
-                          }}
-                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                          title="Delete Stat"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                      {!isReadOnly && (
+                        <div className="flex items-center space-x-2 self-end sm:self-center shrink-0">
+                          <button
+                            onClick={() => handleStartEdit(stat)}
+                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            title="Edit Stat"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (window.confirm("Are you sure you want to delete this recorded stat?")) {
+                                onDeleteStat(stat.id);
+                              }
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title="Delete Stat"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>

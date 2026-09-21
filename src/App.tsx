@@ -118,6 +118,9 @@ if (typeof window !== "undefined" && db) {
 
 const publicPath = `teams`;
 
+const APP_LOGO_SRC = `${import.meta.env.BASE_URL}lancer-logo.png`;
+const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}LancerVolleyballLogo.png`;
+
 const DEFAULT_ROSTER = [
   { id: "1", name: "Player 1", number: "1" },
   { id: "2", name: "Player 2", number: "2" },
@@ -3923,7 +3926,11 @@ export default function App() {
 
     const doc = new jsPDF({ orientation: "landscape" });
     const title = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}`;
-    doc.text(title, 14, 15);
+    doc.text(title, 14, 13);
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text("NOTE: TOT Blocks includes both touches and stuffs. (STF) denotes blocked stuffs.", 14, 18);
+    doc.setTextColor(0, 0, 0);
 
     const head = [
       [
@@ -3940,8 +3947,8 @@ export default function App() {
         "Kill %",
         "Att Errors",
         "Att Blocked",
-        "Blocks",
-        "Blk Stuffs",
+        "TOT Blocks",
+        "(STF) Stuffs",
         "Blk Late",
         "Blk Net",
         "Blk Used",
@@ -4071,7 +4078,7 @@ export default function App() {
         killPct,
         p.attErr,
         p.attBlk,
-        blkTot,
+        `${blkTot} (${p.blkStuff} STF)`,
         p.blkStuff,
         p.blkLate,
         p.blkNet,
@@ -4120,7 +4127,7 @@ export default function App() {
         shownKillPct,
         shownTot.attErr,
         shownTot.attBlk,
-        shownBlkTot,
+        `${shownBlkTot} (${shownTot.blkStuff} STF)`,
         shownTot.blkStuff,
         shownTot.blkLate,
         shownTot.blkNet,
@@ -4146,7 +4153,7 @@ export default function App() {
       totKillPct,
       teamTot.attErr,
       teamTot.attBlk,
-      totBlkTot,
+      `${totBlkTot} (${teamTot.blkStuff} STF)`,
       teamTot.blkStuff,
       teamTot.blkLate,
       teamTot.blkNet,
@@ -4158,7 +4165,7 @@ export default function App() {
     ]);
 
     autoTable(doc, {
-      startY: 20,
+      startY: 21,
       head: head,
       body: body,
       foot: foot,
@@ -4688,12 +4695,18 @@ export default function App() {
             <div className="flex items-center space-x-3">
               <div className="h-12 w-12 rounded-2xl bg-blue-600/30 border border-blue-500/40 p-2 flex items-center justify-center shadow-inner">
                 <img
-                  src={`${import.meta.env.BASE_URL}lancer-logo.png`}
+                  src={APP_LOGO_SRC}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain"
                   onError={(e) => {
-                    e.currentTarget.style.display = "none";
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = "true";
+                      target.src = FALLBACK_LOGO_SRC;
+                    } else {
+                      target.style.display = "none";
+                    }
                   }}
                 />
               </div>
@@ -4904,6 +4917,56 @@ export default function App() {
     );
   };
 
+  const renderOpponentReportModal = () => {
+    if (!showOpponentReportModal) return null;
+    return (
+      <OpponentReportModal
+        isOpen={showOpponentReportModal}
+        onClose={() => setShowOpponentReportModal(false)}
+        initialOpponent={reportOpponentName || opponentName || ""}
+        initialOpponentName={reportOpponentName || opponentName || ""}
+        matches={appData.matches}
+        sets={appData.sets}
+        stats={appData.stats}
+        opponents={appData.opponents || oppNotesMem || {}}
+        oppNotesMem={oppNotesMem}
+        effectiveTeamName={effectiveTeamName}
+        ourTeamName={effectiveTeamName}
+        onSaveOpponentNote={async (oppName, playerId, note) => {
+          setOppNotesMem((prev) => ({
+            ...prev,
+            [oppName]: { ...(prev[oppName] || {}), [playerId]: note },
+          }));
+          if (isFirebaseAvailable && user && activeTeam) {
+            try {
+              await setDoc(
+                doc(db, `${publicPath}/${activeTeam}/opponent_notes/${oppName}`),
+                { [playerId]: note, updatedAt: new Date().toISOString() },
+                { merge: true },
+              );
+            } catch (err) {
+              console.error("Failed to save opp note:", err);
+            }
+          }
+        }}
+        onSaveOppNotes={async (oppName, notes) => {
+          setOppNotesMem((prev) => ({ ...prev, [oppName]: notes }));
+          if (isFirebaseAvailable && user && activeTeam) {
+            try {
+              await setDoc(
+                doc(db, `${publicPath}/${activeTeam}/opponent_notes/${oppName}`),
+                { notes, updatedAt: new Date().toISOString() },
+                { merge: true },
+              );
+            } catch (err) {
+              console.error("Failed to save opp notes:", err);
+            }
+          }
+        }}
+      />
+    );
+  };
+
   if (loadingAuth) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-6 text-center">
@@ -4975,12 +5038,18 @@ export default function App() {
         <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
           <div className="mb-8 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
             <img
-              src={`${import.meta.env.BASE_URL}lancer-logo.png`}
+              src={APP_LOGO_SRC}
               alt="Lancers Logo"
               referrerPolicy="no-referrer"
               className="h-full w-full object-contain absolute inset-0 z-10"
               onError={(e) => {
-                e.currentTarget.style.display = "none";
+                const target = e.currentTarget;
+                if (!target.dataset.fallback) {
+                  target.dataset.fallback = "true";
+                  target.src = FALLBACK_LOGO_SRC;
+                } else {
+                  target.style.display = "none";
+                }
               }}
             />
             <Shield className="text-slate-800 h-12 w-12 sm:h-20 sm:w-20 absolute z-0" />
@@ -5164,12 +5233,18 @@ export default function App() {
           <div className="text-center mb-8 sm:mb-12 flex flex-col items-center mt-6 sm:mt-0">
             <div className="mb-4 sm:mb-6 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
               <img
-                src={`${import.meta.env.BASE_URL}lancer-logo.png`}
+                src={APP_LOGO_SRC}
                 alt="Lancers Logo"
                 referrerPolicy="no-referrer"
                 className="h-full w-full object-contain absolute inset-0 z-10"
                 onError={(e) => {
-                  e.currentTarget.style.display = "none";
+                  const target = e.currentTarget;
+                  if (!target.dataset.fallback) {
+                    target.dataset.fallback = "true";
+                    target.src = FALLBACK_LOGO_SRC;
+                  } else {
+                    target.style.display = "none";
+                  }
                 }}
               />
               <Shield className="text-slate-800 h-10 w-10 sm:h-16 sm:w-16 absolute z-0" />
@@ -5580,6 +5655,8 @@ export default function App() {
             </div>
           </div>
         )}
+        {renderOpponentReportModal()}
+        {renderInstallModal()}
       </div>
     );
   }
@@ -5603,12 +5680,18 @@ export default function App() {
             <div className="flex items-center space-x-3 sm:space-x-4">
               <div className="hidden sm:flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative">
                 <img
-                  src={`${import.meta.env.BASE_URL}lancer-logo.png`}
+                  src={APP_LOGO_SRC}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
                   onError={(e) => {
-                    e.currentTarget.style.display = "none";
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = "true";
+                      target.src = FALLBACK_LOGO_SRC;
+                    } else {
+                      target.style.display = "none";
+                    }
                   }}
                 />
               </div>
@@ -6350,6 +6433,7 @@ export default function App() {
             )
           }
         />
+        {renderOpponentReportModal()}
         {renderInstallModal()}
       </div>
     );
@@ -6374,12 +6458,18 @@ export default function App() {
             <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
               <div className="hidden md:flex items-center justify-center h-12 w-12 overflow-hidden relative">
                 <img
-                  src={`${import.meta.env.BASE_URL}lancer-logo.png`}
+                  src={APP_LOGO_SRC}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
                   onError={(e) => {
-                    e.currentTarget.style.display = "none";
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = "true";
+                      target.src = FALLBACK_LOGO_SRC;
+                    } else {
+                      target.style.display = "none";
+                    }
                   }}
                 />
               </div>
@@ -10202,6 +10292,7 @@ export default function App() {
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
             ourTeamName={effectiveTeamName}
+            isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
           />
         )}
         <TeamNameEditModal
@@ -10232,6 +10323,7 @@ export default function App() {
           opponentName={opponentName || "Opponent"}
           onSave={handleSaveSetScore}
         />
+        {renderOpponentReportModal()}
         {renderInstallModal()}
       </div>
     );
@@ -11014,6 +11106,7 @@ export default function App() {
             onDeleteStat={handleDeleteStat}
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
+            isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
           />
         )}
       </div>
@@ -11502,6 +11595,7 @@ export default function App() {
             )}
           </div>
         </div>
+        {renderOpponentReportModal()}
         {renderInstallModal()}
       </div>
     );
@@ -11520,12 +11614,18 @@ export default function App() {
             <div className="flex items-center w-full sm:w-auto">
               <div className="mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative">
                 <img
-                  src={`${import.meta.env.BASE_URL}lancer-logo.png`}
+                  src={APP_LOGO_SRC}
                   alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
                   onError={(e) => {
-                    e.currentTarget.style.display = "none";
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = "true";
+                      target.src = FALLBACK_LOGO_SRC;
+                    } else {
+                      target.style.display = "none";
+                    }
                   }}
                 />
               </div>
@@ -11581,9 +11681,9 @@ export default function App() {
                   });
                 }}
                 className="flex-1 sm:flex-none bg-amber-400 hover:bg-amber-500 text-slate-950 px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer"
-                title="Edit recorded stats"
+                title={teamInfo.role === "player" ? "View recorded stats" : "Edit recorded stats"}
               >
-                <Edit3 className="mr-1 sm:mr-1.5" size={14} /> Edit Stats
+                <Edit3 className="mr-1 sm:mr-1.5" size={14} /> {teamInfo.role === "player" ? "View Stat Log" : "Edit Stats"}
               </button>
               {activeMatch ? (
                 <button
@@ -11651,9 +11751,9 @@ export default function App() {
                       ? "bg-[#0033A0] text-white shadow-sm ring-2 ring-[#0033A0]/20"
                       : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
                   }`}
-                  title="Drill down: All Games -> Day / Tournament -> Specific Game -> Set"
+                  title="Games: All Games -> Day / Tournament -> Specific Game -> Set"
                 >
-                  <span><span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span> Games Drill-Down</span>
+                  <span><span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span> Games</span>
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                       isGamesBranch
@@ -11673,9 +11773,9 @@ export default function App() {
                       ? "bg-amber-600 text-white shadow-sm ring-2 ring-amber-600/20"
                       : "bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200"
                   }`}
-                  title="Drill down: All Practices -> Practice Day -> Drill"
+                  title="Practices: All Practices -> Practice Day -> Drill"
                 >
-                  <span>Practices Drill-Down</span>
+                  <span>Practices</span>
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                       isPracticeBranch
@@ -11697,7 +11797,7 @@ export default function App() {
                   }`}
                   title="Combined season totals across all matches and practice sessions"
                 >
-                  <span>Season Totals (Game & Practice)</span>
+                  <span>Season Totals</span>
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                       isCombinedBranch
@@ -11726,7 +11826,7 @@ export default function App() {
                 >
                   <optgroup label="── SEASON TOTALS ──">
                     <option value="season_all">
-                      Season Totals (Game & Practice)
+                      Season Totals
                     </option>
                     <option value="season_games">
                       <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span> All Games (Season)
@@ -11959,7 +12059,7 @@ export default function App() {
                         ? "Select Practice Day:"
                         : isGamesBranch
                         ? "Select Tournament or Game Day:"
-                        : "Select Event to Drill Down:"
+                        : "Select Event to View:"
                       : currentNav.level === "event"
                       ? isPracticeBranch
                         ? "Select Drill on This Day:"
@@ -12080,7 +12180,7 @@ export default function App() {
                             </span>
                           )}
                         </button>
-                        {opt.level === "match" && (
+                        {teamInfo.role !== "player" && opt.level === "match" && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -12101,7 +12201,7 @@ export default function App() {
                             <Edit3 size={13} />
                           </button>
                         )}
-                        {opt.level === "set" && (
+                        {teamInfo.role !== "player" && opt.level === "set" && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -12344,10 +12444,10 @@ export default function App() {
                     });
                   }}
                   className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap"
-                  title="Edit, correct, or add stats"
+                  title={teamInfo.role === "player" ? "View stat log" : "Edit, correct, or add stats"}
                 >
                   <Edit3 size={13} />
-                  <span>Edit Stats</span>
+                  <span>{teamInfo.role === "player" ? "View Stat Log" : "Edit Stats"}</span>
                 </button>
               </div>
             </div>
@@ -14254,6 +14354,7 @@ export default function App() {
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
             ourTeamName={effectiveTeamName}
+            isReadOnly={teamInfo.role === "player" || myTeams.find((t) => t.id === activeTeam)?.role === "player"}
           />
         )}
         <TeamNameEditModal
@@ -14291,30 +14392,7 @@ export default function App() {
           }
           onSave={handleSaveSetScore}
         />
-        <OpponentReportModal
-          isOpen={showOpponentReportModal}
-          onClose={() => setShowOpponentReportModal(false)}
-          initialOpponentName={reportOpponentName || opponentName || ""}
-          matches={appData.matches}
-          sets={appData.sets}
-          stats={appData.stats}
-          ourTeamName={effectiveTeamName}
-          oppNotesMem={oppNotesMem}
-          onSaveOppNotes={async (oppName, notes) => {
-            setOppNotesMem((prev) => ({ ...prev, [oppName]: notes }));
-            if (isFirebaseAvailable && user && activeTeam) {
-              try {
-                await setDoc(
-                  doc(db, `${publicPath}/${activeTeam}/opponent_notes/${oppName}`),
-                  { notes, updatedAt: new Date().toISOString() },
-                  { merge: true },
-                );
-              } catch (err) {
-                console.error("Failed to save opp notes:", err);
-              }
-            }
-          }}
-        />
+        {renderOpponentReportModal()}
         <OpponentSubModal
           isOpen={showOppSubModal}
           onClose={() => setShowOppSubModal(false)}
