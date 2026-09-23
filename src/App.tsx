@@ -47,6 +47,8 @@ import {
   Target,
   Plus,
   Minus,
+  Lock,
+  Unlock,
 } from "lucide-react";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
@@ -56,6 +58,7 @@ import { TeamNameEditModal } from "./components/TeamNameEditModal";
 import { SetScoreEditModal } from "./components/SetScoreEditModal";
 import { OpponentReportModal } from "./components/OpponentReportModal";
 import { OpponentSubModal } from "./components/OpponentSubModal";
+import { PlayerAccessLogModal } from "./components/PlayerAccessLogModal";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -722,7 +725,45 @@ export default function App() {
   const effectiveTeamName =
     myTeams.find((t) => t.id === activeTeam)?.name || customTeamName || "Lancers";
   const activeTeamProfile = myTeams.find((t) => t.id === activeTeam);
-  const isPlayerRole = activeTeamProfile?.role === "player";
+  const isPlayerRole = Boolean(
+    activeTeamProfile?.role === "player" ||
+    localStorage.getItem(`ucc_team_role_${activeTeam}`) === "player" ||
+    localStorage.getItem("ucc_current_role") === "player" ||
+    (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "player"))
+  );
+  // Always keep anti-screenshot protection active globally
+  const isShieldProtectionActive = true;
+  const isPlayerAccessAllowed = (appData as any).playerAccessEnabled !== false;
+
+  const togglePlayerAccess = async () => {
+    const nextState = !isPlayerAccessAllowed;
+    setAppData((prev: any) => ({ ...prev, playerAccessEnabled: nextState }));
+
+    if (isFirebaseAvailable && user && activeTeam) {
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/settings/core`),
+          { playerAccessEnabled: nextState },
+          { merge: true }
+        );
+      } catch (e) {
+        console.error("Failed to update playerAccessEnabled in Firestore:", e);
+      }
+    } else if (!isFirebaseAvailable && activeTeam) {
+      writeLocalDb({ ...appData, playerAccessEnabled: nextState });
+      localStorage.setItem(`ucc_player_access_${activeTeam}`, String(nextState));
+    }
+
+    setScreenshotAttemptNotice(
+      nextState
+        ? "Player Access: ENABLED (Players can view stats)"
+        : "Player Access: DISABLED (Players locked out)"
+    );
+  };
+
+  const [showPlayerAccessModal, setShowPlayerAccessModal] = useState(false);
+  const [isFullTableRevealed, setIsFullTableRevealed] = useState(false);
+  const [revealedPlayerId, setRevealedPlayerId] = useState<string | null>(null);
   const [screenCaptureShieldActive, setScreenCaptureShieldActive] = useState(false);
   const [screenshotAttemptNotice, setScreenshotAttemptNotice] = useState<string | null>(null);
   const [teamNameModalConfig, setTeamNameModalConfig] = useState<{
@@ -914,17 +955,102 @@ export default function App() {
     }
   }, [user, activeTeam, myTeams]);
 
-  // Player Code Security & Anti-Screenshot Enforcement
-  // Enforces that users with player codes can only view data on their device.
-  // Prevents screenshots (blur on snipping tool focus loss, PrtScn clearing, Mac screenshot shortcuts),
-  // disables right-click context menu, prevents saving content, blocks printing and PDF generation.
+  // Player Stats Access Audit Logger
+  const logPlayerStatsAccess = async (targetViewName?: string) => {
+    if (!user || !activeTeam || !db) return;
+    try {
+      const isPlayer = Boolean(
+        activeTeamProfile?.role === "player" ||
+        localStorage.getItem(`ucc_team_role_${activeTeam}`) === "player" ||
+        localStorage.getItem("ucc_current_role") === "player" ||
+        (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "player"))
+      );
+
+      const userEmail = user.email || "Unknown Google Account";
+      const userDisplayName = user.displayName || user.email?.split("@")[0] || "Player";
+      const userPhoto = user.photoURL || "";
+
+      // 1. Update or create member record in the team with Google account details
+      const memberRef = doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`);
+      await setDoc(
+        memberRef,
+        {
+          uid: user.uid,
+          email: userEmail,
+          displayName: userDisplayName,
+          photoURL: userPhoto,
+          role: isPlayer ? "player" : (activeTeamProfile?.role || "coach"),
+          lastStatsAccess: serverTimestamp(),
+          lastActive: serverTimestamp(),
+          lastViewedPath: targetViewName || "Stats Overview",
+          device: navigator.userAgent.includes("iPhone")
+            ? "iPhone (iOS)"
+            : navigator.userAgent.includes("iPad")
+            ? "iPad (iPadOS)"
+            : navigator.userAgent.includes("Android")
+            ? "Android Mobile"
+            : navigator.userAgent.includes("Mac")
+            ? "Mac (Desktop)"
+            : navigator.userAgent.includes("Win")
+            ? "Windows PC"
+            : "Mobile / Web Device",
+        },
+        { merge: true },
+      );
+
+      // 2. Also log audit record in player_access_logs if player role
+      if (isPlayer) {
+        const logId = `${user.uid}_${Date.now()}`;
+        const logRef = doc(db, `${publicPath}/${activeTeam}/player_access_logs/${logId}`);
+        await setDoc(logRef, {
+          id: logId,
+          uid: user.uid,
+          email: userEmail,
+          displayName: userDisplayName,
+          photoURL: userPhoto,
+          role: "player",
+          accessedAt: serverTimestamp(),
+          view: targetViewName || "Stats Overview",
+          device: navigator.userAgent.includes("iPhone")
+            ? "iPhone (iOS)"
+            : navigator.userAgent.includes("iPad")
+            ? "iPad (iPadOS)"
+            : navigator.userAgent.includes("Android")
+            ? "Android Mobile"
+            : navigator.userAgent.includes("Mac")
+            ? "Mac (Desktop)"
+            : navigator.userAgent.includes("Win")
+            ? "Windows PC"
+            : "Mobile / Web Device",
+        });
+      }
+    } catch (err) {
+      console.warn("Player stats access audit log notice:", err);
+    }
+  };
+
+  // Automatically record stats access whenever a player is in the stats view
   useEffect(() => {
-    if (!isPlayerRole) {
+    if (view === "stats" && user && activeTeam) {
+      const activeNavName = statsPath[statsPath.length - 1]?.name || "Season Totals";
+      logPlayerStatsAccess(activeNavName);
+    }
+  }, [view, activeTeam, user, statsPath]);
+
+  // Netflix-Grade Screen Capture Prevention & Instant Solid Blackout
+  // Produces a 100% pitch-black screen upon screenshot attempts, blur, visibility changes,
+  // hardware button triggers, or screen capture shortcuts (matching Netflix DRM behavior).
+  useEffect(() => {
+    if (!isShieldProtectionActive) {
+      document.documentElement.classList.remove("player-restricted");
+      document.documentElement.classList.remove("shield-active");
       document.body.classList.remove("player-restricted");
+      document.body.classList.remove("shield-active");
       setScreenCaptureShieldActive(false);
       return;
     }
 
+    document.documentElement.classList.add("player-restricted");
     document.body.classList.add("player-restricted");
 
     let toastTimeout: any = null;
@@ -936,65 +1062,89 @@ export default function App() {
       }, 4000);
     };
 
-    const handleBlur = () => {
+    const activateShield = () => {
+      document.documentElement.classList.add("shield-active");
+      document.body.classList.add("shield-active");
       setScreenCaptureShieldActive(true);
+      setRevealedPlayerId(null);
+      setIsFullTableRevealed(false);
+    };
+
+    const handleBlur = () => {
+      activateShield();
     };
 
     const handleFocus = () => {
-      setScreenCaptureShieldActive(false);
+      // Kept active until user taps "Resume"
     };
 
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        setScreenCaptureShieldActive(true);
-      } else {
-        setScreenCaptureShieldActive(false);
+      if (document.hidden || document.visibilityState === "hidden") {
+        activateShield();
       }
     };
 
+    const handlePageHide = () => {
+      activateShield();
+    };
+
+    const handleTouchCancel = () => {
+      // Hardware screenshot combos (Power + Vol) interrupt touches
+      setRevealedPlayerId(null);
+      setIsFullTableRevealed(false);
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen") {
+      // PrintScreen (Windows/Linux)
+      if (e.key === "PrintScreen" || e.code === "PrintScreen" || (e as any).keyCode === 44) {
         e.preventDefault();
         e.stopPropagation();
-        setScreenCaptureShieldActive(true);
-        triggerSecurityNotice("Screenshots are disabled for player code access. View-only on device.");
+        activateShield();
+        triggerSecurityNotice("Screenshots are blocked (Protected View).");
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText("").catch(() => {});
+          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
         }
-        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
         return;
       }
 
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        ["3", "4", "5", "6", "s", "S"].includes(e.key)
-      ) {
+      // Preemptive modifier interception:
+      // Mac screenshot combos (Cmd+Shift+3, Cmd+Shift+4, Cmd+Shift+5, Cmd+Shift+6)
+      // Windows Snipping Tool (Win+Shift+S)
+      // The moment both Meta/Ctrl and Shift are pressed down, screen turns solid black immediately
+      const isMetaShift = (e.metaKey || e.ctrlKey) && e.shiftKey;
+      if (isMetaShift) {
         e.preventDefault();
         e.stopPropagation();
-        setScreenCaptureShieldActive(true);
-        triggerSecurityNotice("Screen capture shortcuts are restricted for player codes.");
-        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
+        activateShield();
+        triggerSecurityNotice("Screen capture shortcuts are blocked.");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
+        }
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+      // Print / PDF export shortcuts: Ctrl+P / Cmd+P
+      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P" || e.code === "KeyP")) {
         e.preventDefault();
         e.stopPropagation();
-        triggerSecurityNotice("Printing and PDF export are disabled for player codes.");
+        activateShield();
+        triggerSecurityNotice("Printing and PDF export are disabled.");
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
+      // Save page shortcuts: Ctrl+S / Cmd+S
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S" || e.code === "KeyS")) {
         e.preventDefault();
         e.stopPropagation();
-        triggerSecurityNotice("Saving content is disabled for player codes.");
+        activateShield();
+        triggerSecurityNotice("Saving content is disabled.");
         return;
       }
 
+      // DevTools and View Source shortcuts: F12, Ctrl+U, Ctrl+Shift+I/J/C
       if (
         e.key === "F12" ||
-        ((e.ctrlKey || e.metaKey) && (e.key === "u" || e.key === "U")) ||
+        ((e.ctrlKey || e.metaKey) && (e.key === "u" || e.key === "U" || e.code === "KeyU")) ||
         ((e.ctrlKey || e.metaKey) && e.shiftKey && ["i", "I", "j", "J", "c", "C"].includes(e.key))
       ) {
         e.preventDefault();
@@ -1003,47 +1153,82 @@ export default function App() {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen") {
+      if (e.key === "PrintScreen" || e.code === "PrintScreen" || (e as any).keyCode === 44) {
         e.preventDefault();
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText("").catch(() => {});
+          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
         }
-        setScreenCaptureShieldActive(true);
-        triggerSecurityNotice("Screenshots are disabled for player code access.");
-        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
+        activateShield();
+        triggerSecurityNotice("Screenshots are blocked (Protected View).");
       }
     };
 
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
-      triggerSecurityNotice("Right-click menu is disabled in player view-only mode.");
+      triggerSecurityNotice("Right-click menu is disabled in protected view.");
     };
 
     const handleBeforePrint = (e: Event) => {
       e.preventDefault();
-      triggerSecurityNotice("Printing and PDF export are disabled for player accounts.");
+      activateShield();
+      triggerSecurityNotice("Printing and PDF export are disabled.");
     };
 
-    window.addEventListener("blur", handleBlur);
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const handleCopy = (e: ClipboardEvent) => {
+      e.preventDefault();
+      if (e.clipboardData) {
+        e.clipboardData.setData("text/plain", "Protected Content. Screen capture and copying are prohibited.");
+      }
+    };
+
+    window.addEventListener("blur", handleBlur, true);
+    window.addEventListener("focus", handleFocus, true);
+    document.addEventListener("visibilitychange", handleVisibilityChange, true);
+    window.addEventListener("pagehide", handlePageHide, true);
+    window.addEventListener("touchcancel", handleTouchCancel, true);
     window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("keyup", handleKeyUp, true);
     window.addEventListener("contextmenu", handleContextMenu);
     window.addEventListener("beforeprint", handleBeforePrint);
+    window.addEventListener("copy", handleCopy);
+    window.addEventListener("cut", handleCopy);
+
+    // Intercept navigator.mediaDevices.getDisplayMedia to block screen capture extensions
+    let origGDM: any = null;
+    if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+      try {
+        origGDM = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getDisplayMedia = async function(...args) {
+          activateShield();
+          throw new DOMException("Screen capture is prohibited by security policy.", "NotAllowedError");
+        };
+      } catch {}
+    }
 
     return () => {
       clearTimeout(toastTimeout);
+      document.documentElement.classList.remove("player-restricted");
+      document.documentElement.classList.remove("shield-active");
       document.body.classList.remove("player-restricted");
-      window.removeEventListener("blur", handleBlur);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.body.classList.remove("shield-active");
+      window.removeEventListener("blur", handleBlur, true);
+      window.removeEventListener("focus", handleFocus, true);
+      document.removeEventListener("visibilitychange", handleVisibilityChange, true);
+      window.removeEventListener("pagehide", handlePageHide, true);
+      window.removeEventListener("touchcancel", handleTouchCancel, true);
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("beforeprint", handleBeforePrint);
+      window.removeEventListener("copy", handleCopy);
+      window.removeEventListener("cut", handleCopy);
+      if (origGDM && navigator.mediaDevices) {
+        try {
+          navigator.mediaDevices.getDisplayMedia = origGDM;
+        } catch {}
+      }
     };
-  }, [isPlayerRole]);
+  }, [isShieldProtectionActive]);
 
   // LOAD DATA BASED ON ACTIVE TEAM
   useEffect(() => {
@@ -4426,7 +4611,14 @@ export default function App() {
         uid: user.uid,
         role: "coach",
         joinedAt: serverTimestamp(),
+        email: user.email || "",
+        displayName: user.displayName || user.email?.split("@")[0] || "Coach",
+        photoURL: user.photoURL || "",
+        lastActive: serverTimestamp(),
       });
+
+      localStorage.setItem(`ucc_team_role_${tId}`, "coach");
+      localStorage.setItem("ucc_current_role", "coach");
 
       // Core settings
       batch.set(doc(db, `${publicPath}/${tId}/settings/core`), {
@@ -4515,7 +4707,15 @@ export default function App() {
         uid: user.uid,
         role,
         joinedAt: serverTimestamp(),
+        email: user.email || "",
+        displayName: user.displayName || user.email?.split("@")[0] || (role === "coach" ? "Coach" : "Player"),
+        photoURL: user.photoURL || "",
+        lastActive: serverTimestamp(),
       });
+
+      // Persist role in local storage
+      localStorage.setItem(`ucc_team_role_${teamId}`, role);
+      localStorage.setItem("ucc_current_role", role);
 
       // 2. Fetch metadata that we now have access to read
       const snap = await getDoc(
@@ -4811,57 +5011,77 @@ export default function App() {
   // -------------------------------------------------------------
 
   const renderPlayerSecurity = () => {
-    if (!isPlayerRole) return null;
+    if (!isShieldProtectionActive) return null;
     return (
       <>
         {/* Anti-screenshot & capture shield overlay */}
         {screenCaptureShieldActive && (
           <div
-            onClick={() => setScreenCaptureShieldActive(false)}
-            className="fixed inset-0 z-[99999] bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center select-none backdrop-blur-2xl cursor-pointer"
+            onClick={() => {
+              document.documentElement.classList.remove("shield-active");
+              document.body.classList.remove("shield-active");
+              setScreenCaptureShieldActive(false);
+            }}
+            className="fixed inset-0 z-[2147483647] bg-black flex flex-col items-center justify-center p-6 text-center select-none cursor-pointer"
           >
-            <div className="h-20 w-20 rounded-3xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center mb-5 text-amber-300 shadow-2xl">
-              <ShieldAlert size={42} />
+            <div className="h-16 w-16 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center mb-5 text-red-500 shadow-2xl">
+              <ShieldAlert size={36} />
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2">
-              Screen Capture Protection
+              Protected Content
             </h2>
-            <p className="text-slate-300 text-sm max-w-md font-medium leading-relaxed mb-6">
-              Player code access is restricted to on-device viewing only. Screenshots, recording, and snipping tools are blocked.
+            <p className="text-zinc-400 text-xs sm:text-sm max-w-md font-medium leading-relaxed mb-6">
+              Screen capture and recording are prohibited. Viewing is restricted to authorized devices.
             </p>
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
+                document.documentElement.classList.remove("shield-active");
+                document.body.classList.remove("shield-active");
                 setScreenCaptureShieldActive(false);
               }}
-              className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-6 py-3 rounded-2xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95"
+              className="bg-[#e50914] hover:bg-red-600 text-white font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95 cursor-pointer"
             >
-              Resume Viewing On Device
+              Tap to Resume
             </button>
           </div>
         )}
 
         {/* Security Warning Toast */}
         {screenshotAttemptNotice && (
-          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100000] bg-amber-400 text-slate-950 px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider shadow-2xl flex items-center gap-2.5 border-2 border-amber-300 animate-pulse pointer-events-none">
+          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100000] bg-red-600 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider shadow-2xl flex items-center gap-2.5 border border-red-400 animate-pulse pointer-events-none">
             <ShieldAlert size={18} className="shrink-0" />
             <span>{screenshotAttemptNotice}</span>
           </div>
         )}
 
-        {/* Dynamic Security Watermark */}
-        <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden opacity-[0.035] select-none flex flex-wrap content-around justify-around p-4 rotate-[-12deg] scale-125">
+        {/* Dynamic Forensic Watermark with Player Google Account */}
+        <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden opacity-[0.06] select-none flex flex-wrap content-around justify-around p-4 rotate-[-12deg] scale-125">
           {Array.from({ length: 36 }).map((_, i) => (
             <div
               key={i}
-              className="text-slate-900 dark:text-white font-black text-[11px] uppercase tracking-widest p-6 whitespace-nowrap"
+              className="text-slate-900 dark:text-white font-black text-[10px] uppercase tracking-widest p-6 whitespace-nowrap"
             >
-              PLAYER CODE VIEW ONLY • {effectiveTeamName.toUpperCase()} • NO SCREENSHOTS OR DOWNLOADS
+              CONFIDENTIAL • {user?.email || "PLAYER VIEW"} • {effectiveTeamName.toUpperCase()} • VIEW-ONLY ON DEVICE
             </div>
           ))}
         </div>
       </>
+    );
+  };
+
+  const renderPlayerAccessModal = () => {
+    return (
+      <PlayerAccessLogModal
+        isOpen={showPlayerAccessModal}
+        onClose={() => setShowPlayerAccessModal(false)}
+        teamId={activeTeam}
+        teamName={effectiveTeamName}
+        playerCode={appData.playerCode}
+        publicPath={publicPath}
+        db={db}
+      />
     );
   };
 
@@ -5550,6 +5770,44 @@ export default function App() {
                     </button>
                   </div>
                 )}
+                {teamInfo.role === "coach" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setShowPlayerAccessModal(true)}
+                      className="w-full mt-1 px-4 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 rounded-full text-emerald-300 font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Eye size={15} className="text-emerald-400 group-hover:scale-110 transition-transform" />
+                        <span>Player Stats Access Audit</span>
+                      </div>
+                      <span className="text-[10px] bg-emerald-500/30 text-emerald-200 px-2.5 py-0.5 rounded-full font-black">
+                        Google Accounts
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={togglePlayerAccess}
+                      className={`w-full mt-1.5 px-4 py-2.5 ${
+                        isPlayerAccessAllowed
+                          ? "bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-400/40 text-emerald-300"
+                          : "bg-red-500/20 hover:bg-red-500/30 border-red-400/40 text-red-300"
+                      } border rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {isPlayerAccessAllowed ? (
+                          <Unlock size={15} className="text-emerald-400 group-hover:scale-110 transition-transform" />
+                        ) : (
+                          <Lock size={15} className="text-red-400 group-hover:scale-110 transition-transform" />
+                        )}
+                        <span>Available to Players</span>
+                      </div>
+                      <span className={`text-[10px] ${isPlayerAccessAllowed ? "bg-emerald-500/30 text-emerald-200" : "bg-red-500/30 text-red-200"} px-2.5 py-0.5 rounded-full font-black`}>
+                        {isPlayerAccessAllowed ? "ACCESS ON" : "ACCESS OFF"}
+                      </span>
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -5891,6 +6149,7 @@ export default function App() {
           </div>
         )}
         {renderOpponentReportModal()}
+        {renderPlayerAccessModal()}
         {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
@@ -11554,8 +11813,27 @@ export default function App() {
             </div>
           </div>
 
-          <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
-            <div className="flex space-x-2 border-b border-slate-200 mb-4 pb-2">
+          {isPlayerRole && !isPlayerAccessAllowed ? (
+            <div className="bg-white shadow-xl p-8 sm:p-12 border-x border-b border-slate-200 text-center select-none rounded-b-2xl sm:rounded-b-3xl">
+              <div className="h-16 w-16 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto mb-4 text-red-500">
+                <Lock size={32} />
+              </div>
+              <h2 className="text-xl font-black uppercase tracking-wider text-slate-800 mb-2">
+                Player Access Currently Closed
+              </h2>
+              <p className="text-slate-500 text-sm leading-relaxed mb-6 max-w-md mx-auto">
+                Your coaching staff has temporarily disabled player access to stats and comparisons.
+              </p>
+              <button
+                onClick={() => setView("stats")}
+                className="px-6 py-2.5 bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-wider hover:bg-slate-700 transition-colors"
+              >
+                Return to Stats
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
+              <div className="flex space-x-2 border-b border-slate-200 mb-4 pb-2">
               <button
                 onClick={() => setCompareMode("players")}
                 className={`px-4 py-2 font-bold text-sm uppercase tracking-widest border-b-4 ${compareMode === "players" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400"}`}
@@ -11859,6 +12137,7 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
         </div>
         {renderOpponentReportModal()}
         {renderPlayerSecurity()}
@@ -11932,6 +12211,37 @@ export default function App() {
               </button>
               {teamInfo.role !== "player" && (
                 <>
+                  <button
+                    onClick={() => setShowPlayerAccessModal(true)}
+                    className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                    title="View which players & Google accounts have accessed stats"
+                  >
+                    <Eye className="mr-1 sm:mr-1.5" size={14} /> Player Access
+                  </button>
+                  <button
+                    type="button"
+                    onClick={togglePlayerAccess}
+                    className={`flex-1 sm:flex-none ${
+                      isPlayerAccessAllowed
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+                        : "bg-red-600 hover:bg-red-700 text-white shadow-red-500/20"
+                    } px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer`}
+                    title={
+                      isPlayerAccessAllowed
+                        ? "Player access to stats is currently OPEN. Click to lock/disable."
+                        : "Player access to stats is currently LOCKED. Click to unlock/allow."
+                    }
+                  >
+                    {isPlayerAccessAllowed ? (
+                      <>
+                        <Unlock className="mr-1 sm:mr-1.5" size={14} /> Available to Players: ON
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="mr-1 sm:mr-1.5" size={14} /> Available to Players: OFF
+                      </>
+                    )}
+                  </button>
                   <button
                     onClick={exportCSV}
                     className="flex-1 sm:flex-none bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors"
@@ -12904,6 +13214,9 @@ export default function App() {
                   : "0.0%";
               const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
+              const isTeamTotConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== "TEAM_TOTALS";
+              const isShownTotConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== "SHOWN_PLAYERS";
+
               return (
                 <div className="flex flex-col">
                   {/* Hidden players alert banner with interactive unhide chips */}
@@ -12960,7 +13273,132 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
+                  {/* Player Access Closed Notice */}
+                  {isPlayerRole && !isPlayerAccessAllowed && (
+                    <div className="bg-slate-900 border-2 border-red-500/40 rounded-3xl p-8 sm:p-12 my-6 text-white text-center shadow-2xl max-w-xl mx-auto select-none">
+                      <div className="h-20 w-20 rounded-3xl bg-red-500/20 border border-red-500/30 flex items-center justify-center mx-auto mb-5 text-red-400 shadow-inner">
+                        <Lock size={40} />
+                      </div>
+                      <h2 className="text-xl sm:text-2xl font-black uppercase tracking-wider text-white mb-2">
+                        Player Access Currently Closed
+                      </h2>
+                      <p className="text-slate-300 text-sm leading-relaxed mb-6 max-w-md mx-auto">
+                        Your coaching staff has temporarily closed player access to team statistics. Check back later or contact your coach.
+                      </p>
+                      <div className="inline-flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-800/90 py-2 px-4 rounded-xl border border-slate-700">
+                        <span>Account:</span>
+                        <span className="text-amber-400 font-bold">{user?.email || "Google Account"}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Player Confidential View Banner & Hold-to-Reveal Control */}
+                  {isPlayerRole && isPlayerAccessAllowed && (
+                    <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-2 border-amber-500/40 rounded-2xl p-4 mb-4 text-white shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 select-none">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30 flex items-center justify-center shrink-0 shadow-inner">
+                          <Shield size={20} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-xs uppercase tracking-wider text-amber-300">
+                              Player View-Only Mode
+                            </span>
+                            <span className="text-[10px] bg-red-950/90 text-red-300 px-2.5 py-0.5 rounded-full font-bold border border-red-800 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                              Screenshot Shield Active
+                            </span>
+                            <span className="text-[10px] bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full font-mono border border-slate-700">
+                              {user?.email || "Google Account"}
+                            </span>
+                          </div>
+                          <p className="text-slate-300 text-xs mt-0.5 leading-relaxed">
+                            Press & hold any player row or use the button to reveal numbers. Taking screenshots or screen recordings produces a solid black screen and is audited to your coach.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                        <button
+                          type="button"
+                          onMouseDown={() => setIsFullTableRevealed(true)}
+                          onMouseUp={() => setIsFullTableRevealed(false)}
+                          onTouchStart={() => setIsFullTableRevealed(true)}
+                          onTouchEnd={() => setIsFullTableRevealed(false)}
+                          className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg transition-all select-none cursor-pointer"
+                        >
+                          <Eye size={16} />
+                          <span>Hold to Reveal All</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Coach Player Access Control Bar */}
+                  {!isPlayerRole && (
+                    <div className="bg-slate-900/90 border border-slate-700/80 rounded-2xl p-4 mb-4 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`h-10 w-10 rounded-xl ${
+                            isPlayerAccessAllowed
+                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                              : "bg-red-500/20 text-red-400 border-red-500/30"
+                          } border flex items-center justify-center shrink-0`}
+                        >
+                          {isPlayerAccessAllowed ? <Unlock size={20} /> : <Lock size={20} />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-xs uppercase tracking-wider text-white">
+                              Player Access Control
+                            </span>
+                            <span
+                              className={`text-[10px] ${
+                                isPlayerAccessAllowed
+                                  ? "bg-emerald-950 text-emerald-300 border-emerald-800"
+                                  : "bg-red-950 text-red-300 border-red-800"
+                              } px-2.5 py-0.5 rounded-full font-black border`}
+                            >
+                              {isPlayerAccessAllowed ? "AVAILABLE TO PLAYERS" : "ACCESS CLOSED"}
+                            </span>
+                            <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-bold border border-slate-700">
+                              Anti-Screenshot Always Active
+                            </span>
+                          </div>
+                          <p className="text-slate-400 text-xs mt-0.5">
+                            {isPlayerAccessAllowed
+                              ? "Players with the team code can log in and view stats on personal devices (with screenshot prevention)."
+                              : "Players are locked out. Stats are hidden from all player accounts until you re-enable access."}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                        <button
+                          type="button"
+                          onClick={togglePlayerAccess}
+                          className={`px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md active:scale-95 ${
+                            isPlayerAccessAllowed
+                              ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20"
+                              : "bg-red-600 hover:bg-red-500 text-white shadow-red-500/20"
+                          }`}
+                        >
+                          {isPlayerAccessAllowed ? (
+                            <>
+                              <Unlock size={15} />
+                              <span>Available to Players: ON</span>
+                            </>
+                          ) : (
+                            <>
+                              <Lock size={15} />
+                              <span>Available to Players: OFF</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {(!isPlayerRole || isPlayerAccessAllowed) && (
+                    <div className={`bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative ${isPlayerRole ? "select-none" : ""}`}>
                     {/* Scroll indicator for mobile */}
                     <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
 
@@ -13104,7 +13542,13 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {/* TOP STICKY TEAM TOTALS ROW (WHOLE TEAM) */}
-                        <tr className="bg-gradient-to-r from-blue-950 via-[#002B7A] to-blue-950 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-blue-400">
+                        <tr
+                          onMouseDown={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
+                          onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                          onTouchStart={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
+                          onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                          className={`bg-gradient-to-r from-blue-950 via-[#002B7A] to-blue-950 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-blue-400 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                        >
                           <td
                             onClick={() =>
                               setStatBreakdownModal({
@@ -13141,7 +13585,7 @@ export default function App() {
                                 titleContext: "Team Passing Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/40 cursor-pointer hover:bg-blue-800/50 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/40 cursor-pointer hover:bg-blue-800/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Passing breakdown (3/2/1/0 scores)"
                           >
                             <span className="text-sm sm:text-base text-amber-300">
@@ -13161,7 +13605,7 @@ export default function App() {
                                 titleContext: "Team Dig Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Dig breakdown"
                           >
                             <span className="text-blue-300 font-black text-sm">
@@ -13182,7 +13626,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
                             <span className="font-black text-white">
@@ -13214,7 +13658,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
                             {teamKillPct}
@@ -13229,7 +13673,7 @@ export default function App() {
                                 titleContext: "Team Block Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Block breakdown"
                           >
                             <span className="font-black text-white">
@@ -13261,7 +13705,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors"
+                            className={`p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Serve breakdown"
                           >
                             <span className="font-black text-white">
@@ -13286,7 +13730,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Serve breakdown"
                           >
                             <span
@@ -13307,7 +13751,13 @@ export default function App() {
 
                         {/* TOP STICKY SHOWN PLAYERS ROW (IF PLAYERS HIDDEN) */}
                         {hasHiddenPlayers && (
-                          <tr className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-indigo-400">
+                          <tr
+                            onMouseDown={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
+                            onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                            onTouchStart={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
+                            onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                            className={`bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-indigo-400 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                          >
                             <td
                               onClick={() =>
                                 setStatBreakdownModal({
@@ -13344,7 +13794,7 @@ export default function App() {
                                   titleContext: "Shown Players Passing Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/40 cursor-pointer hover:bg-indigo-800/50 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/40 cursor-pointer hover:bg-indigo-800/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Passing breakdown"
                             >
                               <span className="text-sm sm:text-base text-indigo-300">
@@ -13364,7 +13814,7 @@ export default function App() {
                                   titleContext: "Shown Players Dig Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Dig breakdown"
                             >
                               <span className="text-indigo-300 font-black text-sm">
@@ -13385,7 +13835,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
                               <span className="font-black text-white">
@@ -13417,7 +13867,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
                               {shownKillPct}
@@ -13432,7 +13882,7 @@ export default function App() {
                                   titleContext: "Shown Players Block Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Block breakdown"
                             >
                               <span className="font-black text-white">
@@ -13464,7 +13914,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors"
+                              className={`p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span className="font-black text-white">
@@ -13489,7 +13939,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span
@@ -13521,6 +13971,7 @@ export default function App() {
                           </tr>
                         ) : (
                           visibleUccPlayers.map((p) => {
+                            const isConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== p.id;
                             const passAvg =
                               p.passCount > 0
                                 ? (p.passSum / p.passCount).toFixed(2)
@@ -13537,7 +13988,12 @@ export default function App() {
                             return (
                               <tr
                                 key={p.id}
-                                className="hover:bg-blue-50/30 text-[10px] sm:text-xs transition-colors group"
+                                onMouseDown={() => isPlayerRole && setRevealedPlayerId(p.id)}
+                                onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                                touch-action="manipulation"
+                                onTouchStart={() => isPlayerRole && setRevealedPlayerId(p.id)}
+                                onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                                className={`hover:bg-blue-50/30 text-[10px] sm:text-xs transition-colors group ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
                               >
                                 <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400">
                                   <div className="flex items-center justify-between gap-1.5 sm:gap-2">
@@ -13582,7 +14038,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors"
+                                  className={`p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Passing breakdown (3/2/1/0 scores)`}
                                 >
                                   {passAvg}{" "}
@@ -13600,7 +14056,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50 cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50 cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Dig breakdown`}
                                 >
                                   <span className="text-blue-600 font-black text-sm">
@@ -13623,7 +14079,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Attack breakdown (Front/Back, Net, Out, Stuffed)`}
                                 >
                                   <span className="font-bold text-slate-600">
@@ -13659,7 +14115,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30 cursor-pointer hover:bg-green-100/50 transition-colors"
+                                  className={`p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30 cursor-pointer hover:bg-green-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Attack breakdown`}
                                 >
                                   {killPct}
@@ -13674,7 +14130,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Block breakdown`}
                                 >
                                   <span className="font-bold">{blkTot}</span>(
@@ -13696,7 +14152,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Block breakdown`}
                                 >
                                   <div className="flex flex-col">
@@ -13732,7 +14188,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Serve breakdown (Net, Wide, Long, Foot Fault)`}
                                 >
                                   <span className="font-bold text-slate-600">
@@ -13761,7 +14217,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors"
+                                  className={`p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Serve breakdown`}
                                 >
                                   <span
@@ -13788,7 +14244,13 @@ export default function App() {
                       <tfoot className="border-t-2 border-[#0033A0] shadow-md">
                         {/* SHOWN PLAYERS ROW (IF PLAYERS ARE HIDDEN) */}
                         {hasHiddenPlayers && (
-                          <tr className="bg-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b border-indigo-500/30">
+                          <tr
+                            onMouseDown={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
+                            onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                            onTouchStart={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
+                            onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                            className={`bg-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b border-indigo-500/30 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                          >
                             <td className="p-2.5 sm:p-3 sticky left-0 bg-slate-900 text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-indigo-400">
                               <div className="flex items-center space-x-1.5 sm:space-x-2">
                                 <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
@@ -13814,7 +14276,7 @@ export default function App() {
                                   titleContext: "Shown Players Passing Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/30 cursor-pointer hover:bg-indigo-800/40 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/30 cursor-pointer hover:bg-indigo-800/40 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Passing breakdown"
                             >
                               <span className="text-sm sm:text-base text-indigo-300">
@@ -13834,7 +14296,7 @@ export default function App() {
                                   titleContext: "Shown Players Dig Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Dig breakdown"
                             >
                               <span className="text-indigo-300 font-black text-sm">
@@ -13855,7 +14317,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
                               <span className="font-black text-white">
@@ -13887,7 +14349,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
                               {shownKillPct}
@@ -13902,7 +14364,7 @@ export default function App() {
                                   titleContext: "Shown Players Block Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Block breakdown"
                             >
                               <span className="font-black text-white">
@@ -13934,7 +14396,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span className="font-black text-white">
@@ -13959,7 +14421,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span
@@ -13980,7 +14442,13 @@ export default function App() {
                         )}
 
                         {/* WHOLE TEAM TOTALS ROW */}
-                        <tr className="bg-[#001f5c] text-white font-bold text-[10px] sm:text-xs tracking-wider">
+                        <tr
+                          onMouseDown={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
+                          onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                          onTouchStart={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
+                          onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                          className={`bg-[#001f5c] text-white font-bold text-[10px] sm:text-xs tracking-wider ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                        >
                           <td className="p-2.5 sm:p-3 sticky left-0 bg-[#001f5c] text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-blue-400">
                             <div className="flex items-center space-x-1.5 sm:space-x-2">
                               <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-amber-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
@@ -14007,7 +14475,7 @@ export default function App() {
                                 titleContext: "Team Passing Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Passing breakdown"
                           >
                             <span className="text-sm sm:text-base text-amber-300">
@@ -14027,7 +14495,7 @@ export default function App() {
                                 titleContext: "Team Dig Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Dig breakdown"
                           >
                             <span className="text-blue-300 font-black text-sm">
@@ -14048,7 +14516,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
                             <span className="font-black text-white">
@@ -14080,7 +14548,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
                             {teamKillPct}
@@ -14095,7 +14563,7 @@ export default function App() {
                                 titleContext: "Team Block Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Block breakdown"
                           >
                             <span className="font-black text-white">
@@ -14127,7 +14595,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Serve breakdown"
                           >
                             <span className="font-black text-white">
@@ -14152,7 +14620,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Serve breakdown"
                           >
                             <span
@@ -14174,14 +14642,17 @@ export default function App() {
                     </table>
                   </div>
                 </div>
+              )}
               </div>
             );
             })()}
 
-            <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
-              <Users className="mr-2 text-slate-500" size={18} /> Opponents
-            </h2>
-            <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-4xl mb-8 relative">
+            {(!isPlayerRole || isPlayerAccessAllowed) && (
+              <>
+                <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
+                  <Users className="mr-2 text-slate-500" size={18} /> Opponents
+                </h2>
+                <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-4xl mb-8 relative">
               <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[700px]">
@@ -14419,6 +14890,8 @@ export default function App() {
                 </table>
               </div>
             </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -14693,6 +15166,7 @@ export default function App() {
             }
           }}
         />
+        {renderPlayerAccessModal()}
         {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
