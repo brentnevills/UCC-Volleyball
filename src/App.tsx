@@ -4958,6 +4958,41 @@ export default function App() {
             </div>
           )}
 
+          {/* Home Screen Shortcut & App Icon Preview */}
+          <div className="bg-gradient-to-r from-slate-800/90 to-[#001b5e]/40 border border-blue-500/30 rounded-2xl p-4 mb-4 flex items-center gap-4 shadow-lg">
+            <div className="relative shrink-0">
+              <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-[1.25rem] bg-[#001b5e] border-2 border-white/30 p-2.5 flex items-center justify-center shadow-xl overflow-hidden ring-2 ring-blue-500/40">
+                <img
+                  src={APP_LOGO_SRC}
+                  alt="UCC Lancers App Icon"
+                  className="h-full w-full object-contain filter drop-shadow-md"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = "true";
+                      target.src = FALLBACK_LOGO_SRC;
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-black text-white text-base tracking-wide">UCC Lancers</span>
+                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[9px] font-black uppercase px-2 py-0.5 rounded-full">
+                  Home Screen Icon
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                This official logo will appear as your shortcut on Apple (iOS) and Android home screens.
+              </p>
+              <div className="text-[11px] text-emerald-400 font-semibold mt-1 flex items-center gap-1">
+                <CheckCircle2 size={12} className="shrink-0" />
+                <span>Offline support, fast launch, and full-screen layout</span>
+              </div>
+            </div>
+          </div>
+
           {/* Platform Selector Tabs */}
           <div className="flex bg-slate-800/80 p-1 rounded-xl mb-4 border border-slate-700/60">
             <button
@@ -4968,7 +5003,7 @@ export default function App() {
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              <Smartphone size={14} /> iPhone / iPad
+              <Smartphone size={14} /> Apple (iPhone / iPad)
             </button>
             <button
               onClick={() => setInstallModalTab("android")}
@@ -5001,9 +5036,9 @@ export default function App() {
                     1
                   </div>
                   <div>
-                    <span className="font-bold text-white">Open in Safari</span>
+                    <span className="font-bold text-white">Open in Apple Safari</span>
                     <p className="text-xs text-slate-400">
-                      Make sure you are browsing this app in Apple Safari on your iPhone or iPad.
+                      Open this web app in Apple Safari on your iPhone or iPad.
                     </p>
                   </div>
                 </div>
@@ -5025,7 +5060,18 @@ export default function App() {
                   <div>
                     <span className="font-bold text-white">Select "Add to Home Screen"</span>
                     <p className="text-xs text-slate-400">
-                      Scroll down the list, tap <span className="inline-flex items-center text-white font-bold"><PlusCircle size={12} className="mx-1 inline" /> Add to Home Screen</span>, then tap <strong>Add</strong>.
+                      Scroll down the share sheet and tap <span className="inline-flex items-center text-white font-bold"><PlusCircle size={12} className="mx-1 inline text-blue-400" /> Add to Home Screen</span>.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-blue-500/20 text-blue-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    4
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Tap "Add"</span>
+                    <p className="text-xs text-slate-400">
+                      Confirm by tapping <strong>Add</strong> in the top-right corner. The UCC Lancers app shortcut with the official logo will appear right on your home screen!
                     </p>
                   </div>
                 </div>
@@ -5039,7 +5085,7 @@ export default function App() {
                     1
                   </div>
                   <div>
-                    <span className="font-bold text-white">Open in Chrome</span>
+                    <span className="font-bold text-white">Open in Google Chrome</span>
                     <p className="text-xs text-slate-400">
                       Open this app in Google Chrome on your Android phone or tablet.
                     </p>
@@ -5050,7 +5096,7 @@ export default function App() {
                     2
                   </div>
                   <div>
-                    <span className="font-bold text-white">Tap 3 Dots Menu (⋮)</span>
+                    <span className="font-bold text-white">Tap the 3 Dots Menu (⋮)</span>
                     <p className="text-xs text-slate-400">
                       Tap the 3 dots in the top-right corner of Google Chrome.
                     </p>
@@ -5063,7 +5109,7 @@ export default function App() {
                   <div>
                     <span className="font-bold text-white">Tap "Install app" or "Add to Home screen"</span>
                     <p className="text-xs text-slate-400">
-                      Tap <strong>Install</strong> to add the Lancer Volleyball app directly to your home screen!
+                      Tap <strong>Install app</strong> (or <em>Add to Home screen</em>), then tap <strong>Install</strong> to add the UCC Lancers app directly to your device with the official logo!
                     </p>
                   </div>
                 </div>
@@ -5506,15 +5552,6 @@ export default function App() {
                 )}
               </div>
             )}
-            <div className="mt-4 flex flex-col gap-2 w-full max-w-sm mx-auto">
-              <button
-                onClick={handleInstallApp}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold uppercase tracking-widest px-4 py-3 rounded-full border border-indigo-400/50 shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                <Download size={16} />
-                {isAppInstalled ? "App Installed (Guide)" : "Download App"}
-              </button>
-            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
@@ -6875,15 +6912,6 @@ export default function App() {
                 <Shield size={14} className="text-blue-600" />
                 <span className="hidden sm:inline">Opponents</span>
                 <span className="sm:hidden">Opp</span>
-              </button>
-              <button
-                onClick={() => setShowStatCorrectionModal(true)}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-indigo-50 text-indigo-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-indigo-100 transition-colors flex items-center gap-1.5 border border-indigo-200 shadow-sm"
-                title="Review & Correct Stats"
-              >
-                <Edit3 size={14} className="text-indigo-600" />
-                <span className="hidden sm:inline">Data Correction</span>
-                <span className="sm:hidden">Correct</span>
               </button>
               <div
                 className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
@@ -12679,24 +12707,6 @@ export default function App() {
                     <span>Adjust Score</span>
                   </button>
                 )}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const activeMatchNav = statsPath.find((p) => p.level === "match");
-                    const activeSetNav = statsPath.find((p) => p.level === "set");
-                    setStatCorrectionConfig({
-                      isOpen: true,
-                      initialMatchId: activeMatchNav?.id || activeMatch?.id || null,
-                      initialSetId: activeSetNav?.id || activeSetId || null,
-                    });
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap"
-                  title={teamInfo.role === "player" ? "View stat log" : "Edit, correct, or add stats"}
-                >
-                  <Edit3 size={13} />
-                  <span>{teamInfo.role === "player" ? "View Stat Log" : "Edit Stats"}</span>
-                </button>
               </div>
             </div>
 
