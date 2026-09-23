@@ -640,6 +640,8 @@ export default function App() {
   const [selectedAceReceivers, setSelectedAceReceivers] = useState([]);
   const [oppServeReceivePrompt, setOppServeReceivePrompt] = useState<{
     passerId: string | null;
+    serverId?: string | null;
+    selectingAce?: boolean;
   } | null>(null);
   const [betweenSetsModal, setBetweenSetsModal] = useState<{
     nextSetNum: number;
@@ -1409,11 +1411,44 @@ export default function App() {
       );
   };
 
+  const sortPlayersByNumberThenAlpha = useCallback(
+    (
+      a: { number?: string | number; name?: string; id?: string } | null | undefined,
+      b: { number?: string | number; name?: string; id?: string } | null | undefined,
+    ) => {
+      if (!a && !b) return 0;
+      if (!a) return 1;
+      if (!b) return -1;
+
+      const rawA = a.number != null ? String(a.number).trim() : "";
+      const rawB = b.number != null ? String(b.number).trim() : "";
+      const numA = parseInt(rawA.replace(/\D/g, ""), 10);
+      const numB = parseInt(rawB.replace(/\D/g, ""), 10);
+      const hasNumA = !isNaN(numA) && rawA !== "";
+      const hasNumB = !isNaN(numB) && rawB !== "";
+
+      if (hasNumA && hasNumB) {
+        if (numA !== numB) return numA - numB;
+        return (a.name || a.id || "").localeCompare(
+          b.name || b.id || "",
+          undefined,
+          { sensitivity: "base" },
+        );
+      }
+      if (hasNumA && !hasNumB) return -1;
+      if (!hasNumA && hasNumB) return 1;
+      return (a.name || a.id || "").localeCompare(
+        b.name || b.id || "",
+        undefined,
+        { sensitivity: "base" },
+      );
+    },
+    [],
+  );
+
   const sortedRoster = useMemo(() => {
-    return [...(appData.roster || [])].sort(
-      (a, b) => parseInt(a.number || 0) - parseInt(b.number || 0),
-    );
-  }, [appData.roster]);
+    return [...(appData.roster || [])].sort(sortPlayersByNumberThenAlpha);
+  }, [appData.roster, sortPlayersByNumberThenAlpha]);
 
   const updateSetState = async (updates) => {
     if (isFirebaseAvailable && user && activeSetId) {
@@ -4576,9 +4611,11 @@ export default function App() {
     doc.save(filename);
   };
 
-  const benchPlayers = appData.roster.filter(
-    (p) => !lineup.includes(p.id) && !p.isRetired,
-  );
+  const benchPlayers = useMemo(() => {
+    return (appData.roster || [])
+      .filter((p) => !lineup.includes(p.id) && !p.isRetired)
+      .sort(sortPlayersByNumberThenAlpha);
+  }, [appData.roster, lineup, sortPlayersByNumberThenAlpha]);
   const selectedPlayerObj = appData.roster.find(
     (r) => r.id === selectedPlayerId,
   );
@@ -7472,22 +7509,42 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(!viewOppStats ? lineup : oppLineup)
-                    .filter((id): id is string => Boolean(id))
-                    .map((id, index) => {
+                  {(() => {
+                    const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
+                      (id): id is string => Boolean(id),
+                    );
+                    const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
+                      if (!viewOppStats) {
+                        const pA = appData.roster.find((r) => r.id === idA);
+                        const pB = appData.roster.find((r) => r.id === idB);
+                        return sortPlayersByNumberThenAlpha(
+                          pA || { name: idA, id: idA },
+                          pB || { name: idB, id: idB },
+                        );
+                      } else {
+                        return sortPlayersByNumberThenAlpha(
+                          { number: idA, name: idA, id: idA },
+                          { number: idB, name: idB, id: idB },
+                        );
+                      }
+                    });
+
+                    return sortedCourtPlayers.map((id, index) => {
                       const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
                       const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
                       // Back-row ("background") players in standard rotation are indices 0, 4, 5 (Positions 1, 5, 6)
                       const isBackRow = [0, 4, 5].includes(posIndex);
                       const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
-                      const isServer = !viewOppStats && posIndex === 0 && serving === "ucc";
+                      const isServer = !viewOppStats
+                        ? posIndex === 0 && serving === "ucc"
+                        : posIndex === 0 && serving === "opp";
 
                       const pName = !viewOppStats
                         ? appData.roster.find((r) => r.id === id)?.name || id
                         : id;
                       const pNum = !viewOppStats
                         ? appData.roster.find((r) => r.id === id)?.number || "-"
-                        : "";
+                        : id.replace(/\D/g, "") || id;
                       return (
                         <tr
                           key={index}
@@ -7656,14 +7713,21 @@ export default function App() {
                           {trackedCategories.Serve && (
                             <td className="p-1.5">
                               <button
-                                onClick={() =>
-                                  setStatPrompt({
-                                    playerId: id,
-                                    type: "Serve",
-                                    isOpp: viewOppStats,
-                                  })
-                                }
-                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100"
+                                onClick={() => {
+                                  if (viewOppStats) {
+                                    setOppServeReceivePrompt({
+                                      passerId: null,
+                                      serverId: id,
+                                    });
+                                  } else {
+                                    setStatPrompt({
+                                      playerId: id,
+                                      type: "Serve",
+                                      isOpp: false,
+                                    });
+                                  }
+                                }}
+                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100 cursor-pointer"
                               >
                                 Serve
                               </button>
@@ -7719,7 +7783,8 @@ export default function App() {
                           )}
                         </tr>
                       );
-                    })}
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -7743,12 +7808,27 @@ export default function App() {
             </button>
             {rallyPhase === "serve" && !servePromptVisible ? (
               <button
-                onClick={() => setServePromptVisible(true)}
-                className="flex-1 bg-gradient-to-b from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30 transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none"
+                onClick={() => {
+                  if (serving === "opp") {
+                    setOppServeReceivePrompt({
+                      passerId: null,
+                      serverId: oppLineup[0],
+                    });
+                  } else {
+                    setServePromptVisible(true);
+                  }
+                }}
+                className={`flex-1 bg-gradient-to-b ${
+                  serving === "opp"
+                    ? "from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30"
+                    : "from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30"
+                } text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer`}
               >
-                <span>SERVE</span>
+                <span>{serving === "opp" ? "OPP SERVE" : "SERVE"}</span>
                 <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">
-                  TAP WHEN SERVED
+                  {serving === "opp"
+                    ? "TAP TO RECORD PASS / OUTCOME"
+                    : "TAP WHEN SERVED"}
                 </span>
               </button>
             ) : (
@@ -8799,10 +8879,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  if (serving !== "opp") {
-                    setServing("opp");
-                    updateSetState({ serving: "opp" });
-                  }
+                  setServing("opp");
+                  updateSetState({ serving: "opp" });
+                  setServePromptVisible(false);
+                  setOppServeReceivePrompt({
+                    passerId: null,
+                    serverId: oppLineup[0],
+                  });
                 }}
                 className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
                   serving === "opp"
@@ -9344,9 +9427,9 @@ export default function App() {
           </div>
         )}
 
-        {/* OPPONENT SERVE RECEIVE PROMPT (WHO PASSED & RATING) */}
+        {/* OPPONENT SERVE RECEIVE PROMPT (WHO PASSED & RATING / ACE / ERROR) */}
         {oppServeReceivePrompt && !setWinnerModal && (
-          <div className="fixed inset-0 bg-slate-900/80 z-[110] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="fixed inset-0 bg-slate-900/85 z-[110] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
             <div className="bg-white rounded-[2rem] p-4 sm:p-6 max-w-md w-full shadow-2xl flex flex-col items-center border border-slate-200">
               {/* Always Visible Score Banner */}
               <div className="w-full bg-slate-900 text-white rounded-2xl p-3 mb-3 flex items-center justify-between shadow-md">
@@ -9364,67 +9447,171 @@ export default function App() {
                 </div>
               </div>
 
-              <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-widest text-center">
-                Opponent Serve
-              </h2>
+              {/* Title and Server Indicator */}
+              <div className="w-full flex items-center justify-between mb-1">
+                <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-widest">
+                  Opponent Serve
+                </h2>
+                <span className="text-[10px] font-black uppercase bg-purple-100 text-purple-800 px-2.5 py-1 rounded-full border border-purple-200 shadow-xs">
+                  #{oppServeReceivePrompt.serverId || oppLineup[0] || "?"} Serving
+                </span>
+              </div>
+
               <p className="text-xs sm:text-sm font-bold text-slate-500 mb-3 text-center">
-                {oppServeReceivePrompt.passerId
+                {oppServeReceivePrompt.selectingAce
+                  ? "Who was aced? Tap player to log reception error (0 pass):"
+                  : oppServeReceivePrompt.passerId
                   ? "Record pass rating for this serve:"
                   : "Who passed the ball, or did the serve end?"}
               </p>
 
-              {!oppServeReceivePrompt.passerId ? (
-                <div className="w-full space-y-2.5">
-                  {/* Quick outcome buttons alongside who passed screen */}
-                  <div className="grid grid-cols-2 gap-2">
+              {oppServeReceivePrompt.selectingAce ? (
+                /* WHO GOT ACED SELECTION */
+                <div className="w-full space-y-3">
+                  <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-black">
+                        <CheckCircle2 size={18} />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black uppercase text-emerald-900 tracking-wider">
+                          Opponent Ace (+1 Pt Opp)
+                        </div>
+                        <div className="text-[10px] font-bold text-emerald-700">
+                          Select receiver who got aced:
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const uccCandidates = getSevenReceivers("ucc");
+                    const sortedReceivers = [...uccCandidates].sort(sortPlayersByNumberThenAlpha);
+
+                    return (
+                      <div className="space-y-2">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-between px-1">
+                          <span>All Passers (Sorted by Number)</span>
+                          <span className="text-[9px] text-slate-500 font-bold">Tap who got aced</span>
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                          {sortedReceivers.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                                logStat(item.id, "Pass", "Rating", 0, false);
+                                logStat(sId, "Serve", "Ace", 1, true);
+                                handlePoint("opp", true);
+                                setOppServeReceivePrompt(null);
+                              }}
+                              className={`p-2.5 rounded-xl border-2 flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/50 ${
+                                item.isLibero
+                                  ? "bg-amber-50/80 border-amber-300 text-amber-900"
+                                  : "bg-slate-50 border-slate-200 text-slate-800"
+                              }`}
+                            >
+                              <span className="text-xl sm:text-2xl font-black leading-tight text-emerald-700">
+                                #{item.number}
+                              </span>
+                              <span className="text-[11px] font-bold truncate max-w-full">
+                                {item.name}
+                              </span>
+                              <span className="text-[8px] font-black uppercase mt-0.5 text-slate-400">
+                                {item.isLibero ? "Libero" : item.posLabel}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="pt-2 flex flex-col sm:flex-row gap-2">
                     <button
                       type="button"
                       onClick={() => {
+                        const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                        logStat(sId, "Serve", "Ace", 1, true);
+                        handlePoint("opp", true);
+                        setOppServeReceivePrompt(null);
+                      }}
+                      className="flex-1 py-2.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-xl font-black text-xs uppercase tracking-wider transition-colors cursor-pointer text-center"
+                    >
+                      Unassigned Ace (Nobody Touched)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOppServeReceivePrompt((prev) =>
+                          prev ? { ...prev, selectingAce: false } : null,
+                        )
+                      }
+                      className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer text-center"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : !oppServeReceivePrompt.passerId ? (
+                <div className="w-full space-y-2.5">
+                  {/* Quick outcome buttons: ERROR (RED) and ACE (GREEN) */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Error button: RED */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                        logStat(sId, "Serve", "Miss", 1, true);
                         handlePoint("ucc");
                         setOppServeReceivePrompt(null);
                       }}
-                      className="py-2.5 px-2 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="py-3 px-2.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-red-500/40"
                       title="Opponent Missed Serve (Net/Out) -> Point for Lancers"
                     >
-                      <CheckCircle2 size={16} />
-                      <span>Opp Error (+Pt)</span>
+                      <XCircle size={18} />
+                      <span>Error (+Pt)</span>
                     </button>
 
+                    {/* Ace button: GREEN */}
                     <button
                       type="button"
                       onClick={() => {
-                        handlePoint("opp");
-                        setOppServeReceivePrompt(null);
+                        setOppServeReceivePrompt((prev) => ({
+                          ...(prev || { passerId: null }),
+                          selectingAce: true,
+                        }));
                       }}
-                      className="py-2.5 px-2 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                      title="Opponent Aced UCC -> Point for Opponent"
+                      className="py-3 px-2.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-green-500/40"
+                      title="Opponent Aced UCC -> Choose who got aced -> Point for Opponent"
                     >
-                      <XCircle size={16} />
-                      <span>Opp Ace (+Pt)</span>
+                      <CheckCircle2 size={18} />
+                      <span>Ace (+Pt)</span>
                     </button>
                   </div>
 
                   {(() => {
                     const uccCandidates = getSevenReceivers("ucc");
-                    const sortedReceivers = [...uccCandidates].sort((a, b) => {
-                      const nA = parseInt((a.number || "").replace(/\D/g, ""), 10);
-                      const nB = parseInt((b.number || "").replace(/\D/g, ""), 10);
-                      if (!isNaN(nA) && !isNaN(nB)) return nA - nB;
-                      return (a.number || "").localeCompare(b.number || "");
-                    });
+                    const sortedReceivers = [...uccCandidates].sort(sortPlayersByNumberThenAlpha);
 
                     return (
                       <div className="space-y-2 pt-1">
                         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-between px-1">
-                          <span>Receivers (Sorted by Number)</span>
+                          <span>Passers (Sorted by Number)</span>
                           <span className="text-[9px] text-slate-500 font-bold">7 Active Players</span>
                         </div>
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                           {sortedReceivers.map((item) => (
                             <button
                               key={item.id}
+                              type="button"
                               onClick={() =>
-                                setOppServeReceivePrompt({ passerId: item.id })
+                                setOppServeReceivePrompt((prev) => ({
+                                  ...(prev || {}),
+                                  passerId: item.id,
+                                  selectingAce: false,
+                                }))
                               }
                               className={`p-2.5 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer ${
                                 item.isLibero
@@ -9450,6 +9637,7 @@ export default function App() {
 
                   <div className="pt-2 flex gap-2">
                     <button
+                      type="button"
                       onClick={() => {
                         setOppServeReceivePrompt(null);
                         changeRallyPhase("play");
@@ -9481,10 +9669,15 @@ export default function App() {
                       </span>
                     </div>
                     <button
+                      type="button"
                       onClick={() =>
-                        setOppServeReceivePrompt({ passerId: null })
+                        setOppServeReceivePrompt((prev) => ({
+                          ...(prev || {}),
+                          passerId: null,
+                          selectingAce: false,
+                        }))
                       }
-                      className="text-xs text-blue-600 font-bold hover:underline"
+                      className="text-xs text-blue-600 font-bold hover:underline cursor-pointer"
                     >
                       Change Passer
                     </button>
@@ -9495,34 +9688,53 @@ export default function App() {
                       { val: 3, label: "Perfect (3)", desc: "All options", color: "from-green-500 to-green-600" },
                       { val: 2, label: "Good (2)", desc: "Medium", color: "from-teal-500 to-teal-600" },
                       { val: 1, label: "Poor (1)", desc: "Out of sys", color: "from-amber-500 to-amber-600" },
-                      { val: 0, label: "Error (0)", desc: "Overpass", color: "from-red-500 to-red-600" },
-                    ].map(({ val, desc, color }) => (
+                      { val: 0, label: "Aced (0)", desc: "Aced / Err", color: "from-red-500 to-red-600" },
+                    ].map(({ val, label, desc, color }) => (
                       <button
                         key={val}
+                        type="button"
                         onClick={() => {
-                          recordStatAndCheckPoint(
-                            oppServeReceivePrompt.passerId,
-                            "Pass",
-                            "Rating",
-                            val,
-                          );
-                          setOppServeReceivePrompt(null);
+                          if (val === 0) {
+                            // Recording rating 0 also logs that this receiver got aced and awards point to opponent
+                            const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                            logStat(
+                              oppServeReceivePrompt.passerId,
+                              "Pass",
+                              "Rating",
+                              0,
+                              false,
+                            );
+                            logStat(sId, "Serve", "Ace", 1, true);
+                            handlePoint("opp", true);
+                            setOppServeReceivePrompt(null);
+                          } else {
+                            recordStatAndCheckPoint(
+                              oppServeReceivePrompt.passerId,
+                              "Pass",
+                              "Rating",
+                              val,
+                            );
+                            setOppServeReceivePrompt(null);
+                          }
                         }}
-                        className={`bg-gradient-to-b ${color} text-white p-3 rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all`}
+                        className={`bg-gradient-to-b ${color} text-white p-3 rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all cursor-pointer`}
                       >
                         <span className="text-2xl sm:text-3xl leading-none">{val}</span>
-                        <span className="text-[9px] uppercase tracking-wider opacity-90 mt-1">{desc}</span>
+                        <span className="text-[9px] uppercase tracking-wider opacity-90 mt-1 text-center font-bold">
+                          {label}
+                        </span>
                       </button>
                     ))}
                   </div>
 
                   <div className="pt-2 flex gap-2">
                     <button
+                      type="button"
                       onClick={() => {
                         setOppServeReceivePrompt(null);
                         changeRallyPhase("play");
                       }}
-                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
                     >
                       Skip Pass Rating (Play On)
                     </button>
