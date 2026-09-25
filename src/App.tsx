@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Download,
   Users,
@@ -730,13 +730,20 @@ export default function App() {
     myTeams.find((t) => t.id === activeTeam)?.name || customTeamName || "Lancers";
   const activeTeamProfile = myTeams.find((t) => t.id === activeTeam);
 
-  // Coaches Access: Anyone with coach role in team, or coach unlock key, or owner/creator of team
+  // Coaches Access: Anyone with coach role in team, or coach unlock key, or owner/creator of team, or coach email
   const isCoachRole = Boolean(
     activeTeamProfile?.role === "coach" ||
     localStorage.getItem(`ucc_team_role_${activeTeam}`) === "coach" ||
+    localStorage.getItem("ucc_current_role") === "coach" ||
+    localStorage.getItem("ucc_coach_unlocked_global") === "true" ||
     (activeTeam && localStorage.getItem(`ucc_coach_unlocked_${activeTeam}`) === "true") ||
     (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "coach")) ||
-    (appData.createdBy && user && appData.createdBy === user.uid)
+    (user && myTeams.some((t: any) => t.role === "coach")) ||
+    (appData.createdBy && user && appData.createdBy === user.uid) ||
+    (user && user.email && (
+      user.email.toLowerCase() === "brent.nevills@sccdsb.net" ||
+      user.email.toLowerCase().includes("coach")
+    ))
   );
 
   // A user is strictly in player role ONLY if they are NOT a coach and have player indicator
@@ -753,8 +760,8 @@ export default function App() {
     ? "player"
     : activeTeamProfile?.role || "coach";
 
-  // Always keep anti-screenshot protection active globally
-  const isShieldProtectionActive = true;
+  // Anti-screenshot protection is ONLY active for players, NEVER for coaches
+  const isShieldProtectionActive = Boolean(isPlayerRole && !isCoachRole);
   const isPlayerAccessAllowed = (appData as any).playerAccessEnabled !== false;
 
   const [showCoachLoginModal, setShowCoachLoginModal] = useState(false);
@@ -1305,29 +1312,12 @@ export default function App() {
     };
 
     const activateShield = () => {
+      if (!isShieldProtectionActive) return;
       document.documentElement.classList.add("shield-active");
       document.body.classList.add("shield-active");
       setScreenCaptureShieldActive(true);
       setRevealedPlayerId(null);
       setIsFullTableRevealed(false);
-    };
-
-    const handleBlur = () => {
-      activateShield();
-    };
-
-    const handleFocus = () => {
-      // Kept active until user taps "Resume"
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.hidden || document.visibilityState === "hidden") {
-        activateShield();
-      }
-    };
-
-    const handlePageHide = () => {
-      activateShield();
     };
 
     const handleTouchCancel = () => {
@@ -1423,10 +1413,6 @@ export default function App() {
       }
     };
 
-    window.addEventListener("blur", handleBlur, true);
-    window.addEventListener("focus", handleFocus, true);
-    document.addEventListener("visibilitychange", handleVisibilityChange, true);
-    window.addEventListener("pagehide", handlePageHide, true);
     window.addEventListener("touchcancel", handleTouchCancel, true);
     window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("keyup", handleKeyUp, true);
@@ -1453,10 +1439,6 @@ export default function App() {
       document.documentElement.classList.remove("shield-active");
       document.body.classList.remove("player-restricted");
       document.body.classList.remove("shield-active");
-      window.removeEventListener("blur", handleBlur, true);
-      window.removeEventListener("focus", handleFocus, true);
-      document.removeEventListener("visibilitychange", handleVisibilityChange, true);
-      window.removeEventListener("pagehide", handlePageHide, true);
       window.removeEventListener("touchcancel", handleTouchCancel, true);
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("keyup", handleKeyUp, true);
@@ -5494,11 +5476,14 @@ export default function App() {
   };
 
   const renderPlayerSecurity = () => {
+    if (!isShieldProtectionActive) {
+      return renderCoachLoginModal();
+    }
     return (
       <>
         {renderCoachLoginModal()}
         {/* Anti-screenshot & capture shield overlay */}
-        {isShieldProtectionActive && screenCaptureShieldActive && (
+        {screenCaptureShieldActive && (
           <div
             onClick={() => {
               document.documentElement.classList.remove("shield-active");
@@ -5516,18 +5501,34 @@ export default function App() {
             <p className="text-zinc-400 text-xs sm:text-sm max-w-md font-medium leading-relaxed mb-6">
               Screen capture and recording are prohibited. Viewing is restricted to authorized devices.
             </p>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                document.documentElement.classList.remove("shield-active");
-                document.body.classList.remove("shield-active");
-                setScreenCaptureShieldActive(false);
-              }}
-              className="bg-[#e50914] hover:bg-red-600 text-white font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95 cursor-pointer"
-            >
-              Tap to Resume
-            </button>
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  document.documentElement.classList.remove("shield-active");
+                  document.body.classList.remove("shield-active");
+                  setScreenCaptureShieldActive(false);
+                }}
+                className="bg-[#e50914] hover:bg-red-600 text-white font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95 cursor-pointer"
+              >
+                Tap to Resume
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  document.documentElement.classList.remove("shield-active");
+                  document.body.classList.remove("shield-active");
+                  setScreenCaptureShieldActive(false);
+                  setShowCoachLoginModal(true);
+                }}
+                className="bg-amber-500 hover:bg-amber-600 text-black font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95 cursor-pointer flex items-center gap-2"
+              >
+                <Key size={14} />
+                Coach Login / Verify
+              </button>
+            </div>
           </div>
         )}
 

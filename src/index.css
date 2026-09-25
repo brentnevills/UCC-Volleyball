@@ -22,48 +22,7 @@ body.player-restricted canvas {
   -webkit-user-drag: none;
 }
 
-/* Netflix-grade instant blackout (DRM simulation) */
-html.shield-active,
-body.shield-active,
-body.player-restricted.shield-active,
-body.player-restricted:not(:focus-within) {
-  background-color: #000000 !important;
-}
-
-html.shield-active #root,
-body.shield-active #root,
-body.player-restricted.shield-active #root,
-body.player-restricted:not(:focus-within) #root {
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-
-html.shield-active #netflix-drm-shield,
-body.shield-active #netflix-drm-shield,
-body.player-restricted.shield-active #netflix-drm-shield,
-body.player-restricted:not(:focus-within) #netflix-drm-shield {
-  display: flex !important;
-  opacity: 1 !important;
-  visibility: visible !important;
-  background-color: #000000 !important;
-}
-
-@media print {
-  html,
-  body,
-  body #root,
-  #netflix-drm-shield,
-  .player-restricted-view {
-    display: none !important;
-    visibility: hidden !important;
-    height: 0 !important;
-    width: 0 !important;
-    overflow: hidden !important;
-    background: #000000 !important;
-  }
-}
-
+/* Player privacy styling */
 .secure-stat-concealed {
   filter: blur(7px);
   user-select: none;
