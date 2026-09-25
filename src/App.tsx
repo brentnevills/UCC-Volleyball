@@ -1089,6 +1089,170 @@ export default function App() {
   const [subnavCategoryFilter, setSubnavCategoryFilter] = useState("all");
   const [expandedOppTeams, setExpandedOppTeams] = useState({});
   const isProcessingPointRef = useRef(false);
+  const lastActiveViewRef = useRef<"game" | "open_practice" | null>(null);
+  const lastActiveMatchRef = useRef<any>(null);
+  const [debugNotice, setDebugNotice] = useState<string | null>(null);
+
+  // Track active game view and session for reliable return navigation
+  useEffect(() => {
+    if (view === "game" || view === "open_practice") {
+      lastActiveViewRef.current = view;
+      if (activeMatch) {
+        lastActiveMatchRef.current = activeMatch;
+        try {
+          sessionStorage.setItem("ucc_last_active_match_id", activeMatch.id);
+        } catch (e) {}
+      }
+    }
+  }, [view, activeMatch]);
+
+  // Robust Return-to-Game Handler that supports games, open practice, and live sessions
+  const returnToActiveGame = useCallback(() => {
+    console.log("[VBALL DEBUG] returnToActiveGame invoked.", {
+      currentView: view,
+      hasActiveMatch: !!activeMatch,
+      activeMatchId: activeMatch?.id,
+      lastActiveView: lastActiveViewRef.current,
+      activeSetId,
+      score,
+      setsWon,
+    });
+
+    // 1. If activeMatch is present in component state
+    if (activeMatch) {
+      if (
+        activeMatch.type === "Practice" &&
+        activeMatch.format === "Open Drill (Grid)"
+      ) {
+        setView("open_practice");
+        return;
+      }
+      setView("game");
+      return;
+    }
+
+    // 2. If activeMatch is null, check for live match in appData.matches
+    const liveMatches = (appData.matches || []).filter((m: any) => m.isLive === true);
+    if (liveMatches.length > 0) {
+      const latestMatch = liveMatches[liveMatches.length - 1];
+      const matchSets = (appData.sets || [])
+        .filter((s: any) => s.matchId === latestMatch.id)
+        .sort((a: any, b: any) => a.setNum - b.setNum);
+      const latestSet = matchSets[matchSets.length - 1];
+
+      setActiveMatch(latestMatch);
+      setActiveSetId(latestSet ? latestSet.id : null);
+      setOpponentName(latestMatch.opponent || "Opponent");
+      setMatchFormat(latestMatch.format || "Best of 5");
+
+      if (appData.opponents?.[latestMatch.opponent]) {
+        const opp = appData.opponents[latestMatch.opponent];
+        setOppLineup(opp.defaultLineup || ["O1", "O2", "O3", "O4", "O5", "O6"]);
+        setOppNotesMem(opp.notes || {});
+        setOppSetterId(opp.setterId || null);
+        setOppLiberoId(opp.liberoId || "");
+      }
+
+      if (latestMatch.type === "Practice" && latestMatch.format === "Open Drill (Grid)") {
+        setView("open_practice");
+      } else {
+        setView("game");
+      }
+      return;
+    }
+
+    // 3. Fallback to lastActiveMatchRef if remembered
+    if (lastActiveMatchRef.current) {
+      setActiveMatch(lastActiveMatchRef.current);
+      if (lastActiveViewRef.current === "open_practice") {
+        setView("open_practice");
+      } else {
+        setView("game");
+      }
+      return;
+    }
+
+    // 4. If no game is running, go to menu
+    console.warn("[VBALL DEBUG] No active or live match session found. Returning to menu.");
+    setView("menu");
+  }, [activeMatch, appData.matches, appData.sets, appData.opponents, view, activeSetId, score, setsWon]);
+
+  // Comprehensive System Diagnostics Tool
+  const runDebugDiagnostics = useCallback(() => {
+    const issues: string[] = [];
+    const liveMatches = (appData.matches || []).filter((m: any) => m.isLive === true);
+    const hasLiveOrActive = !!activeMatch || liveMatches.length > 0;
+
+    const report = {
+      CurrentView: view,
+      ActiveTeam: activeTeam || "None",
+      ActiveMatchId: activeMatch?.id || (liveMatches[0] ? `${liveMatches[0].id} (live in matches)` : "None"),
+      ActiveMatchOpponent: activeMatch?.opponent || (liveMatches[0] ? liveMatches[0].opponent : "None"),
+      ActiveSetId: activeSetId || "None",
+      Score: `${score.ucc} - ${score.opp}`,
+      SetsWon: `${setsWon.ucc} - ${setsWon.opp}`,
+      CurrentSetNum: currentSetNum,
+      Serving: serving,
+      LineupAssigned: lineup ? `${lineup.filter(Boolean).length}/6 players` : "None",
+      LastActiveView: lastActiveViewRef.current || "None",
+      TotalMatches: appData.matches?.length || 0,
+      LiveMatchesCount: liveMatches.length,
+      TotalSets: appData.sets?.length || 0,
+      TotalStatsCount: appData.stats?.length || 0,
+      Role: effectiveRole,
+      FirebaseConnected: isFirebaseAvailable,
+    };
+
+    if (!hasLiveOrActive) {
+      issues.push("No active match in state or live match in matches list.");
+    }
+    if (activeMatch && !activeSetId) {
+      issues.push("Active match is present but activeSetId is null.");
+    }
+    if (view === "game" && lineup.some((p) => p === null)) {
+      issues.push("Court lineup has unassigned positions.");
+    }
+
+    console.group("🏐 [VOLLEYBALL DEBUG & DIAGNOSTICS REPORT]");
+    console.table(report);
+    if (issues.length > 0) {
+      console.warn("⚠️ Detected Session Notices:", issues);
+    } else {
+      console.log("✅ All game and navigation systems healthy and verified.");
+    }
+    console.groupEnd();
+
+    const noticeText = issues.length === 0
+      ? `Debug OK: Game "${activeMatch ? activeMatch.opponent : "Match"}" Set ${currentSetNum} (${score.ucc}-${score.opp}) ready to return.`
+      : `Debug Notice: ${issues.join(" | ")}`;
+
+    setDebugNotice(noticeText);
+    setTimeout(() => setDebugNotice(null), 5000);
+    return { report, issues };
+  }, [view, activeTeam, activeMatch, activeSetId, score, setsWon, currentSetNum, serving, lineup, appData, effectiveRole, isFirebaseAvailable]);
+
+  // Expose global debug interface for console verification
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).__vball_debug = {
+        getState: () => ({
+          view,
+          activeTeam,
+          activeMatch,
+          activeSetId,
+          score,
+          setsWon,
+          currentSetNum,
+          serving,
+          lineup,
+          lastActiveView: lastActiveViewRef.current,
+        }),
+        returnToGame: returnToActiveGame,
+        diagnose: runDebugDiagnostics,
+        setView: (v: string) => setView(v),
+      };
+    }
+  }, [view, activeTeam, activeMatch, activeSetId, score, setsWon, currentSetNum, serving, lineup, returnToActiveGame, runDebugDiagnostics]);
 
   // -------------------------------------------------------------
   // INITIALIZATION (APP ICON & FIREBASE OR LOCAL FALLBACK)
@@ -1116,7 +1280,8 @@ export default function App() {
         clearTimeout(timeout);
         setUser(u);
         setLoadingAuth(false);
-        if (!u && view !== "team_select") {
+        const storedTeam = localStorage.getItem("ucc_vball_active_team");
+        if (!u && !storedTeam) {
           setView("team_select");
         }
       });
@@ -1138,7 +1303,7 @@ export default function App() {
       unsubscribe();
       clearTimeout(timeout);
     };
-  }, [view]);
+  }, []); // Run on initial mount only! Do not tear down on view changes!
 
   useEffect(() => {
     if (!user || !db || !isFirebaseAvailable) {
@@ -3451,6 +3616,11 @@ export default function App() {
 
   const viewStatsWithCurrentMatch = () => {
     if (!activeMatch) return viewStatsFromMenu();
+    lastActiveMatchRef.current = activeMatch;
+    lastActiveViewRef.current =
+      activeMatch.type === "Practice" && activeMatch.format === "Open Drill (Grid)"
+        ? "open_practice"
+        : "game";
     const eventDetails = getEventDetails(activeMatch);
     if (activeMatch.type === "Practice") {
       setStatsPath([
@@ -7570,6 +7740,15 @@ export default function App() {
                   {setsWon.opp}
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="mt-1 px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm transition-transform active:scale-95 cursor-pointer ring-1 ring-amber-300"
+                title="View Live Match Stats"
+              >
+                <Activity size={11} className="shrink-0" />
+                <span>Stats</span>
+              </button>
               {score.ucc === 0 && score.opp === 0 && (
                 <button
                   type="button"
@@ -7673,6 +7852,16 @@ export default function App() {
                 <span className="hidden sm:inline">Opponents</span>
                 <span className="sm:hidden">Opp</span>
               </button>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                title="View Live Match Stats"
+              >
+                <Activity size={14} className="text-slate-950" />
+                <span className="hidden sm:inline">Live Stats</span>
+                <span className="sm:hidden">Stats</span>
+              </button>
               <div
                 className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
                 title="Official Team Substitutions (Libero replacements are free and do not count toward this total)"
@@ -7732,6 +7921,18 @@ export default function App() {
           {showPositioning && (
             <div className="fixed inset-0 z-[150] bg-slate-900/80 backdrop-blur-md flex flex-col justify-center items-center p-4">
               <div className="bg-slate-100 p-4 rounded-[2rem] shadow-2xl relative w-full h-[90vh] max-w-[600px] flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPositioning(false);
+                    viewStatsWithCurrentMatch();
+                  }}
+                  className="absolute top-2 left-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-3 py-1.5 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1 shadow-sm z-10 cursor-pointer"
+                  title="View Live Stats"
+                >
+                  <Activity size={13} />
+                  <span>Stats</span>
+                </button>
                 <button
                   onClick={() => setShowPositioning(false)}
                   className="absolute top-2 right-2 text-slate-500 hover:text-slate-800 shrink-0 p-2 z-10 bg-white rounded-full shadow-sm"
@@ -8305,10 +8506,11 @@ export default function App() {
             )}
             <button
               onClick={viewStatsWithCurrentMatch}
-              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase"
+              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase gap-1.5 shrink-0"
               title="View Live Stats"
             >
               <Activity size={18} />
+              <span className="hidden sm:inline font-black text-xs">STATS</span>
             </button>
             <button
               onClick={() => setShowStatCorrectionModal(true)}
@@ -8359,12 +8561,26 @@ export default function App() {
                   <Activity size={20} className="mr-2" />
                   {statPrompt.type}
                 </div>
-                <button
-                  onClick={() => setStatPrompt(null)}
-                  className="text-white/60 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors"
-                >
-                  <X size={24} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatPrompt(null);
+                      viewStatsWithCurrentMatch();
+                    }}
+                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-lg text-xs uppercase tracking-wider flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                    title="View stats"
+                  >
+                    <Activity size={13} />
+                    <span>Stats</span>
+                  </button>
+                  <button
+                    onClick={() => setStatPrompt(null)}
+                    className="text-white/60 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
               <div className="p-4 bg-slate-50 space-y-4 overflow-y-auto">
                 {/* Always Visible Score Banner */}
@@ -9295,6 +9511,27 @@ export default function App() {
               serving === "ucc" ? "bg-[#001b5e]/90" : "bg-slate-900/90"
             }`}
           >
+            {/* Top Navigation Bar while Waiting for Serve */}
+            <div className="absolute top-4 inset-x-4 sm:inset-x-8 flex items-center justify-between z-10">
+              <button
+                type="button"
+                onClick={() => setServePromptVisible(false)}
+                className="bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 border border-white/20 transition-colors cursor-pointer"
+                title="Return to court view"
+              >
+                <X size={15} />
+                <span>Court</span>
+              </button>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer ring-2 ring-amber-300/60"
+                title="Access stats while waiting for serve"
+              >
+                <Activity size={16} className="text-slate-950 shrink-0" />
+                <span>View Stats</span>
+              </button>
+            </div>
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-bounce drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
               <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
             </div>
@@ -9395,11 +9632,42 @@ export default function App() {
                 ERROR <XCircle size={28} />
               </button>
             </div>
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="text-amber-300 hover:text-amber-200 text-xs font-black uppercase tracking-widest flex items-center gap-1.5 underline underline-offset-4 cursor-pointer"
+              >
+                <Activity size={14} />
+                <span>Open Stats Database</span>
+              </button>
+            </div>
           </div>
         )}
 
         {serveErrorPrompt && !setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+            {/* Top Navigation Bar while selecting serve error */}
+            <div className="absolute top-4 inset-x-4 sm:inset-x-8 flex items-center justify-between z-10">
+              <button
+                type="button"
+                onClick={() => setServeErrorPrompt(null)}
+                className="bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 border border-white/20 transition-colors cursor-pointer"
+                title="Cancel serve error selection"
+              >
+                <X size={15} />
+                <span>Cancel</span>
+              </button>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer ring-2 ring-amber-300/60"
+                title="View live stats"
+              >
+                <Activity size={16} className="text-slate-950 shrink-0" />
+                <span>View Stats</span>
+              </button>
+            </div>
             {/* Live Score Display */}
             <div className="mb-4 flex items-center justify-between gap-4 bg-white/10 backdrop-blur-md px-6 py-2 rounded-2xl border border-white/20 shadow-xl min-w-[280px]">
               <div className="text-left">
@@ -9729,6 +9997,27 @@ export default function App() {
 
         {endRallyVisible && !setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-40 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+            {/* Top Navigation Bar */}
+            <div className="absolute top-4 inset-x-4 sm:inset-x-8 flex items-center justify-between z-10">
+              <button
+                type="button"
+                onClick={() => setEndRallyVisible(false)}
+                className="bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 border border-white/20 transition-colors cursor-pointer"
+                title="Return to court"
+              >
+                <X size={15} />
+                <span>Court</span>
+              </button>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer ring-2 ring-amber-300/60"
+                title="View live stats"
+              >
+                <Activity size={16} className="text-slate-950 shrink-0" />
+                <span>View Stats</span>
+              </button>
+            </div>
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-pulse drop-shadow-[0_0_30px_rgba(251,191,36,0.4)]">
               Trophy
             </div>
@@ -9763,6 +10052,21 @@ export default function App() {
 
         {setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-[60] flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-2xl">
+            {/* Top Navigation Bar */}
+            <div className="absolute top-4 inset-x-4 sm:inset-x-8 flex items-center justify-between z-10">
+              <span className="text-[10px] font-black uppercase text-amber-400 bg-amber-400/20 px-3 py-1.5 rounded-full border border-amber-400/30">
+                Set Finished
+              </span>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer ring-2 ring-amber-300/60"
+                title="View full set & match stats"
+              >
+                <Activity size={16} className="text-slate-950 shrink-0" />
+                <span>View Set Stats</span>
+              </button>
+            </div>
             <Trophy
               size={80}
               className={`mb-3 sm:mb-4 drop-shadow-[0_0_50px_rgba(255,255,255,0.2)] sm:w-[100px] sm:h-[100px] ${
@@ -9911,14 +10215,35 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Title and Server Indicator */}
-              <div className="w-full flex items-center justify-between mb-1">
-                <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-widest">
-                  Opponent Serve
-                </h2>
-                <span className="text-[10px] font-black uppercase bg-purple-100 text-purple-800 px-2.5 py-1 rounded-full border border-purple-200 shadow-xs">
-                  #{oppServeReceivePrompt.serverId || oppLineup[0] || "?"} Serving
-                </span>
+              {/* Title and Server Indicator + Stats & Dismiss */}
+              <div className="w-full flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg sm:text-xl font-black text-slate-800 uppercase tracking-widest">
+                    Opponent Serve
+                  </h2>
+                  <span className="text-[10px] font-black uppercase bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full border border-purple-200 shadow-xs">
+                    #{oppServeReceivePrompt.serverId || oppLineup[0] || "?"} Serving
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={viewStatsWithCurrentMatch}
+                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-lg text-xs uppercase tracking-wider flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                    title="View match stats"
+                  >
+                    <Activity size={13} />
+                    <span>Stats</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOppServeReceivePrompt(null)}
+                    className="text-slate-400 hover:text-slate-700 p-1 rounded-lg"
+                    title="Dismiss"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
 
               <p className="text-xs sm:text-sm font-bold text-slate-500 mb-3 text-center">
@@ -10227,7 +10552,16 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={viewStatsWithCurrentMatch}
+                    className="bg-amber-400 hover:bg-amber-500 text-slate-950 font-black px-3 py-1.5 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                    title="View match and player stats before next set"
+                  >
+                    <Activity size={13} />
+                    <span>View Stats</span>
+                  </button>
                   <span className="text-[10px] uppercase font-black tracking-wider bg-blue-50 text-[#0033A0] px-2.5 py-1 rounded-full border border-blue-200">
                     Switch Lineup
                   </span>
@@ -12842,153 +13176,193 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col relative z-50">
         <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-slate-200 flex-1 flex flex-col overflow-hidden max-w-[1400px] mx-auto w-full">
-          <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center shadow-md gap-4">
-            <div className="flex items-center w-full sm:w-auto">
-              <div className="mr-2.5 sm:mr-4 flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative shrink-0">
-                <img
-                  src={APP_LOGO_SRC}
-                  alt="UCC Lancers Logo"
-                  referrerPolicy="no-referrer"
-                  className="h-full w-full object-contain absolute inset-0 z-10"
-                  onError={(e) => {
-                    const target = e.currentTarget;
-                    if (!target.dataset.fallback) {
-                      target.dataset.fallback = "true";
-                      target.src = FALLBACK_LOGO_SRC;
-                    } else {
-                      target.style.display = "none";
-                    }
-                  }}
-                />
-              </div>
-              <div className="flex-1 flex flex-wrap items-center gap-2">
-                <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase drop-shadow-md">
-                  Database Stats
-                </h1>
-                {isPlayerRole && (
-                  <span className="bg-amber-400/20 border border-amber-300/40 text-amber-200 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm backdrop-blur-sm">
-                    <ShieldAlert size={12} className="text-amber-300" />
-                    Player View (Device Only)
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="flex space-x-2 w-full sm:w-auto">
-              <button
-                onClick={handleInstallApp}
-                className="flex-1 sm:flex-none bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20"
-                title="Download App"
-              >
-                <Download className="mr-1 sm:mr-1.5" size={14} />
-                <span className="hidden sm:inline">App</span>
-              </button>
-              <button
-                onClick={toggleFullscreen}
-                className="flex-1 sm:flex-none bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20"
-                title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
-              >
-                {isFullscreen ? <Minimize className="mr-1 sm:mr-1.5" size={14} /> : <Maximize className="mr-1 sm:mr-1.5" size={14} />}
-                <span className="hidden sm:inline">{isFullscreen ? "Exit Full" : "Full"}</span>
-              </button>
-              <button
-                onClick={() => setView("compare")}
-                className="flex-1 sm:flex-none bg-indigo-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
-              >
-                <ArrowRightLeft className="mr-1 sm:mr-1.5" size={14} /> Compare
-              </button>
-              {isPlayerRole && (
-                <button
-                  type="button"
-                  onClick={() => setShowCoachLoginModal(true)}
-                  className="flex-1 sm:flex-none bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                  title="Sign in with Coach account or enter Coach Code"
-                >
-                  <Shield className="mr-1 sm:mr-1.5" size={14} /> Coach Login
-                </button>
-              )}
-              {isCoachRole && (
-                <div className="hidden sm:flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider">
-                  <Shield size={13} className="text-emerald-400" />
-                  <span>Coach Mode</span>
+          <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white shadow-md">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="mr-1 sm:mr-2 flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative shrink-0">
+                  <img
+                    src={APP_LOGO_SRC}
+                    alt="UCC Lancers Logo"
+                    referrerPolicy="no-referrer"
+                    className="h-full w-full object-contain absolute inset-0 z-10"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (!target.dataset.fallback) {
+                        target.dataset.fallback = "true";
+                        target.src = FALLBACK_LOGO_SRC;
+                      } else {
+                        target.style.display = "none";
+                      }
+                    }}
+                  />
                 </div>
-              )}
-              {teamInfo.role !== "player" && (
-                <>
-                  <button
-                    onClick={() => setShowPlayerAccessModal(true)}
-                    className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                    title="View which players & Google accounts have accessed stats"
-                  >
-                    <Eye className="mr-1 sm:mr-1.5" size={14} /> Player Access
-                  </button>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase drop-shadow-md">
+                      Database Stats
+                    </h1>
+                    {isPlayerRole && (
+                      <span className="bg-amber-400/20 border border-amber-300/40 text-amber-200 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm backdrop-blur-sm">
+                        <ShieldAlert size={12} className="text-amber-300" />
+                        Player View (Device Only)
+                      </span>
+                    )}
+                    {isCoachRole && (
+                      <div className="hidden sm:flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider">
+                        <Shield size={12} className="text-emerald-400" />
+                        <span>Coach Mode</span>
+                      </div>
+                    )}
+                  </div>
+                  {activeMatch && (
+                    <div className="text-[11px] font-semibold text-blue-200 flex items-center gap-1.5 mt-0.5">
+                      <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>
+                        Match in Session: <strong className="text-white">{activeMatch.opponent ? `vs ${activeMatch.opponent}` : activeMatch.title || "Match"}</strong> (Set {currentSetNum}, {score.ucc}-{score.opp})
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ACTION TOOLBAR & NAVIGATION */}
+              <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-start lg:justify-end">
+                {/* 1. PRIMARY GAME & MENU BUTTONS - ALWAYS PROMINENT AND VISIBLE */}
+                {(activeMatch || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || lastActiveMatchRef.current) && (
                   <button
                     type="button"
-                    onClick={togglePlayerAccess}
-                    className={`flex-1 sm:flex-none ${
-                      isPlayerAccessAllowed
-                        ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
-                        : "bg-red-600 hover:bg-red-700 text-white shadow-red-500/20"
-                    } px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer`}
-                    title={
-                      isPlayerAccessAllowed
-                        ? "Player access to stats is currently OPEN. Click to lock/disable."
-                        : "Player access to stats is currently LOCKED. Click to unlock/allow."
-                    }
+                    onClick={returnToActiveGame}
+                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-4 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-lg text-xs sm:text-sm uppercase tracking-wider transition-all duration-150 active:scale-95 cursor-pointer ring-2 ring-emerald-300"
+                    title="Return directly back into the live game or practice"
                   >
-                    {isPlayerAccessAllowed ? (
-                      <>
-                        <Unlock className="mr-1 sm:mr-1.5" size={14} /> Available to Players: ON
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="mr-1 sm:mr-1.5" size={14} /> Available to Players: OFF
-                      </>
-                    )}
+                    <Play className="mr-1.5 fill-current shrink-0" size={15} />
+                    <span>
+                      {activeMatch?.type === "Practice" || lastActiveMatchRef.current?.type === "Practice"
+                        ? "Return to Practice"
+                        : "Return to Game"}
+                    </span>
                   </button>
-                  <button
-                    onClick={exportCSV}
-                    className="flex-1 sm:flex-none bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors"
-                  >
-                    <Download className="mr-1 sm:mr-1.5" size={14} /> CSV
-                  </button>
-                  <button
-                    onClick={exportPDF}
-                    className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors"
-                  >
-                    <FileText className="mr-1 sm:mr-1.5" size={14} /> PDF
-                  </button>
-                </>
-              )}
-              <button
-                onClick={() => {
-                  const currentMatchNav = statsPath.find((p) => p.level === "match");
-                  const currentSetNav = statsPath.find((p) => p.level === "set");
-                  setStatCorrectionConfig({
-                    isOpen: true,
-                    initialMatchId: currentMatchNav?.id || activeMatch?.id || null,
-                    initialSetId: currentSetNav?.id || activeSetId || null,
-                  });
-                }}
-                className="flex-1 sm:flex-none bg-amber-400 hover:bg-amber-500 text-slate-950 px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer"
-                title={teamInfo.role === "player" ? "View recorded stats" : "Edit recorded stats"}
-              >
-                <Edit3 className="mr-1 sm:mr-1.5" size={14} /> {teamInfo.role === "player" ? "View Stat Log" : "Edit Stats"}
-              </button>
-              {activeMatch ? (
+                )}
+
                 <button
-                  onClick={() => setView("game")}
-                  className="flex-1 sm:flex-none bg-white text-[#0033A0] px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black justify-center flex items-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
-                >
-                  Game
-                </button>
-              ) : (
-                <button
+                  type="button"
                   onClick={() => setView("menu")}
-                  className="flex-1 sm:flex-none bg-white text-[#0033A0] px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black justify-center flex items-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+                  className="bg-white/15 hover:bg-white/25 text-white px-3.5 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[11px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors cursor-pointer active:scale-95"
+                  title="Main Menu"
                 >
-                  Menu
+                  <Home className="mr-1.5 shrink-0" size={14} />
+                  <span>Menu</span>
                 </button>
-              )}
+
+                <button
+                  type="button"
+                  onClick={runDebugDiagnostics}
+                  className="bg-indigo-600/80 hover:bg-indigo-600 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-indigo-400/30 transition-colors cursor-pointer active:scale-95"
+                  title="Run state & session diagnostics"
+                >
+                  <Activity className="mr-1 sm:mr-1.5 shrink-0" size={13} />
+                  <span>Debug</span>
+                </button>
+
+                {/* 2. SECONDARY TOOLS */}
+                <button
+                  onClick={() => setView("compare")}
+                  className="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  <ArrowRightLeft className="mr-1 sm:mr-1.5" size={13} /> Compare
+                </button>
+
+                {isPlayerRole && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCoachLoginModal(true)}
+                    className="bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                    title="Sign in with Coach account or enter Coach Code"
+                  >
+                    <Shield className="mr-1 sm:mr-1.5" size={13} /> Coach Login
+                  </button>
+                )}
+
+                {teamInfo.role !== "player" && (
+                  <>
+                    <button
+                      onClick={() => setShowPlayerAccessModal(true)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                      title="View which players & Google accounts have accessed stats"
+                    >
+                      <Eye className="mr-1 sm:mr-1.5" size={13} /> Player Access
+                    </button>
+                    <button
+                      type="button"
+                      onClick={togglePlayerAccess}
+                      className={`flex-none ${
+                        isPlayerAccessAllowed
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+                          : "bg-red-600 hover:bg-red-700 text-white shadow-red-500/20"
+                      } px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer`}
+                      title={
+                        isPlayerAccessAllowed
+                          ? "Player access to stats is currently OPEN. Click to lock/disable."
+                          : "Player access to stats is currently LOCKED. Click to unlock/allow."
+                      }
+                    >
+                      {isPlayerAccessAllowed ? (
+                        <>
+                          <Unlock className="mr-1 sm:mr-1.5" size={13} /> Players: ON
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="mr-1 sm:mr-1.5" size={13} /> Players: OFF
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={exportCSV}
+                      className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                    >
+                      <Download className="mr-1 sm:mr-1.5" size={13} /> CSV
+                    </button>
+                    <button
+                      onClick={exportPDF}
+                      className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                    >
+                      <FileText className="mr-1 sm:mr-1.5" size={13} /> PDF
+                    </button>
+                  </>
+                )}
+
+                <button
+                  onClick={() => {
+                    const currentMatchNav = statsPath.find((p) => p.level === "match");
+                    const currentSetNav = statsPath.find((p) => p.level === "set");
+                    setStatCorrectionConfig({
+                      isOpen: true,
+                      initialMatchId: currentMatchNav?.id || activeMatch?.id || null,
+                      initialSetId: currentSetNav?.id || activeSetId || null,
+                    });
+                  }}
+                  className="bg-amber-400 hover:bg-amber-500 text-slate-950 px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer transition-colors"
+                  title={teamInfo.role === "player" ? "View recorded stats" : "Edit recorded stats"}
+                >
+                  <Edit3 className="mr-1 sm:mr-1.5" size={13} /> {teamInfo.role === "player" ? "Stat Log" : "Edit Stats"}
+                </button>
+
+                <button
+                  onClick={toggleFullscreen}
+                  className="bg-white/10 hover:bg-white/20 text-white px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors"
+                  title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+                >
+                  {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}
+                </button>
+
+                <button
+                  onClick={handleInstallApp}
+                  className="bg-white/10 hover:bg-white/20 text-white px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors"
+                  title="Download App"
+                >
+                  <Download size={13} />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -15885,6 +16259,69 @@ export default function App() {
         {renderPlayerAccessModal()}
         {renderPlayerSecurity()}
         {renderInstallModal()}
+
+        {/* Floating Persistent Return-to-Game Action Bar for Stats */}
+        {(activeMatch || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || lastActiveMatchRef.current) && (
+          <aside
+            aria-label="Active Match Return Bar"
+            className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-lg w-[calc(100%-1.5rem)] bg-slate-950/95 text-white px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.65)] border border-emerald-500/50 backdrop-blur-lg flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300 ring-1 ring-emerald-400/30"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="relative flex h-3 w-3 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+              <div className="min-w-0">
+                <div className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">
+                  {activeMatch?.type === "Practice" || lastActiveMatchRef.current?.type === "Practice"
+                    ? "Practice Session Active"
+                    : "Live Game In Progress"}
+                </div>
+                <div className="text-xs font-bold text-slate-100 truncate">
+                  {activeMatch
+                    ? `${activeMatch.opponent ? `vs ${activeMatch.opponent}` : activeMatch.title || "Match"} • Set ${currentSetNum} (${score.ucc}-${score.opp})`
+                    : "Active match ready to resume"}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setView("menu")}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-2.5 sm:px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-colors cursor-pointer border border-slate-700"
+                title="Go to Menu"
+              >
+                <Home size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={returnToActiveGame}
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-3.5 sm:px-4 py-2 rounded-xl text-xs uppercase tracking-widest flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer ring-2 ring-emerald-300"
+              >
+                <Play size={13} className="fill-current shrink-0" />
+                <span>Return to Game</span>
+              </button>
+            </div>
+          </aside>
+        )}
+
+        {/* Debug Diagnostics Toast / Notice */}
+        {debugNotice && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[100] max-w-md w-[calc(100%-2rem)] bg-slate-900/95 text-white p-3.5 rounded-2xl shadow-2xl border border-indigo-500/50 backdrop-blur-md flex items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <Activity size={16} className="text-indigo-400 shrink-0" />
+              <p className="text-xs font-semibold text-slate-200 leading-tight">
+                {debugNotice}
+              </p>
+            </div>
+            <button
+              onClick={() => setDebugNotice(null)}
+              className="text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
       </div>
     );
   }

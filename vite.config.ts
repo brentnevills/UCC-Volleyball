@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
-    base: './',
+    base: '/',
     plugins: [
       react(),
       tailwindcss(),
@@ -34,6 +34,7 @@ export default defineConfig(({mode}) => {
           theme_color: '#001b5e',
           background_color: '#001b5e',
           display: 'standalone',
+          orientation: 'any',
           start_url: '/',
           scope: '/',
           icons: [
@@ -74,6 +75,11 @@ export default defineConfig(({mode}) => {
               purpose: 'any'
             }
           ]
+        },
+        workbox: {
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          navigateFallback: '/index.html',
         },
         devOptions: {
           enabled: true,

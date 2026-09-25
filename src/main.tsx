@@ -2,8 +2,25 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { registerSW } from 'virtual:pwa-register';
 
 console.log("UCC Lancers App: Initializing...");
+
+// Auto-register PWA service worker for Chrome installability and offline caching
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      console.log('[PWA] New content available; updating in background...');
+    },
+    onOfflineReady() {
+      console.log('[PWA] UCC Lancers is ready for offline operation.');
+    },
+    onRegisterError(error) {
+      console.warn('[PWA] Service worker registration notice:', error);
+    }
+  });
+}
 
 // Ensure clean startup without residual security blackout classes
 document.documentElement.classList.remove('shield-active', 'player-restricted');
