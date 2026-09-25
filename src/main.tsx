@@ -1,9 +1,23 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
+import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import './index.css';
 
 console.log("UCC Lancers App: Initializing...");
+
+// Register PWA Service Worker for offline support and Chrome installability
+if ('serviceWorker' in navigator) {
+  registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      console.log('PWA: New version available, auto updating');
+    },
+    onOfflineReady() {
+      console.log('PWA: App ready to work offline');
+    },
+  });
+}
 
 // Ensure clean startup without residual security blackout classes
 document.documentElement.classList.remove('shield-active', 'player-restricted');

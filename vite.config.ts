@@ -11,12 +11,13 @@ const __dirname = path.dirname(__filename);
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
-    base: './',
+    base: '/',
     plugins: [
       react(),
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        injectRegister: 'auto',
         includeAssets: [
           'lancer-logo.png',
           'pwa-192x192.png',
@@ -74,6 +75,10 @@ export default defineConfig(({mode}) => {
               purpose: 'any'
             }
           ]
+        },
+        workbox: {
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         },
         devOptions: {
           enabled: true,
