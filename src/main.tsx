@@ -5,19 +5,6 @@ import './index.css';
 
 console.log("UCC Lancers App: Initializing...");
 
-// Provide safe global definition for currentUser to guard against ReferenceError
-if (typeof window !== 'undefined') {
-  (window as any).currentUser = (window as any).currentUser || null;
-  // Unregister any stale dev service workers that might be caching old assets
-  if ('serviceWorker' in navigator && import.meta.env.DEV) {
-    navigator.serviceWorker.getRegistrations().then((registrations) => {
-      for (const registration of registrations) {
-        registration.unregister().catch(() => {});
-      }
-    }).catch(() => {});
-  }
-}
-
 // Ensure clean startup without residual security blackout classes
 document.documentElement.classList.remove('shield-active', 'player-restricted');
 document.body.classList.remove('shield-active', 'player-restricted');
