@@ -42,37 +42,17 @@ service cloud.firestore {
         && data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128
         && data.uid == userId
         && data.joinedAt is timestamp
-        && data.role in ['coach', 'player']
-        && (!('email' in data) || (data.email is string && data.email.size() <= 256))
-        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 256))
-        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
-        && (!('lastStatsAccess' in data) || (data.lastStatsAccess is timestamp))
-        && (!('statsAccessCount' in data) || (data.statsAccessCount is number))
-        && (!('lastActive' in data) || (data.lastActive is timestamp));
-    }
-
-    function isValidPlayerAccessLog(data, userId) {
-      return data.keys().hasAll(['id', 'uid', 'email', 'role'])
-        && data.id is string && data.id.size() <= 128
-        && data.uid is string && data.uid == userId
-        && data.email is string && data.email.size() <= 256
-        && data.role is string && data.role in ['coach', 'player']
-        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 256))
-        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
-        && (!('accessedAt' in data) || (data.accessedAt is timestamp))
-        && (!('view' in data) || (data.view is string && data.view.size() <= 256))
-        && (!('device' in data) || (data.device is string && data.device.size() <= 256));
+        && data.role in ['coach', 'player'];
     }
 
     function isValidSetting(data) {
-      return data.keys().hasAny(['roster', 'savedRosters', 'savedLineups', 'teamName', 'coachCode', 'playerCode', 'playerAccessEnabled'])
+      return data.keys().hasAny(['roster', 'savedRosters', 'savedLineups', 'teamName', 'coachCode', 'playerCode'])
         && (!('roster' in data) || data.roster is list && data.roster.size() <= 100)
         && (!('savedRosters' in data) || data.savedRosters is map)
         && (!('savedLineups' in data) || data.savedLineups is map)
         && (!('teamName' in data) || data.teamName is string && data.teamName.size() <= 100)
         && (!('coachCode' in data) || data.coachCode is string && data.coachCode.size() <= 20)
-        && (!('playerCode' in data) || data.playerCode is string && data.playerCode.size() <= 20)
-        && (!('playerAccessEnabled' in data) || data.playerAccessEnabled is bool);
+        && (!('playerCode' in data) || data.playerCode is string && data.playerCode.size() <= 20);
     }
 
     function isValidMatch(data) {
@@ -116,13 +96,6 @@ service cloud.firestore {
         allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId)
           && isValidTeamMember(incoming(), userId);
         allow update, delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
-      }
-
-      match /player_access_logs/{logId} {
-        allow read: if isSignedIn() && isTeamMember(teamId);
-        allow create: if isSignedIn() && isTeamMember(teamId)
-          && isValidId(logId)
-          && isValidPlayerAccessLog(incoming(), request.auth.uid);
       }
 
       match /settings/{settingId} {

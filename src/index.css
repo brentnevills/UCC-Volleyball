@@ -22,13 +22,15 @@ body.player-restricted canvas {
   -webkit-user-drag: none;
 }
 
-/* Player privacy styling */
-.secure-stat-concealed {
-  filter: blur(7px);
-  user-select: none;
-  transition: filter 0.12s ease-out;
+@media print {
+  body.player-restricted,
+  body.player-restricted #root,
+  .player-restricted-view {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    width: 0 !important;
+    overflow: hidden !important;
+  }
 }
 
-.secure-stat-revealed {
-  filter: blur(0px) !important;
-}

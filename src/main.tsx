@@ -5,10 +5,6 @@ import './index.css';
 
 console.log("UCC Lancers App: Initializing...");
 
-// Ensure clean startup without residual security blackout classes
-document.documentElement.classList.remove('shield-active', 'player-restricted');
-document.body.classList.remove('shield-active', 'player-restricted');
-
 window.addEventListener('error', (event) => {
   console.error("Global Error Caught:", event.error);
   const rootElement = document.getElementById('root');

@@ -6,33 +6,9 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "The user's UID." },
-        "joinedAt": { "type": "string", "format": "date-time" },
-        "role": { "type": "string", "enum": ["coach", "player"] },
-        "email": { "type": "string" },
-        "displayName": { "type": "string" },
-        "photoURL": { "type": "string" },
-        "lastStatsAccess": { "type": "string", "format": "date-time" },
-        "statsAccessCount": { "type": "number" },
-        "lastActive": { "type": "string", "format": "date-time" }
+        "joinedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["uid", "joinedAt", "role"]
-    },
-    "PlayerAccessLog": {
-      "title": "Player Access Log",
-      "description": "Record of a player Google account accessing team stats.",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "uid": { "type": "string" },
-        "email": { "type": "string" },
-        "displayName": { "type": "string" },
-        "photoURL": { "type": "string" },
-        "role": { "type": "string" },
-        "accessedAt": { "type": "string", "format": "date-time" },
-        "view": { "type": "string" },
-        "device": { "type": "string" }
-      },
-      "required": ["id", "uid", "email", "role"]
+      "required": ["uid", "joinedAt"]
     },
     "Setting": {
       "title": "Setting",
@@ -41,11 +17,7 @@
       "properties": {
         "roster": { "type": "array" },
         "savedRosters": { "type": "object" },
-        "savedLineups": { "type": "object" },
-        "teamName": { "type": "string" },
-        "coachCode": { "type": "string" },
-        "playerCode": { "type": "string" },
-        "playerAccessEnabled": { "type": "boolean", "description": "Controls whether players can access team stats and data." }
+        "savedLineups": { "type": "object" }
       }
     },
     "Opponent": {
@@ -112,10 +84,6 @@
     "/teams/{teamId}/members/{userId}": {
       "schema": { "$ref": "#/entities/TeamMember" },
       "description": "Users who can access this team's data."
-    },
-    "/teams/{teamId}/player_access_logs/{logId}": {
-      "schema": { "$ref": "#/entities/PlayerAccessLog" },
-      "description": "Logs of players accessing team statistics."
     },
     "/teams/{teamId}/settings/{settingId}": {
       "schema": { "$ref": "#/entities/Setting" },

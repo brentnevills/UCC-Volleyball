@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Download,
   Users,
@@ -47,10 +47,6 @@ import {
   Target,
   Plus,
   Minus,
-  Lock,
-  Unlock,
-  Key,
-  AlertTriangle,
 } from "lucide-react";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
@@ -60,7 +56,6 @@ import { TeamNameEditModal } from "./components/TeamNameEditModal";
 import { SetScoreEditModal } from "./components/SetScoreEditModal";
 import { OpponentReportModal } from "./components/OpponentReportModal";
 import { OpponentSubModal } from "./components/OpponentSubModal";
-import { PlayerAccessLogModal } from "./components/PlayerAccessLogModal";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -642,8 +637,6 @@ export default function App() {
   const [selectedAceReceivers, setSelectedAceReceivers] = useState([]);
   const [oppServeReceivePrompt, setOppServeReceivePrompt] = useState<{
     passerId: string | null;
-    serverId?: string | null;
-    selectingAce?: boolean;
   } | null>(null);
   const [betweenSetsModal, setBetweenSetsModal] = useState<{
     nextSetNum: number;
@@ -729,267 +722,7 @@ export default function App() {
   const effectiveTeamName =
     myTeams.find((t) => t.id === activeTeam)?.name || customTeamName || "Lancers";
   const activeTeamProfile = myTeams.find((t) => t.id === activeTeam);
-
-  // Coaches Access: Anyone with coach role in team, or coach unlock key, or owner/creator of team, or coach email
-  const isCoachRole = Boolean(
-    activeTeamProfile?.role === "coach" ||
-    localStorage.getItem(`ucc_team_role_${activeTeam}`) === "coach" ||
-    localStorage.getItem("ucc_current_role") === "coach" ||
-    localStorage.getItem("ucc_coach_unlocked_global") === "true" ||
-    (activeTeam && localStorage.getItem(`ucc_coach_unlocked_${activeTeam}`) === "true") ||
-    (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "coach")) ||
-    (user && myTeams.some((t: any) => t.role === "coach")) ||
-    (appData.createdBy && user && appData.createdBy === user.uid) ||
-    (user && user.email && (
-      user.email.toLowerCase() === "brent.nevills@sccdsb.net" ||
-      user.email.toLowerCase().includes("coach")
-    ))
-  );
-
-  // A user is strictly in player role ONLY if they are NOT a coach and have player indicator
-  const isPlayerRole = !isCoachRole && Boolean(
-    activeTeamProfile?.role === "player" ||
-    localStorage.getItem(`ucc_team_role_${activeTeam}`) === "player" ||
-    localStorage.getItem("ucc_current_role") === "player" ||
-    (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "player"))
-  );
-
-  const effectiveRole = isCoachRole
-    ? "coach"
-    : isPlayerRole
-    ? "player"
-    : activeTeamProfile?.role || "coach";
-
-  // Anti-screenshot protection is ONLY active for players, NEVER for coaches
-  const isShieldProtectionActive = Boolean(isPlayerRole && !isCoachRole);
-  const isPlayerAccessAllowed = (appData as any).playerAccessEnabled !== false;
-
-  const [showCoachLoginModal, setShowCoachLoginModal] = useState(false);
-  const [coachCodeInput, setCoachCodeInput] = useState("");
-  const [coachLoginMsg, setCoachLoginMsg] = useState<{ text: string; isError: boolean } | null>(null);
-  const [isVerifyingCoach, setIsVerifyingCoach] = useState(false);
-
-  const handleVerifyCoachCode = async (codeToVerify?: string) => {
-    const rawCode = (codeToVerify !== undefined ? codeToVerify : coachCodeInput).trim().toUpperCase();
-    if (!rawCode) {
-      setCoachLoginMsg({ text: "Please enter a valid Coach Code.", isError: true });
-      return;
-    }
-    setIsVerifyingCoach(true);
-    setCoachLoginMsg(null);
-
-    try {
-      let isMatch = false;
-      let targetTeamId = activeTeam;
-
-      // 1. Check against active team's coachCode or ID
-      if (activeTeam) {
-        if (
-          rawCode === (appData.coachCode || "").trim().toUpperCase() ||
-          rawCode === activeTeam.trim().toUpperCase()
-        ) {
-          isMatch = true;
-          targetTeamId = activeTeam;
-        }
-      }
-
-      // 2. Check share_codes in Firestore
-      if (!isMatch && isFirebaseAvailable && db) {
-        try {
-          const codeSnap = await getDoc(doc(db, "share_codes", rawCode));
-          if (codeSnap.exists()) {
-            const data = codeSnap.data();
-            if (data.role === "coach") {
-              isMatch = true;
-              targetTeamId = data.teamId;
-            }
-          }
-        } catch (e) {
-          console.log("share_codes check error:", e);
-        }
-      }
-
-      // 3. Check core settings in Firestore for activeTeam
-      if (!isMatch && isFirebaseAvailable && db && activeTeam) {
-        try {
-          const teamSettingsSnap = await getDoc(doc(db, `${publicPath}/${activeTeam}/settings/core`));
-          if (teamSettingsSnap.exists()) {
-            const coreData = teamSettingsSnap.data();
-            if (coreData.coachCode && coreData.coachCode.trim().toUpperCase() === rawCode) {
-              isMatch = true;
-              targetTeamId = activeTeam;
-            }
-          }
-        } catch (e) {
-          console.log("core settings check error:", e);
-        }
-      }
-
-      if (!isMatch) {
-        setCoachLoginMsg({
-          text: "Incorrect Coach Code. Please check the code provided by your coaching staff.",
-          isError: true,
-        });
-        setIsVerifyingCoach(false);
-        return;
-      }
-
-      const teamKey = targetTeamId || activeTeam || "default";
-      localStorage.setItem(`ucc_team_role_${teamKey}`, "coach");
-      localStorage.setItem("ucc_current_role", "coach");
-      localStorage.setItem(`ucc_coach_unlocked_${teamKey}`, "true");
-
-      if (user && isFirebaseAvailable && db && targetTeamId) {
-        try {
-          await setDoc(
-            doc(db, `${publicPath}/${targetTeamId}/members/${user.uid}`),
-            {
-              uid: user.uid,
-              role: "coach",
-              joinedAt: serverTimestamp(),
-              email: user.email || "",
-              displayName: user.displayName || user.email?.split("@")[0] || "Coach",
-              photoURL: user.photoURL || "",
-              lastActive: serverTimestamp(),
-            },
-            { merge: true },
-          );
-
-          const existing = myTeams.find((t) => t.id === targetTeamId);
-          let newTeams = [];
-          if (existing) {
-            newTeams = myTeams.map((t) =>
-              t.id === targetTeamId ? { ...t, role: "coach" } : t,
-            );
-          } else {
-            newTeams = [
-              ...myTeams,
-              {
-                id: targetTeamId,
-                name: effectiveTeamName,
-                color: "from-[#002B7A] to-blue-950",
-                role: "coach",
-              },
-            ];
-          }
-          setMyTeams(newTeams);
-          await setDoc(
-            doc(db, "users", user.uid),
-            { teams: newTeams },
-            { merge: true },
-          );
-        } catch (err) {
-          console.error("Failed to sync coach role to Firebase:", err);
-        }
-      }
-
-      if (targetTeamId && targetTeamId !== activeTeam) {
-        setActiveTeam(targetTeamId);
-        localStorage.setItem("ucc_vball_active_team", targetTeamId);
-      }
-
-      setCoachLoginMsg({
-        text: "Coach access verified! Full access granted.",
-        isError: false,
-      });
-
-      setTimeout(() => {
-        setShowCoachLoginModal(false);
-        setCoachCodeInput("");
-        setCoachLoginMsg(null);
-        setIsVerifyingCoach(false);
-      }, 700);
-    } catch (err: any) {
-      console.error("Coach verification error:", err);
-      setCoachLoginMsg({
-        text: err?.message || "Failed to verify coach code. Please try again.",
-        isError: true,
-      });
-      setIsVerifyingCoach(false);
-    }
-  };
-
-  const handleGoogleCoachSignIn = async () => {
-    const provider = new GoogleAuthProvider();
-    setIsVerifyingCoach(true);
-    setCoachLoginMsg(null);
-    try {
-      const res = await signInWithPopup(auth, provider);
-      if (res.user && activeTeam && isFirebaseAvailable && db) {
-        try {
-          const memberDoc = await getDoc(
-            doc(db, `${publicPath}/${activeTeam}/members/${res.user.uid}`),
-          );
-          const teamDoc = await getDoc(
-            doc(db, `${publicPath}/${activeTeam}`),
-          );
-          const isCreator = teamDoc.exists() && teamDoc.data()?.createdBy === res.user.uid;
-          const isMemberCoach = memberDoc.exists() && memberDoc.data()?.role === "coach";
-
-          if (isCreator || isMemberCoach) {
-            localStorage.setItem(`ucc_team_role_${activeTeam}`, "coach");
-            localStorage.setItem("ucc_current_role", "coach");
-            localStorage.setItem(`ucc_coach_unlocked_${activeTeam}`, "true");
-            setCoachLoginMsg({
-              text: `Recognized Coach Account (${res.user.email})! Access granted.`,
-              isError: false,
-            });
-            setTimeout(() => {
-              setShowCoachLoginModal(false);
-              setCoachLoginMsg(null);
-              setIsVerifyingCoach(false);
-            }, 700);
-            return;
-          }
-        } catch (e) {
-          console.log("Check coach doc error:", e);
-        }
-      }
-      setIsVerifyingCoach(false);
-      setCoachLoginMsg({
-        text: `Signed in as ${res.user.email}. If you have a Coach Code, enter it below to activate Coach permissions.`,
-        isError: false,
-      });
-    } catch (err: any) {
-      setIsVerifyingCoach(false);
-      if (err.code !== "auth/popup-closed-by-user") {
-        setCoachLoginMsg({
-          text: `Sign-in error: ${err.message}`,
-          isError: true,
-        });
-      }
-    }
-  };
-
-  const togglePlayerAccess = async () => {
-    const nextState = !isPlayerAccessAllowed;
-    setAppData((prev: any) => ({ ...prev, playerAccessEnabled: nextState }));
-
-    if (isFirebaseAvailable && user && activeTeam) {
-      try {
-        await setDoc(
-          doc(db, `${publicPath}/${activeTeam}/settings/core`),
-          { playerAccessEnabled: nextState },
-          { merge: true }
-        );
-      } catch (e) {
-        console.error("Failed to update playerAccessEnabled in Firestore:", e);
-      }
-    } else if (!isFirebaseAvailable && activeTeam) {
-      writeLocalDb({ ...appData, playerAccessEnabled: nextState });
-      localStorage.setItem(`ucc_player_access_${activeTeam}`, String(nextState));
-    }
-
-    setScreenshotAttemptNotice(
-      nextState
-        ? "Player Access: ENABLED (Players can view stats)"
-        : "Player Access: DISABLED (Players locked out)"
-    );
-  };
-
-  const [showPlayerAccessModal, setShowPlayerAccessModal] = useState(false);
-  const [isFullTableRevealed, setIsFullTableRevealed] = useState(false);
-  const [revealedPlayerId, setRevealedPlayerId] = useState<string | null>(null);
+  const isPlayerRole = activeTeamProfile?.role === "player";
   const [screenCaptureShieldActive, setScreenCaptureShieldActive] = useState(false);
   const [screenshotAttemptNotice, setScreenshotAttemptNotice] = useState<string | null>(null);
   const [teamNameModalConfig, setTeamNameModalConfig] = useState<{
@@ -1181,125 +914,17 @@ export default function App() {
     }
   }, [user, activeTeam, myTeams]);
 
-  // Member Coach Role Sync
+  // Player Code Security & Anti-Screenshot Enforcement
+  // Enforces that users with player codes can only view data on their device.
+  // Prevents screenshots (blur on snipping tool focus loss, PrtScn clearing, Mac screenshot shortcuts),
+  // disables right-click context menu, prevents saving content, blocks printing and PDF generation.
   useEffect(() => {
-    if (!user || !isFirebaseAvailable || !activeTeam || !db) return;
-    let unsub = () => {};
-    try {
-      unsub = onSnapshot(
-        doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
-        (snap) => {
-          if (snap.exists()) {
-            const data = snap.data();
-            if (data?.role === "coach") {
-              localStorage.setItem(`ucc_team_role_${activeTeam}`, "coach");
-              localStorage.setItem("ucc_current_role", "coach");
-              localStorage.setItem(`ucc_coach_unlocked_${activeTeam}`, "true");
-              setMyTeams((prev: any[]) =>
-                prev.map((t) => (t.id === activeTeam ? { ...t, role: "coach" } : t)),
-              );
-            }
-          }
-        },
-        (err) => console.log("Member role listener error:", err),
-      );
-    } catch (e) {
-      console.log("Member role setup error:", e);
-    }
-    return () => unsub();
-  }, [user, activeTeam]);
-
-  // Player Stats Access Audit Logger
-  const logPlayerStatsAccess = async (targetViewName?: string) => {
-    if (!user || !activeTeam || !db) return;
-    try {
-      const isPlayer = isPlayerRole;
-
-      const userEmail = user.email || "Unknown Google Account";
-      const userDisplayName = user.displayName || user.email?.split("@")[0] || "Player";
-      const userPhoto = user.photoURL || "";
-
-      // 1. Update or create member record in the team with Google account details
-      const memberRef = doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`);
-      await setDoc(
-        memberRef,
-        {
-          uid: user.uid,
-          email: userEmail,
-          displayName: userDisplayName,
-          photoURL: userPhoto,
-          role: isPlayer ? "player" : (activeTeamProfile?.role || "coach"),
-          lastStatsAccess: serverTimestamp(),
-          lastActive: serverTimestamp(),
-          lastViewedPath: targetViewName || "Stats Overview",
-          device: navigator.userAgent.includes("iPhone")
-            ? "iPhone (iOS)"
-            : navigator.userAgent.includes("iPad")
-            ? "iPad (iPadOS)"
-            : navigator.userAgent.includes("Android")
-            ? "Android Mobile"
-            : navigator.userAgent.includes("Mac")
-            ? "Mac (Desktop)"
-            : navigator.userAgent.includes("Win")
-            ? "Windows PC"
-            : "Mobile / Web Device",
-        },
-        { merge: true },
-      );
-
-      // 2. Also log audit record in player_access_logs if player role
-      if (isPlayer) {
-        const logId = `${user.uid}_${Date.now()}`;
-        const logRef = doc(db, `${publicPath}/${activeTeam}/player_access_logs/${logId}`);
-        await setDoc(logRef, {
-          id: logId,
-          uid: user.uid,
-          email: userEmail,
-          displayName: userDisplayName,
-          photoURL: userPhoto,
-          role: "player",
-          accessedAt: serverTimestamp(),
-          view: targetViewName || "Stats Overview",
-          device: navigator.userAgent.includes("iPhone")
-            ? "iPhone (iOS)"
-            : navigator.userAgent.includes("iPad")
-            ? "iPad (iPadOS)"
-            : navigator.userAgent.includes("Android")
-            ? "Android Mobile"
-            : navigator.userAgent.includes("Mac")
-            ? "Mac (Desktop)"
-            : navigator.userAgent.includes("Win")
-            ? "Windows PC"
-            : "Mobile / Web Device",
-        });
-      }
-    } catch (err) {
-      console.warn("Player stats access audit log notice:", err);
-    }
-  };
-
-  // Automatically record stats access whenever a player is in the stats view
-  useEffect(() => {
-    if (view === "stats" && user && activeTeam) {
-      const activeNavName = statsPath[statsPath.length - 1]?.name || "Season Totals";
-      logPlayerStatsAccess(activeNavName);
-    }
-  }, [view, activeTeam, user, statsPath]);
-
-  // Netflix-Grade Screen Capture Prevention & Instant Solid Blackout
-  // Produces a 100% pitch-black screen upon screenshot attempts, blur, visibility changes,
-  // hardware button triggers, or screen capture shortcuts (matching Netflix DRM behavior).
-  useEffect(() => {
-    if (!isShieldProtectionActive) {
-      document.documentElement.classList.remove("player-restricted");
-      document.documentElement.classList.remove("shield-active");
+    if (!isPlayerRole) {
       document.body.classList.remove("player-restricted");
-      document.body.classList.remove("shield-active");
       setScreenCaptureShieldActive(false);
       return;
     }
 
-    document.documentElement.classList.add("player-restricted");
     document.body.classList.add("player-restricted");
 
     let toastTimeout: any = null;
@@ -1311,72 +936,65 @@ export default function App() {
       }, 4000);
     };
 
-    const activateShield = () => {
-      if (!isShieldProtectionActive) return;
-      document.documentElement.classList.add("shield-active");
-      document.body.classList.add("shield-active");
+    const handleBlur = () => {
       setScreenCaptureShieldActive(true);
-      setRevealedPlayerId(null);
-      setIsFullTableRevealed(false);
     };
 
-    const handleTouchCancel = () => {
-      // Hardware screenshot combos (Power + Vol) interrupt touches
-      setRevealedPlayerId(null);
-      setIsFullTableRevealed(false);
+    const handleFocus = () => {
+      setScreenCaptureShieldActive(false);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setScreenCaptureShieldActive(true);
+      } else {
+        setScreenCaptureShieldActive(false);
+      }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // PrintScreen (Windows/Linux)
-      if (e.key === "PrintScreen" || e.code === "PrintScreen" || (e as any).keyCode === 44) {
+      if (e.key === "PrintScreen") {
         e.preventDefault();
         e.stopPropagation();
-        activateShield();
-        triggerSecurityNotice("Screenshots are blocked (Protected View).");
+        setScreenCaptureShieldActive(true);
+        triggerSecurityNotice("Screenshots are disabled for player code access. View-only on device.");
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
+          navigator.clipboard.writeText("").catch(() => {});
         }
+        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
         return;
       }
 
-      // Preemptive modifier interception:
-      // Mac screenshot combos (Cmd+Shift+3, Cmd+Shift+4, Cmd+Shift+5, Cmd+Shift+6)
-      // Windows Snipping Tool (Win+Shift+S)
-      // The moment both Meta/Ctrl and Shift are pressed down, screen turns solid black immediately
-      const isMetaShift = (e.metaKey || e.ctrlKey) && e.shiftKey;
-      if (isMetaShift) {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        ["3", "4", "5", "6", "s", "S"].includes(e.key)
+      ) {
         e.preventDefault();
         e.stopPropagation();
-        activateShield();
-        triggerSecurityNotice("Screen capture shortcuts are blocked.");
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
-        }
+        setScreenCaptureShieldActive(true);
+        triggerSecurityNotice("Screen capture shortcuts are restricted for player codes.");
+        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
         return;
       }
 
-      // Print / PDF export shortcuts: Ctrl+P / Cmd+P
-      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P" || e.code === "KeyP")) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
         e.preventDefault();
         e.stopPropagation();
-        activateShield();
-        triggerSecurityNotice("Printing and PDF export are disabled.");
+        triggerSecurityNotice("Printing and PDF export are disabled for player codes.");
         return;
       }
 
-      // Save page shortcuts: Ctrl+S / Cmd+S
-      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S" || e.code === "KeyS")) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
         e.stopPropagation();
-        activateShield();
-        triggerSecurityNotice("Saving content is disabled.");
+        triggerSecurityNotice("Saving content is disabled for player codes.");
         return;
       }
 
-      // DevTools and View Source shortcuts: F12, Ctrl+U, Ctrl+Shift+I/J/C
       if (
         e.key === "F12" ||
-        ((e.ctrlKey || e.metaKey) && (e.key === "u" || e.key === "U" || e.code === "KeyU")) ||
+        ((e.ctrlKey || e.metaKey) && (e.key === "u" || e.key === "U")) ||
         ((e.ctrlKey || e.metaKey) && e.shiftKey && ["i", "I", "j", "J", "c", "C"].includes(e.key))
       ) {
         e.preventDefault();
@@ -1385,74 +1003,47 @@ export default function App() {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen" || e.code === "PrintScreen" || (e as any).keyCode === 44) {
+      if (e.key === "PrintScreen") {
         e.preventDefault();
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
+          navigator.clipboard.writeText("").catch(() => {});
         }
-        activateShield();
-        triggerSecurityNotice("Screenshots are blocked (Protected View).");
+        setScreenCaptureShieldActive(true);
+        triggerSecurityNotice("Screenshots are disabled for player code access.");
+        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
       }
     };
 
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
-      triggerSecurityNotice("Right-click menu is disabled in protected view.");
+      triggerSecurityNotice("Right-click menu is disabled in player view-only mode.");
     };
 
     const handleBeforePrint = (e: Event) => {
       e.preventDefault();
-      activateShield();
-      triggerSecurityNotice("Printing and PDF export are disabled.");
+      triggerSecurityNotice("Printing and PDF export are disabled for player accounts.");
     };
 
-    const handleCopy = (e: ClipboardEvent) => {
-      e.preventDefault();
-      if (e.clipboardData) {
-        e.clipboardData.setData("text/plain", "Protected Content. Screen capture and copying are prohibited.");
-      }
-    };
-
-    window.addEventListener("touchcancel", handleTouchCancel, true);
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("keyup", handleKeyUp, true);
     window.addEventListener("contextmenu", handleContextMenu);
     window.addEventListener("beforeprint", handleBeforePrint);
-    window.addEventListener("copy", handleCopy);
-    window.addEventListener("cut", handleCopy);
-
-    // Intercept navigator.mediaDevices.getDisplayMedia to block screen capture extensions
-    let origGDM: any = null;
-    if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-      try {
-        origGDM = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
-        navigator.mediaDevices.getDisplayMedia = async function(...args) {
-          activateShield();
-          throw new DOMException("Screen capture is prohibited by security policy.", "NotAllowedError");
-        };
-      } catch {}
-    }
 
     return () => {
       clearTimeout(toastTimeout);
-      document.documentElement.classList.remove("player-restricted");
-      document.documentElement.classList.remove("shield-active");
       document.body.classList.remove("player-restricted");
-      document.body.classList.remove("shield-active");
-      window.removeEventListener("touchcancel", handleTouchCancel, true);
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("beforeprint", handleBeforePrint);
-      window.removeEventListener("copy", handleCopy);
-      window.removeEventListener("cut", handleCopy);
-      if (origGDM && navigator.mediaDevices) {
-        try {
-          navigator.mediaDevices.getDisplayMedia = origGDM;
-        } catch {}
-      }
     };
-  }, [isShieldProtectionActive]);
+  }, [isPlayerRole]);
 
   // LOAD DATA BASED ON ACTIVE TEAM
   useEffect(() => {
@@ -1633,44 +1224,11 @@ export default function App() {
       );
   };
 
-  const sortPlayersByNumberThenAlpha = useCallback(
-    (
-      a: { number?: string | number; name?: string; id?: string } | null | undefined,
-      b: { number?: string | number; name?: string; id?: string } | null | undefined,
-    ) => {
-      if (!a && !b) return 0;
-      if (!a) return 1;
-      if (!b) return -1;
-
-      const rawA = a.number != null ? String(a.number).trim() : "";
-      const rawB = b.number != null ? String(b.number).trim() : "";
-      const numA = parseInt(rawA.replace(/\D/g, ""), 10);
-      const numB = parseInt(rawB.replace(/\D/g, ""), 10);
-      const hasNumA = !isNaN(numA) && rawA !== "";
-      const hasNumB = !isNaN(numB) && rawB !== "";
-
-      if (hasNumA && hasNumB) {
-        if (numA !== numB) return numA - numB;
-        return (a.name || a.id || "").localeCompare(
-          b.name || b.id || "",
-          undefined,
-          { sensitivity: "base" },
-        );
-      }
-      if (hasNumA && !hasNumB) return -1;
-      if (!hasNumA && hasNumB) return 1;
-      return (a.name || a.id || "").localeCompare(
-        b.name || b.id || "",
-        undefined,
-        { sensitivity: "base" },
-      );
-    },
-    [],
-  );
-
   const sortedRoster = useMemo(() => {
-    return [...(appData.roster || [])].sort(sortPlayersByNumberThenAlpha);
-  }, [appData.roster, sortPlayersByNumberThenAlpha]);
+    return [...(appData.roster || [])].sort(
+      (a, b) => parseInt(a.number || 0) - parseInt(b.number || 0),
+    );
+  }, [appData.roster]);
 
   const updateSetState = async (updates) => {
     if (isFirebaseAvailable && user && activeSetId) {
@@ -4314,7 +3872,7 @@ export default function App() {
 
   const exportCSV = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
-    if (!isCoachRole && (currentTeam?.role === "player" || isPlayerRole)) {
+    if (currentTeam?.role === "player") {
       alert("Data export is disabled for player codes. Stats can only be viewed on your device.");
       return;
     }
@@ -4498,7 +4056,7 @@ export default function App() {
 
   const exportPDF = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
-    if (!isCoachRole && (currentTeam?.role === "player" || isPlayerRole)) {
+    if (currentTeam?.role === "player") {
       alert("PDF downloads are disabled for player codes. Stats can only be viewed on your device.");
       return;
     }
@@ -4833,11 +4391,9 @@ export default function App() {
     doc.save(filename);
   };
 
-  const benchPlayers = useMemo(() => {
-    return (appData.roster || [])
-      .filter((p) => !lineup.includes(p.id) && !p.isRetired)
-      .sort(sortPlayersByNumberThenAlpha);
-  }, [appData.roster, lineup, sortPlayersByNumberThenAlpha]);
+  const benchPlayers = appData.roster.filter(
+    (p) => !lineup.includes(p.id) && !p.isRetired,
+  );
   const selectedPlayerObj = appData.roster.find(
     (r) => r.id === selectedPlayerId,
   );
@@ -4870,14 +4426,7 @@ export default function App() {
         uid: user.uid,
         role: "coach",
         joinedAt: serverTimestamp(),
-        email: user.email || "",
-        displayName: user.displayName || user.email?.split("@")[0] || "Coach",
-        photoURL: user.photoURL || "",
-        lastActive: serverTimestamp(),
       });
-
-      localStorage.setItem(`ucc_team_role_${tId}`, "coach");
-      localStorage.setItem("ucc_current_role", "coach");
 
       // Core settings
       batch.set(doc(db, `${publicPath}/${tId}/settings/core`), {
@@ -4956,41 +4505,9 @@ export default function App() {
         role = codeSnap.data().role;
       }
 
-      const existingTeam = myTeams.find((t) => t.id === teamId);
-      if (existingTeam) {
-        if (role === "coach") {
-          // Upgrade player membership to Coach
-          await setDoc(doc(db, `${publicPath}/${teamId}/members/${user.uid}`), {
-            uid: user.uid,
-            role: "coach",
-            joinedAt: serverTimestamp(),
-            email: user.email || "",
-            displayName: user.displayName || user.email?.split("@")[0] || "Coach",
-            photoURL: user.photoURL || "",
-            lastActive: serverTimestamp(),
-          }, { merge: true });
-
-          localStorage.setItem(`ucc_team_role_${teamId}`, "coach");
-          localStorage.setItem("ucc_current_role", "coach");
-          localStorage.setItem(`ucc_coach_unlocked_${teamId}`, "true");
-
-          const newTeams = myTeams.map((t) =>
-            t.id === teamId ? { ...t, role: "coach" } : t,
-          );
-          setMyTeams(newTeams);
-          await setDoc(
-            doc(db, "users", user.uid),
-            { teams: newTeams },
-            { merge: true },
-          );
-          alert(`Successfully verified Coach access for ${existingTeam.name}! You now have full access regardless of player lock.`);
-          setActiveTeam(teamId);
-          localStorage.setItem("ucc_vball_active_team", teamId);
-          return;
-        } else {
-          alert("You are already in this team.");
-          return;
-        }
+      if (myTeams.find((t) => t.id === teamId)) {
+        alert("You are already in this team.");
+        return;
       }
 
       // 1. Give Access (via permissive member creation rule)
@@ -4998,18 +4515,7 @@ export default function App() {
         uid: user.uid,
         role,
         joinedAt: serverTimestamp(),
-        email: user.email || "",
-        displayName: user.displayName || user.email?.split("@")[0] || (role === "coach" ? "Coach" : "Player"),
-        photoURL: user.photoURL || "",
-        lastActive: serverTimestamp(),
       });
-
-      // Persist role in local storage
-      localStorage.setItem(`ucc_team_role_${teamId}`, role);
-      localStorage.setItem("ucc_current_role", role);
-      if (role === "coach") {
-        localStorage.setItem(`ucc_coach_unlocked_${teamId}`, "true");
-      }
 
       // 2. Fetch metadata that we now have access to read
       const snap = await getDoc(
@@ -5304,268 +4810,58 @@ export default function App() {
   // RENDERERS
   // -------------------------------------------------------------
 
-  const renderCoachLoginModal = () => {
-    if (!showCoachLoginModal) return null;
-
-    return (
-      <div className="fixed inset-0 bg-slate-900/85 backdrop-blur-md z-[130] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
-        <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
-          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 sm:p-6 text-white relative">
-            <button
-              type="button"
-              onClick={() => {
-                setShowCoachLoginModal(false);
-                setCoachLoginMsg(null);
-                setCoachCodeInput("");
-              }}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-2 rounded-full cursor-pointer"
-            >
-              <X size={18} />
-            </button>
-            <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-400/30 flex items-center justify-center shrink-0 shadow-inner">
-                <Shield size={24} />
-              </div>
-              <div>
-                <h3 className="font-black text-lg sm:text-xl tracking-wider uppercase text-white">
-                  Coach Login & Unlock
-                </h3>
-                <p className="text-slate-300 text-xs mt-0.5 font-medium">
-                  Full access at all times, regardless of player lockout
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-5 sm:p-6 space-y-4">
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-900 leading-relaxed flex items-start gap-2.5">
-              <ShieldAlert size={18} className="text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold">Coaches Access Guarantee:</span>{" "}
-                Coaches maintain 100% full access to view stats, line-ups, and run games even when player access is disabled or locked.
-              </div>
-            </div>
-
-            {/* Google Coach Sign In Option */}
-            <div className="space-y-2">
-              <label className="text-[11px] font-black uppercase tracking-wider text-slate-500 block">
-                Method 1: Sign in with Coach Google Account
-              </label>
-              {user ? (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 truncate">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0"></span>
-                    <span className="text-slate-600 font-medium truncate">{user.email}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await signOut(auth);
-                      setCoachLoginMsg({ text: "Signed out. Please sign in with your Coach account.", isError: false });
-                    }}
-                    className="text-indigo-600 hover:text-indigo-800 font-bold uppercase tracking-wider text-[10px] shrink-0 ml-2 cursor-pointer"
-                  >
-                    Switch Account
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleGoogleCoachSignIn}
-                  disabled={isVerifyingCoach}
-                  className="w-full bg-white hover:bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer"
-                >
-                  <img
-                    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-                    alt="Google"
-                    className="w-4 h-4"
-                  />
-                  <span>Sign In with Coach Google Account</span>
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-3 my-2">
-              <div className="h-px bg-slate-200 flex-1"></div>
-              <span className="text-[10px] uppercase font-bold text-slate-400">OR</span>
-              <div className="h-px bg-slate-200 flex-1"></div>
-            </div>
-
-            {/* Coach Code Option */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleVerifyCoachCode();
-              }}
-              className="space-y-3"
-            >
-              <div>
-                <label className="text-[11px] font-black uppercase tracking-wider text-slate-500 block mb-1">
-                  Method 2: Enter Coach Share Code
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={coachCodeInput}
-                    onChange={(e) => {
-                      setCoachCodeInput(e.target.value.toUpperCase());
-                      if (coachLoginMsg) setCoachLoginMsg(null);
-                    }}
-                    placeholder="Enter Coach Code (e.g. 6-digit code or Team ID)"
-                    className="w-full uppercase font-mono tracking-widest px-4 py-2.5 rounded-xl border border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-sm font-bold text-slate-800 transition-all placeholder:text-slate-400 placeholder:normal-case placeholder:font-sans placeholder:tracking-normal"
-                    disabled={isVerifyingCoach}
-                    autoFocus
-                  />
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
-                    <Key size={16} />
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Coaches can find this code in the database menu or team settings.
-                </p>
-              </div>
-
-              {coachLoginMsg && (
-                <div
-                  className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
-                    coachLoginMsg.isError
-                      ? "bg-red-50 text-red-700 border border-red-200"
-                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                  }`}
-                >
-                  {coachLoginMsg.isError ? <AlertTriangle size={15} className="shrink-0" /> : <CheckCircle2 size={15} className="shrink-0" />}
-                  <span>{coachLoginMsg.text}</span>
-                </div>
-              )}
-
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCoachLoginModal(false);
-                    setCoachLoginMsg(null);
-                    setCoachCodeInput("");
-                  }}
-                  className="w-1/3 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 font-black text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isVerifyingCoach || !coachCodeInput.trim()}
-                  className="w-2/3 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  {isVerifyingCoach ? (
-                    <>
-                      <div className="w-3.5 h-3.5 border-2 border-slate-950/30 border-t-slate-950 rounded-full animate-spin"></div>
-                      <span>Verifying...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Unlock size={15} />
-                      <span>Unlock Coach Access</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   const renderPlayerSecurity = () => {
-    if (!isShieldProtectionActive) {
-      return renderCoachLoginModal();
-    }
+    if (!isPlayerRole) return null;
     return (
       <>
-        {renderCoachLoginModal()}
         {/* Anti-screenshot & capture shield overlay */}
         {screenCaptureShieldActive && (
           <div
-            onClick={() => {
-              document.documentElement.classList.remove("shield-active");
-              document.body.classList.remove("shield-active");
-              setScreenCaptureShieldActive(false);
-            }}
-            className="fixed inset-0 z-[2147483647] bg-black flex flex-col items-center justify-center p-6 text-center select-none cursor-pointer"
+            onClick={() => setScreenCaptureShieldActive(false)}
+            className="fixed inset-0 z-[99999] bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center select-none backdrop-blur-2xl cursor-pointer"
           >
-            <div className="h-16 w-16 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center mb-5 text-red-500 shadow-2xl">
-              <ShieldAlert size={36} />
+            <div className="h-20 w-20 rounded-3xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center mb-5 text-amber-300 shadow-2xl">
+              <ShieldAlert size={42} />
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2">
-              Protected Content
+              Screen Capture Protection
             </h2>
-            <p className="text-zinc-400 text-xs sm:text-sm max-w-md font-medium leading-relaxed mb-6">
-              Screen capture and recording are prohibited. Viewing is restricted to authorized devices.
+            <p className="text-slate-300 text-sm max-w-md font-medium leading-relaxed mb-6">
+              Player code access is restricted to on-device viewing only. Screenshots, recording, and snipping tools are blocked.
             </p>
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  document.documentElement.classList.remove("shield-active");
-                  document.body.classList.remove("shield-active");
-                  setScreenCaptureShieldActive(false);
-                }}
-                className="bg-[#e50914] hover:bg-red-600 text-white font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95 cursor-pointer"
-              >
-                Tap to Resume
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  document.documentElement.classList.remove("shield-active");
-                  document.body.classList.remove("shield-active");
-                  setScreenCaptureShieldActive(false);
-                  setShowCoachLoginModal(true);
-                }}
-                className="bg-amber-500 hover:bg-amber-600 text-black font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95 cursor-pointer flex items-center gap-2"
-              >
-                <Key size={14} />
-                Coach Login / Verify
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setScreenCaptureShieldActive(false);
+              }}
+              className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-6 py-3 rounded-2xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95"
+            >
+              Resume Viewing On Device
+            </button>
           </div>
         )}
 
         {/* Security Warning Toast */}
         {screenshotAttemptNotice && (
-          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100000] bg-red-600 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider shadow-2xl flex items-center gap-2.5 border border-red-400 animate-pulse pointer-events-none">
+          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100000] bg-amber-400 text-slate-950 px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider shadow-2xl flex items-center gap-2.5 border-2 border-amber-300 animate-pulse pointer-events-none">
             <ShieldAlert size={18} className="shrink-0" />
             <span>{screenshotAttemptNotice}</span>
           </div>
         )}
 
-        {/* Dynamic Forensic Watermark with Player Google Account */}
-        <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden opacity-[0.06] select-none flex flex-wrap content-around justify-around p-4 rotate-[-12deg] scale-125">
+        {/* Dynamic Security Watermark */}
+        <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden opacity-[0.035] select-none flex flex-wrap content-around justify-around p-4 rotate-[-12deg] scale-125">
           {Array.from({ length: 36 }).map((_, i) => (
             <div
               key={i}
-              className="text-slate-900 dark:text-white font-black text-[10px] uppercase tracking-widest p-6 whitespace-nowrap"
+              className="text-slate-900 dark:text-white font-black text-[11px] uppercase tracking-widest p-6 whitespace-nowrap"
             >
-              CONFIDENTIAL • {user?.email || "PLAYER VIEW"} • {effectiveTeamName.toUpperCase()} • VIEW-ONLY ON DEVICE
+              PLAYER CODE VIEW ONLY • {effectiveTeamName.toUpperCase()} • NO SCREENSHOTS OR DOWNLOADS
             </div>
           ))}
         </div>
       </>
-    );
-  };
-
-  const renderPlayerAccessModal = () => {
-    return (
-      <PlayerAccessLogModal
-        isOpen={showPlayerAccessModal}
-        onClose={() => setShowPlayerAccessModal(false)}
-        teamId={activeTeam}
-        teamName={effectiveTeamName}
-        playerCode={appData.playerCode}
-        publicPath={publicPath}
-        db={db}
-      />
     );
   };
 
@@ -6133,11 +5429,9 @@ export default function App() {
   }
 
   if (view === "menu") {
-    const rawTeam = myTeams.find((t) => t.id === activeTeam);
-    const teamInfo = {
-      name: rawTeam?.name || effectiveTeamName || "Team Data",
-      color: rawTeam?.color || "from-slate-600 to-slate-800",
-      role: effectiveRole,
+    const teamInfo = myTeams.find((t) => t.id === activeTeam) || {
+      name: "Team Data",
+      color: "from-slate-600 to-slate-800",
     };
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
@@ -6255,59 +5549,6 @@ export default function App() {
                       Share
                     </button>
                   </div>
-                )}
-                {teamInfo.role === "coach" && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setShowPlayerAccessModal(true)}
-                      className="w-full mt-1 px-4 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 rounded-full text-emerald-300 font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Eye size={15} className="text-emerald-400 group-hover:scale-110 transition-transform" />
-                        <span>Player Stats Access Audit</span>
-                      </div>
-                      <span className="text-[10px] bg-emerald-500/30 text-emerald-200 px-2.5 py-0.5 rounded-full font-black">
-                        Google Accounts
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={togglePlayerAccess}
-                      className={`w-full mt-1.5 px-4 py-2.5 ${
-                        isPlayerAccessAllowed
-                          ? "bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-400/40 text-emerald-300"
-                          : "bg-red-500/20 hover:bg-red-500/30 border-red-400/40 text-red-300"
-                      } border rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group`}
-                    >
-                      <div className="flex items-center gap-2">
-                        {isPlayerAccessAllowed ? (
-                          <Unlock size={15} className="text-emerald-400 group-hover:scale-110 transition-transform" />
-                        ) : (
-                          <Lock size={15} className="text-red-400 group-hover:scale-110 transition-transform" />
-                        )}
-                        <span>Available to Players</span>
-                      </div>
-                      <span className={`text-[10px] ${isPlayerAccessAllowed ? "bg-emerald-500/30 text-emerald-200" : "bg-red-500/30 text-red-200"} px-2.5 py-0.5 rounded-full font-black`}>
-                        {isPlayerAccessAllowed ? "ACCESS ON" : "ACCESS OFF"}
-                      </span>
-                    </button>
-                  </>
-                )}
-                {isPlayerRole && (
-                  <button
-                    type="button"
-                    onClick={() => setShowCoachLoginModal(true)}
-                    className="w-full mt-2 px-4 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 rounded-full text-amber-300 font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Shield size={15} className="text-amber-400 group-hover:scale-110 transition-transform" />
-                      <span>Coach Login / Enter Code</span>
-                    </div>
-                    <span className="text-[10px] bg-amber-500/30 text-amber-200 px-2.5 py-0.5 rounded-full font-black">
-                      Coach Access
-                    </span>
-                  </button>
                 )}
               </div>
             )}
@@ -6650,7 +5891,6 @@ export default function App() {
           </div>
         )}
         {renderOpponentReportModal()}
-        {renderPlayerAccessModal()}
         {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
@@ -7973,42 +7213,22 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(() => {
-                    const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
-                      (id): id is string => Boolean(id),
-                    );
-                    const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
-                      if (!viewOppStats) {
-                        const pA = appData.roster.find((r) => r.id === idA);
-                        const pB = appData.roster.find((r) => r.id === idB);
-                        return sortPlayersByNumberThenAlpha(
-                          pA || { name: idA, id: idA },
-                          pB || { name: idB, id: idB },
-                        );
-                      } else {
-                        return sortPlayersByNumberThenAlpha(
-                          { number: idA, name: idA, id: idA },
-                          { number: idB, name: idB, id: idB },
-                        );
-                      }
-                    });
-
-                    return sortedCourtPlayers.map((id, index) => {
+                  {(!viewOppStats ? lineup : oppLineup)
+                    .filter((id): id is string => Boolean(id))
+                    .map((id, index) => {
                       const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
                       const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
                       // Back-row ("background") players in standard rotation are indices 0, 4, 5 (Positions 1, 5, 6)
                       const isBackRow = [0, 4, 5].includes(posIndex);
                       const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
-                      const isServer = !viewOppStats
-                        ? posIndex === 0 && serving === "ucc"
-                        : posIndex === 0 && serving === "opp";
+                      const isServer = !viewOppStats && posIndex === 0 && serving === "ucc";
 
                       const pName = !viewOppStats
                         ? appData.roster.find((r) => r.id === id)?.name || id
                         : id;
                       const pNum = !viewOppStats
                         ? appData.roster.find((r) => r.id === id)?.number || "-"
-                        : id.replace(/\D/g, "") || id;
+                        : "";
                       return (
                         <tr
                           key={index}
@@ -8177,21 +7397,14 @@ export default function App() {
                           {trackedCategories.Serve && (
                             <td className="p-1.5">
                               <button
-                                onClick={() => {
-                                  if (viewOppStats) {
-                                    setOppServeReceivePrompt({
-                                      passerId: null,
-                                      serverId: id,
-                                    });
-                                  } else {
-                                    setStatPrompt({
-                                      playerId: id,
-                                      type: "Serve",
-                                      isOpp: false,
-                                    });
-                                  }
-                                }}
-                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100 cursor-pointer"
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Serve",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100"
                               >
                                 Serve
                               </button>
@@ -8247,8 +7460,7 @@ export default function App() {
                           )}
                         </tr>
                       );
-                    });
-                  })()}
+                    })}
                 </tbody>
               </table>
             </div>
@@ -8272,27 +7484,12 @@ export default function App() {
             </button>
             {rallyPhase === "serve" && !servePromptVisible ? (
               <button
-                onClick={() => {
-                  if (serving === "opp") {
-                    setOppServeReceivePrompt({
-                      passerId: null,
-                      serverId: oppLineup[0],
-                    });
-                  } else {
-                    setServePromptVisible(true);
-                  }
-                }}
-                className={`flex-1 bg-gradient-to-b ${
-                  serving === "opp"
-                    ? "from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30"
-                    : "from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30"
-                } text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer`}
+                onClick={() => setServePromptVisible(true)}
+                className="flex-1 bg-gradient-to-b from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30 transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none"
               >
-                <span>{serving === "opp" ? "OPP SERVE" : "SERVE"}</span>
+                <span>SERVE</span>
                 <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">
-                  {serving === "opp"
-                    ? "TAP TO RECORD PASS / OUTCOME"
-                    : "TAP WHEN SERVED"}
+                  TAP WHEN SERVED
                 </span>
               </button>
             ) : (
@@ -9343,13 +8540,10 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setServing("opp");
-                  updateSetState({ serving: "opp" });
-                  setServePromptVisible(false);
-                  setOppServeReceivePrompt({
-                    passerId: null,
-                    serverId: oppLineup[0],
-                  });
+                  if (serving !== "opp") {
+                    setServing("opp");
+                    updateSetState({ serving: "opp" });
+                  }
                 }}
                 className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
                   serving === "opp"
@@ -9891,9 +9085,9 @@ export default function App() {
           </div>
         )}
 
-        {/* OPPONENT SERVE RECEIVE PROMPT (WHO PASSED & RATING / ACE / ERROR) */}
+        {/* OPPONENT SERVE RECEIVE PROMPT (WHO PASSED & RATING) */}
         {oppServeReceivePrompt && !setWinnerModal && (
-          <div className="fixed inset-0 bg-slate-900/85 z-[110] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="fixed inset-0 bg-slate-900/80 z-[110] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
             <div className="bg-white rounded-[2rem] p-4 sm:p-6 max-w-md w-full shadow-2xl flex flex-col items-center border border-slate-200">
               {/* Always Visible Score Banner */}
               <div className="w-full bg-slate-900 text-white rounded-2xl p-3 mb-3 flex items-center justify-between shadow-md">
@@ -9911,171 +9105,67 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Title and Server Indicator */}
-              <div className="w-full flex items-center justify-between mb-1">
-                <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-widest">
-                  Opponent Serve
-                </h2>
-                <span className="text-[10px] font-black uppercase bg-purple-100 text-purple-800 px-2.5 py-1 rounded-full border border-purple-200 shadow-xs">
-                  #{oppServeReceivePrompt.serverId || oppLineup[0] || "?"} Serving
-                </span>
-              </div>
-
+              <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-widest text-center">
+                Opponent Serve
+              </h2>
               <p className="text-xs sm:text-sm font-bold text-slate-500 mb-3 text-center">
-                {oppServeReceivePrompt.selectingAce
-                  ? "Who was aced? Tap player to log reception error (0 pass):"
-                  : oppServeReceivePrompt.passerId
+                {oppServeReceivePrompt.passerId
                   ? "Record pass rating for this serve:"
                   : "Who passed the ball, or did the serve end?"}
               </p>
 
-              {oppServeReceivePrompt.selectingAce ? (
-                /* WHO GOT ACED SELECTION */
-                <div className="w-full space-y-3">
-                  <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-black">
-                        <CheckCircle2 size={18} />
-                      </div>
-                      <div>
-                        <div className="text-xs font-black uppercase text-emerald-900 tracking-wider">
-                          Opponent Ace (+1 Pt Opp)
-                        </div>
-                        <div className="text-[10px] font-bold text-emerald-700">
-                          Select receiver who got aced:
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {(() => {
-                    const uccCandidates = getSevenReceivers("ucc");
-                    const sortedReceivers = [...uccCandidates].sort(sortPlayersByNumberThenAlpha);
-
-                    return (
-                      <div className="space-y-2">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-between px-1">
-                          <span>All Passers (Sorted by Number)</span>
-                          <span className="text-[9px] text-slate-500 font-bold">Tap who got aced</span>
-                        </div>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                          {sortedReceivers.map((item) => (
-                            <button
-                              key={item.id}
-                              type="button"
-                              onClick={() => {
-                                const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
-                                logStat(item.id, "Pass", "Rating", 0, false);
-                                logStat(sId, "Serve", "Ace", 1, true);
-                                handlePoint("opp", true);
-                                setOppServeReceivePrompt(null);
-                              }}
-                              className={`p-2.5 rounded-xl border-2 flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/50 ${
-                                item.isLibero
-                                  ? "bg-amber-50/80 border-amber-300 text-amber-900"
-                                  : "bg-slate-50 border-slate-200 text-slate-800"
-                              }`}
-                            >
-                              <span className="text-xl sm:text-2xl font-black leading-tight text-emerald-700">
-                                #{item.number}
-                              </span>
-                              <span className="text-[11px] font-bold truncate max-w-full">
-                                {item.name}
-                              </span>
-                              <span className="text-[8px] font-black uppercase mt-0.5 text-slate-400">
-                                {item.isLibero ? "Libero" : item.posLabel}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  <div className="pt-2 flex flex-col sm:flex-row gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
-                        logStat(sId, "Serve", "Ace", 1, true);
-                        handlePoint("opp", true);
-                        setOppServeReceivePrompt(null);
-                      }}
-                      className="flex-1 py-2.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-xl font-black text-xs uppercase tracking-wider transition-colors cursor-pointer text-center"
-                    >
-                      Unassigned Ace (Nobody Touched)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOppServeReceivePrompt((prev) =>
-                          prev ? { ...prev, selectingAce: false } : null,
-                        )
-                      }
-                      className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer text-center"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : !oppServeReceivePrompt.passerId ? (
+              {!oppServeReceivePrompt.passerId ? (
                 <div className="w-full space-y-2.5">
-                  {/* Quick outcome buttons: ERROR (RED) and ACE (GREEN) */}
+                  {/* Quick outcome buttons alongside who passed screen */}
                   <div className="grid grid-cols-2 gap-2">
-                    {/* Error button: RED */}
                     <button
                       type="button"
                       onClick={() => {
-                        const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
-                        logStat(sId, "Serve", "Miss", 1, true);
                         handlePoint("ucc");
                         setOppServeReceivePrompt(null);
                       }}
-                      className="py-3 px-2.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-red-500/40"
+                      className="py-2.5 px-2 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
                       title="Opponent Missed Serve (Net/Out) -> Point for Lancers"
                     >
-                      <XCircle size={18} />
-                      <span>Error (+Pt)</span>
+                      <CheckCircle2 size={16} />
+                      <span>Opp Error (+Pt)</span>
                     </button>
 
-                    {/* Ace button: GREEN */}
                     <button
                       type="button"
                       onClick={() => {
-                        setOppServeReceivePrompt((prev) => ({
-                          ...(prev || { passerId: null }),
-                          selectingAce: true,
-                        }));
+                        handlePoint("opp");
+                        setOppServeReceivePrompt(null);
                       }}
-                      className="py-3 px-2.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-green-500/40"
-                      title="Opponent Aced UCC -> Choose who got aced -> Point for Opponent"
+                      className="py-2.5 px-2 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Opponent Aced UCC -> Point for Opponent"
                     >
-                      <CheckCircle2 size={18} />
-                      <span>Ace (+Pt)</span>
+                      <XCircle size={16} />
+                      <span>Opp Ace (+Pt)</span>
                     </button>
                   </div>
 
                   {(() => {
                     const uccCandidates = getSevenReceivers("ucc");
-                    const sortedReceivers = [...uccCandidates].sort(sortPlayersByNumberThenAlpha);
+                    const sortedReceivers = [...uccCandidates].sort((a, b) => {
+                      const nA = parseInt((a.number || "").replace(/\D/g, ""), 10);
+                      const nB = parseInt((b.number || "").replace(/\D/g, ""), 10);
+                      if (!isNaN(nA) && !isNaN(nB)) return nA - nB;
+                      return (a.number || "").localeCompare(b.number || "");
+                    });
 
                     return (
                       <div className="space-y-2 pt-1">
                         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-between px-1">
-                          <span>Passers (Sorted by Number)</span>
+                          <span>Receivers (Sorted by Number)</span>
                           <span className="text-[9px] text-slate-500 font-bold">7 Active Players</span>
                         </div>
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                           {sortedReceivers.map((item) => (
                             <button
                               key={item.id}
-                              type="button"
                               onClick={() =>
-                                setOppServeReceivePrompt((prev) => ({
-                                  ...(prev || {}),
-                                  passerId: item.id,
-                                  selectingAce: false,
-                                }))
+                                setOppServeReceivePrompt({ passerId: item.id })
                               }
                               className={`p-2.5 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer ${
                                 item.isLibero
@@ -10101,7 +9191,6 @@ export default function App() {
 
                   <div className="pt-2 flex gap-2">
                     <button
-                      type="button"
                       onClick={() => {
                         setOppServeReceivePrompt(null);
                         changeRallyPhase("play");
@@ -10133,15 +9222,10 @@ export default function App() {
                       </span>
                     </div>
                     <button
-                      type="button"
                       onClick={() =>
-                        setOppServeReceivePrompt((prev) => ({
-                          ...(prev || {}),
-                          passerId: null,
-                          selectingAce: false,
-                        }))
+                        setOppServeReceivePrompt({ passerId: null })
                       }
-                      className="text-xs text-blue-600 font-bold hover:underline cursor-pointer"
+                      className="text-xs text-blue-600 font-bold hover:underline"
                     >
                       Change Passer
                     </button>
@@ -10152,53 +9236,34 @@ export default function App() {
                       { val: 3, label: "Perfect (3)", desc: "All options", color: "from-green-500 to-green-600" },
                       { val: 2, label: "Good (2)", desc: "Medium", color: "from-teal-500 to-teal-600" },
                       { val: 1, label: "Poor (1)", desc: "Out of sys", color: "from-amber-500 to-amber-600" },
-                      { val: 0, label: "Aced (0)", desc: "Aced / Err", color: "from-red-500 to-red-600" },
-                    ].map(({ val, label, desc, color }) => (
+                      { val: 0, label: "Error (0)", desc: "Overpass", color: "from-red-500 to-red-600" },
+                    ].map(({ val, desc, color }) => (
                       <button
                         key={val}
-                        type="button"
                         onClick={() => {
-                          if (val === 0) {
-                            // Recording rating 0 also logs that this receiver got aced and awards point to opponent
-                            const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
-                            logStat(
-                              oppServeReceivePrompt.passerId,
-                              "Pass",
-                              "Rating",
-                              0,
-                              false,
-                            );
-                            logStat(sId, "Serve", "Ace", 1, true);
-                            handlePoint("opp", true);
-                            setOppServeReceivePrompt(null);
-                          } else {
-                            recordStatAndCheckPoint(
-                              oppServeReceivePrompt.passerId,
-                              "Pass",
-                              "Rating",
-                              val,
-                            );
-                            setOppServeReceivePrompt(null);
-                          }
+                          recordStatAndCheckPoint(
+                            oppServeReceivePrompt.passerId,
+                            "Pass",
+                            "Rating",
+                            val,
+                          );
+                          setOppServeReceivePrompt(null);
                         }}
-                        className={`bg-gradient-to-b ${color} text-white p-3 rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all cursor-pointer`}
+                        className={`bg-gradient-to-b ${color} text-white p-3 rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all`}
                       >
                         <span className="text-2xl sm:text-3xl leading-none">{val}</span>
-                        <span className="text-[9px] uppercase tracking-wider opacity-90 mt-1 text-center font-bold">
-                          {label}
-                        </span>
+                        <span className="text-[9px] uppercase tracking-wider opacity-90 mt-1">{desc}</span>
                       </button>
                     ))}
                   </div>
 
                   <div className="pt-2 flex gap-2">
                     <button
-                      type="button"
                       onClick={() => {
                         setOppServeReceivePrompt(null);
                         changeRallyPhase("play");
                       }}
-                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
                     >
                       Skip Pass Rating (Play On)
                     </button>
@@ -11455,7 +10520,7 @@ export default function App() {
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
             ourTeamName={effectiveTeamName}
-            isReadOnly={isPlayerRole}
+            isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
           />
         )}
         <TeamNameEditModal
@@ -12287,7 +11352,7 @@ export default function App() {
             onDeleteStat={handleDeleteStat}
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
-            isReadOnly={isPlayerRole}
+            isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
           />
         )}
         {renderPlayerSecurity()}
@@ -12489,37 +11554,8 @@ export default function App() {
             </div>
           </div>
 
-          {isPlayerRole && !isPlayerAccessAllowed ? (
-            <div className="bg-white shadow-xl p-8 sm:p-12 border-x border-b border-slate-200 text-center select-none rounded-b-2xl sm:rounded-b-3xl">
-              <div className="h-16 w-16 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto mb-4 text-red-500">
-                <Lock size={32} />
-              </div>
-              <h2 className="text-xl font-black uppercase tracking-wider text-slate-800 mb-2">
-                Player Access Currently Closed
-              </h2>
-              <p className="text-slate-500 text-sm leading-relaxed mb-6 max-w-md mx-auto">
-                Your coaching staff has temporarily disabled player access to stats and comparisons.
-              </p>
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                <button
-                  onClick={() => setView("stats")}
-                  className="px-6 py-2.5 bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-wider hover:bg-slate-700 transition-colors cursor-pointer"
-                >
-                  Return to Stats
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCoachLoginModal(true)}
-                  className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 rounded-xl font-black text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 shadow-md cursor-pointer"
-                >
-                  <Shield size={16} />
-                  <span>Coach Login / Enter Code</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
-              <div className="flex space-x-2 border-b border-slate-200 mb-4 pb-2">
+          <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
+            <div className="flex space-x-2 border-b border-slate-200 mb-4 pb-2">
               <button
                 onClick={() => setCompareMode("players")}
                 className={`px-4 py-2 font-bold text-sm uppercase tracking-widest border-b-4 ${compareMode === "players" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400"}`}
@@ -12823,7 +11859,6 @@ export default function App() {
               </div>
             )}
           </div>
-        )}
         </div>
         {renderOpponentReportModal()}
         {renderPlayerSecurity()}
@@ -12833,11 +11868,10 @@ export default function App() {
   }
 
   if (view === "stats") {
-    const rawTeam = myTeams.find((t) => t.id === activeTeam);
-    const teamInfo = {
-      name: rawTeam?.name || effectiveTeamName || "Team Data",
-      color: rawTeam?.color || "from-slate-600 to-slate-800",
-      role: effectiveRole,
+    const teamInfo = myTeams.find((t) => t.id === activeTeam) || {
+      name: "Team Data",
+      color: "from-slate-600 to-slate-800",
+      role: "none",
     };
     return (
       <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col relative z-50">
@@ -12896,55 +11930,8 @@ export default function App() {
               >
                 <ArrowRightLeft className="mr-1 sm:mr-1.5" size={14} /> Compare
               </button>
-              {isPlayerRole && (
-                <button
-                  type="button"
-                  onClick={() => setShowCoachLoginModal(true)}
-                  className="flex-1 sm:flex-none bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                  title="Sign in with Coach account or enter Coach Code"
-                >
-                  <Shield className="mr-1 sm:mr-1.5" size={14} /> Coach Login
-                </button>
-              )}
-              {isCoachRole && (
-                <div className="hidden sm:flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider">
-                  <Shield size={13} className="text-emerald-400" />
-                  <span>Coach Mode</span>
-                </div>
-              )}
               {teamInfo.role !== "player" && (
                 <>
-                  <button
-                    onClick={() => setShowPlayerAccessModal(true)}
-                    className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                    title="View which players & Google accounts have accessed stats"
-                  >
-                    <Eye className="mr-1 sm:mr-1.5" size={14} /> Player Access
-                  </button>
-                  <button
-                    type="button"
-                    onClick={togglePlayerAccess}
-                    className={`flex-1 sm:flex-none ${
-                      isPlayerAccessAllowed
-                        ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
-                        : "bg-red-600 hover:bg-red-700 text-white shadow-red-500/20"
-                    } px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer`}
-                    title={
-                      isPlayerAccessAllowed
-                        ? "Player access to stats is currently OPEN. Click to lock/disable."
-                        : "Player access to stats is currently LOCKED. Click to unlock/allow."
-                    }
-                  >
-                    {isPlayerAccessAllowed ? (
-                      <>
-                        <Unlock className="mr-1 sm:mr-1.5" size={14} /> Available to Players: ON
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="mr-1 sm:mr-1.5" size={14} /> Available to Players: OFF
-                      </>
-                    )}
-                  </button>
                   <button
                     onClick={exportCSV}
                     className="flex-1 sm:flex-none bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors"
@@ -13917,9 +12904,6 @@ export default function App() {
                   : "0.0%";
               const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
-              const isTeamTotConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== "TEAM_TOTALS";
-              const isShownTotConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== "SHOWN_PLAYERS";
-
               return (
                 <div className="flex flex-col">
                   {/* Hidden players alert banner with interactive unhide chips */}
@@ -13976,145 +12960,7 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Player Access Closed Notice */}
-                  {isPlayerRole && !isPlayerAccessAllowed && (
-                    <div className="bg-slate-900 border-2 border-red-500/40 rounded-3xl p-8 sm:p-12 my-6 text-white text-center shadow-2xl max-w-xl mx-auto select-none">
-                      <div className="h-20 w-20 rounded-3xl bg-red-500/20 border border-red-500/30 flex items-center justify-center mx-auto mb-5 text-red-400 shadow-inner">
-                        <Lock size={40} />
-                      </div>
-                      <h2 className="text-xl sm:text-2xl font-black uppercase tracking-wider text-white mb-2">
-                        Player Access Currently Closed
-                      </h2>
-                      <p className="text-slate-300 text-sm leading-relaxed mb-6 max-w-md mx-auto">
-                        Your coaching staff has temporarily closed player access to team statistics. Check back later or contact your coach.
-                      </p>
-                      <div className="inline-flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-800/90 py-2 px-4 rounded-xl border border-slate-700 mb-6">
-                        <span>Account:</span>
-                        <span className="text-amber-400 font-bold">{user?.email || "Guest / Google Account"}</span>
-                      </div>
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() => setShowCoachLoginModal(true)}
-                          className="px-6 py-3.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 rounded-2xl font-black text-xs sm:text-sm uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl mx-auto transition-transform active:scale-95 cursor-pointer"
-                        >
-                          <Shield size={18} />
-                          <span>Coach Login / Enter Coach Code</span>
-                        </button>
-                        <p className="text-slate-400 text-[11px] mt-2.5">
-                          Are you a coach? Log in or enter your coach code to access all stats regardless of lock.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Player Confidential View Banner & Hold-to-Reveal Control */}
-                  {isPlayerRole && isPlayerAccessAllowed && (
-                    <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-2 border-amber-500/40 rounded-2xl p-4 mb-4 text-white shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 select-none">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30 flex items-center justify-center shrink-0 shadow-inner">
-                          <Shield size={20} />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-black text-xs uppercase tracking-wider text-amber-300">
-                              Player View-Only Mode
-                            </span>
-                            <span className="text-[10px] bg-red-950/90 text-red-300 px-2.5 py-0.5 rounded-full font-bold border border-red-800 flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-                              Screenshot Shield Active
-                            </span>
-                            <span className="text-[10px] bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full font-mono border border-slate-700">
-                              {user?.email || "Google Account"}
-                            </span>
-                          </div>
-                          <p className="text-slate-300 text-xs mt-0.5 leading-relaxed">
-                            Press & hold any player row or use the button to reveal numbers. Taking screenshots or screen recordings produces a solid black screen and is audited to your coach.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
-                        <button
-                          type="button"
-                          onMouseDown={() => setIsFullTableRevealed(true)}
-                          onMouseUp={() => setIsFullTableRevealed(false)}
-                          onTouchStart={() => setIsFullTableRevealed(true)}
-                          onTouchEnd={() => setIsFullTableRevealed(false)}
-                          className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg transition-all select-none cursor-pointer"
-                        >
-                          <Eye size={16} />
-                          <span>Hold to Reveal All</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Coach Player Access Control Bar */}
-                  {!isPlayerRole && (
-                    <div className="bg-slate-900/90 border border-slate-700/80 rounded-2xl p-4 mb-4 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`h-10 w-10 rounded-xl ${
-                            isPlayerAccessAllowed
-                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                              : "bg-red-500/20 text-red-400 border-red-500/30"
-                          } border flex items-center justify-center shrink-0`}
-                        >
-                          {isPlayerAccessAllowed ? <Unlock size={20} /> : <Lock size={20} />}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-black text-xs uppercase tracking-wider text-white">
-                              Player Access Control
-                            </span>
-                            <span
-                              className={`text-[10px] ${
-                                isPlayerAccessAllowed
-                                  ? "bg-emerald-950 text-emerald-300 border-emerald-800"
-                                  : "bg-red-950 text-red-300 border-red-800"
-                              } px-2.5 py-0.5 rounded-full font-black border`}
-                            >
-                              {isPlayerAccessAllowed ? "AVAILABLE TO PLAYERS" : "ACCESS CLOSED"}
-                            </span>
-                            <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-bold border border-slate-700">
-                              Anti-Screenshot Always Active
-                            </span>
-                          </div>
-                          <p className="text-slate-400 text-xs mt-0.5">
-                            {isPlayerAccessAllowed
-                              ? "Players with the team code can log in and view stats on personal devices (with screenshot prevention)."
-                              : "Players are locked out. Stats are hidden from all player accounts until you re-enable access."}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
-                        <button
-                          type="button"
-                          onClick={togglePlayerAccess}
-                          className={`px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md active:scale-95 ${
-                            isPlayerAccessAllowed
-                              ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20"
-                              : "bg-red-600 hover:bg-red-500 text-white shadow-red-500/20"
-                          }`}
-                        >
-                          {isPlayerAccessAllowed ? (
-                            <>
-                              <Unlock size={15} />
-                              <span>Available to Players: ON</span>
-                            </>
-                          ) : (
-                            <>
-                              <Lock size={15} />
-                              <span>Available to Players: OFF</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {(!isPlayerRole || isPlayerAccessAllowed) && (
-                    <div className={`bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative ${isPlayerRole ? "select-none" : ""}`}>
+                  <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
                     {/* Scroll indicator for mobile */}
                     <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
 
@@ -14258,13 +13104,7 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {/* TOP STICKY TEAM TOTALS ROW (WHOLE TEAM) */}
-                        <tr
-                          onMouseDown={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
-                          onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
-                          onTouchStart={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
-                          onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
-                          className={`bg-gradient-to-r from-blue-950 via-[#002B7A] to-blue-950 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-blue-400 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
-                        >
+                        <tr className="bg-gradient-to-r from-blue-950 via-[#002B7A] to-blue-950 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-blue-400">
                           <td
                             onClick={() =>
                               setStatBreakdownModal({
@@ -14301,7 +13141,7 @@ export default function App() {
                                 titleContext: "Team Passing Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/40 cursor-pointer hover:bg-blue-800/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/40 cursor-pointer hover:bg-blue-800/50 transition-colors"
                             title="Click to view Team Passing breakdown (3/2/1/0 scores)"
                           >
                             <span className="text-sm sm:text-base text-amber-300">
@@ -14321,7 +13161,7 @@ export default function App() {
                                 titleContext: "Team Dig Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
                             title="Click to view Team Dig breakdown"
                           >
                             <span className="text-blue-300 font-black text-sm">
@@ -14342,7 +13182,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
                             title="Click to view Team Attack breakdown"
                           >
                             <span className="font-black text-white">
@@ -14374,7 +13214,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
                             title="Click to view Team Attack breakdown"
                           >
                             {teamKillPct}
@@ -14389,7 +13229,7 @@ export default function App() {
                                 titleContext: "Team Block Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
                             title="Click to view Team Block breakdown"
                           >
                             <span className="font-black text-white">
@@ -14421,7 +13261,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors"
                             title="Click to view Team Serve breakdown"
                           >
                             <span className="font-black text-white">
@@ -14446,7 +13286,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
                             title="Click to view Team Serve breakdown"
                           >
                             <span
@@ -14467,13 +13307,7 @@ export default function App() {
 
                         {/* TOP STICKY SHOWN PLAYERS ROW (IF PLAYERS HIDDEN) */}
                         {hasHiddenPlayers && (
-                          <tr
-                            onMouseDown={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
-                            onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
-                            onTouchStart={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
-                            onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
-                            className={`bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-indigo-400 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
-                          >
+                          <tr className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-indigo-400">
                             <td
                               onClick={() =>
                                 setStatBreakdownModal({
@@ -14510,7 +13344,7 @@ export default function App() {
                                   titleContext: "Shown Players Passing Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/40 cursor-pointer hover:bg-indigo-800/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/40 cursor-pointer hover:bg-indigo-800/50 transition-colors"
                               title="Click to view Shown Players Passing breakdown"
                             >
                               <span className="text-sm sm:text-base text-indigo-300">
@@ -14530,7 +13364,7 @@ export default function App() {
                                   titleContext: "Shown Players Dig Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
                               title="Click to view Shown Players Dig breakdown"
                             >
                               <span className="text-indigo-300 font-black text-sm">
@@ -14551,7 +13385,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
                               title="Click to view Shown Players Attack breakdown"
                             >
                               <span className="font-black text-white">
@@ -14583,7 +13417,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
                               title="Click to view Shown Players Attack breakdown"
                             >
                               {shownKillPct}
@@ -14598,7 +13432,7 @@ export default function App() {
                                   titleContext: "Shown Players Block Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
                               title="Click to view Shown Players Block breakdown"
                             >
                               <span className="font-black text-white">
@@ -14630,7 +13464,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors"
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span className="font-black text-white">
@@ -14655,7 +13489,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span
@@ -14687,7 +13521,6 @@ export default function App() {
                           </tr>
                         ) : (
                           visibleUccPlayers.map((p) => {
-                            const isConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== p.id;
                             const passAvg =
                               p.passCount > 0
                                 ? (p.passSum / p.passCount).toFixed(2)
@@ -14704,12 +13537,7 @@ export default function App() {
                             return (
                               <tr
                                 key={p.id}
-                                onMouseDown={() => isPlayerRole && setRevealedPlayerId(p.id)}
-                                onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
-                                touch-action="manipulation"
-                                onTouchStart={() => isPlayerRole && setRevealedPlayerId(p.id)}
-                                onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
-                                className={`hover:bg-blue-50/30 text-[10px] sm:text-xs transition-colors group ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                                className="hover:bg-blue-50/30 text-[10px] sm:text-xs transition-colors group"
                               >
                                 <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400">
                                   <div className="flex items-center justify-between gap-1.5 sm:gap-2">
@@ -14754,7 +13582,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className={`p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  className="p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors"
                                   title={`Click to view ${p.name}'s Passing breakdown (3/2/1/0 scores)`}
                                 >
                                   {passAvg}{" "}
@@ -14772,7 +13600,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50 cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50 cursor-pointer hover:bg-slate-200/50 transition-colors"
                                   title={`Click to view ${p.name}'s Dig breakdown`}
                                 >
                                   <span className="text-blue-600 font-black text-sm">
@@ -14795,7 +13623,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  className="p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors"
                                   title={`Click to view ${p.name}'s Attack breakdown (Front/Back, Net, Out, Stuffed)`}
                                 >
                                   <span className="font-bold text-slate-600">
@@ -14831,7 +13659,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className={`p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30 cursor-pointer hover:bg-green-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30 cursor-pointer hover:bg-green-100/50 transition-colors"
                                   title={`Click to view ${p.name}'s Attack breakdown`}
                                 >
                                   {killPct}
@@ -14846,7 +13674,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className={`p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell cursor-pointer hover:bg-slate-200/50 transition-colors"
                                   title={`Click to view ${p.name}'s Block breakdown`}
                                 >
                                   <span className="font-bold">{blkTot}</span>(
@@ -14868,7 +13696,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className={`p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden cursor-pointer hover:bg-slate-200/50 transition-colors"
                                   title={`Click to view ${p.name}'s Block breakdown`}
                                 >
                                   <div className="flex flex-col">
@@ -14904,7 +13732,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors"
                                   title={`Click to view ${p.name}'s Serve breakdown (Net, Wide, Long, Foot Fault)`}
                                 >
                                   <span className="font-bold text-slate-600">
@@ -14933,7 +13761,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className={`p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors"
                                   title={`Click to view ${p.name}'s Serve breakdown`}
                                 >
                                   <span
@@ -14960,13 +13788,7 @@ export default function App() {
                       <tfoot className="border-t-2 border-[#0033A0] shadow-md">
                         {/* SHOWN PLAYERS ROW (IF PLAYERS ARE HIDDEN) */}
                         {hasHiddenPlayers && (
-                          <tr
-                            onMouseDown={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
-                            onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
-                            onTouchStart={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
-                            onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
-                            className={`bg-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b border-indigo-500/30 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
-                          >
+                          <tr className="bg-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b border-indigo-500/30">
                             <td className="p-2.5 sm:p-3 sticky left-0 bg-slate-900 text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-indigo-400">
                               <div className="flex items-center space-x-1.5 sm:space-x-2">
                                 <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
@@ -14992,7 +13814,7 @@ export default function App() {
                                   titleContext: "Shown Players Passing Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/30 cursor-pointer hover:bg-indigo-800/40 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/30 cursor-pointer hover:bg-indigo-800/40 transition-colors"
                               title="Click to view Shown Players Passing breakdown"
                             >
                               <span className="text-sm sm:text-base text-indigo-300">
@@ -15012,7 +13834,7 @@ export default function App() {
                                   titleContext: "Shown Players Dig Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
                               title="Click to view Shown Players Dig breakdown"
                             >
                               <span className="text-indigo-300 font-black text-sm">
@@ -15033,7 +13855,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
                               title="Click to view Shown Players Attack breakdown"
                             >
                               <span className="font-black text-white">
@@ -15065,7 +13887,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
                               title="Click to view Shown Players Attack breakdown"
                             >
                               {shownKillPct}
@@ -15080,7 +13902,7 @@ export default function App() {
                                   titleContext: "Shown Players Block Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
                               title="Click to view Shown Players Block breakdown"
                             >
                               <span className="font-black text-white">
@@ -15112,7 +13934,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span className="font-black text-white">
@@ -15137,7 +13959,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span
@@ -15158,13 +13980,7 @@ export default function App() {
                         )}
 
                         {/* WHOLE TEAM TOTALS ROW */}
-                        <tr
-                          onMouseDown={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
-                          onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
-                          onTouchStart={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
-                          onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
-                          className={`bg-[#001f5c] text-white font-bold text-[10px] sm:text-xs tracking-wider ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
-                        >
+                        <tr className="bg-[#001f5c] text-white font-bold text-[10px] sm:text-xs tracking-wider">
                           <td className="p-2.5 sm:p-3 sticky left-0 bg-[#001f5c] text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-blue-400">
                             <div className="flex items-center space-x-1.5 sm:space-x-2">
                               <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-amber-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
@@ -15191,7 +14007,7 @@ export default function App() {
                                 titleContext: "Team Passing Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors"
                             title="Click to view Team Passing breakdown"
                           >
                             <span className="text-sm sm:text-base text-amber-300">
@@ -15211,7 +14027,7 @@ export default function App() {
                                 titleContext: "Team Dig Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
                             title="Click to view Team Dig breakdown"
                           >
                             <span className="text-blue-300 font-black text-sm">
@@ -15232,7 +14048,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
                             title="Click to view Team Attack breakdown"
                           >
                             <span className="font-black text-white">
@@ -15264,7 +14080,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
                             title="Click to view Team Attack breakdown"
                           >
                             {teamKillPct}
@@ -15279,7 +14095,7 @@ export default function App() {
                                 titleContext: "Team Block Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
                             title="Click to view Team Block breakdown"
                           >
                             <span className="font-black text-white">
@@ -15311,7 +14127,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
                             title="Click to view Team Serve breakdown"
                           >
                             <span className="font-black text-white">
@@ -15336,7 +14152,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
                             title="Click to view Team Serve breakdown"
                           >
                             <span
@@ -15358,17 +14174,14 @@ export default function App() {
                     </table>
                   </div>
                 </div>
-              )}
               </div>
             );
             })()}
 
-            {(!isPlayerRole || isPlayerAccessAllowed) && (
-              <>
-                <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
-                  <Users className="mr-2 text-slate-500" size={18} /> Opponents
-                </h2>
-                <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-4xl mb-8 relative">
+            <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
+              <Users className="mr-2 text-slate-500" size={18} /> Opponents
+            </h2>
+            <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-4xl mb-8 relative">
               <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[700px]">
@@ -15606,8 +14419,6 @@ export default function App() {
                 </table>
               </div>
             </div>
-              </>
-            )}
           </div>
         </div>
 
@@ -15733,7 +14544,7 @@ export default function App() {
               </div>
 
               <div className="p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
-                {!isPlayerRole ? (
+                {myTeams.find((t) => t.id === activeTeam)?.role !== "player" ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -15807,7 +14618,7 @@ export default function App() {
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
             ourTeamName={effectiveTeamName}
-            isReadOnly={isPlayerRole}
+            isReadOnly={teamInfo.role === "player" || myTeams.find((t) => t.id === activeTeam)?.role === "player"}
           />
         )}
         <TeamNameEditModal
@@ -15882,7 +14693,6 @@ export default function App() {
             }
           }}
         />
-        {renderPlayerAccessModal()}
         {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
