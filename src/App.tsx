@@ -49,6 +49,8 @@ import {
   Minus,
   Lock,
   Unlock,
+  Key,
+  AlertTriangle,
 } from "lucide-react";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
@@ -727,15 +729,230 @@ export default function App() {
   const effectiveTeamName =
     myTeams.find((t) => t.id === activeTeam)?.name || customTeamName || "Lancers";
   const activeTeamProfile = myTeams.find((t) => t.id === activeTeam);
-  const isPlayerRole = Boolean(
+
+  // Coaches Access: Anyone with coach role in team, or coach unlock key, or owner/creator of team
+  const isCoachRole = Boolean(
+    activeTeamProfile?.role === "coach" ||
+    localStorage.getItem(`ucc_team_role_${activeTeam}`) === "coach" ||
+    (activeTeam && localStorage.getItem(`ucc_coach_unlocked_${activeTeam}`) === "true") ||
+    (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "coach")) ||
+    (appData.createdBy && user && appData.createdBy === user.uid)
+  );
+
+  // A user is strictly in player role ONLY if they are NOT a coach and have player indicator
+  const isPlayerRole = !isCoachRole && Boolean(
     activeTeamProfile?.role === "player" ||
     localStorage.getItem(`ucc_team_role_${activeTeam}`) === "player" ||
     localStorage.getItem("ucc_current_role") === "player" ||
     (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "player"))
   );
+
+  const effectiveRole = isCoachRole
+    ? "coach"
+    : isPlayerRole
+    ? "player"
+    : activeTeamProfile?.role || "coach";
+
   // Always keep anti-screenshot protection active globally
   const isShieldProtectionActive = true;
   const isPlayerAccessAllowed = (appData as any).playerAccessEnabled !== false;
+
+  const [showCoachLoginModal, setShowCoachLoginModal] = useState(false);
+  const [coachCodeInput, setCoachCodeInput] = useState("");
+  const [coachLoginMsg, setCoachLoginMsg] = useState<{ text: string; isError: boolean } | null>(null);
+  const [isVerifyingCoach, setIsVerifyingCoach] = useState(false);
+
+  const handleVerifyCoachCode = async (codeToVerify?: string) => {
+    const rawCode = (codeToVerify !== undefined ? codeToVerify : coachCodeInput).trim().toUpperCase();
+    if (!rawCode) {
+      setCoachLoginMsg({ text: "Please enter a valid Coach Code.", isError: true });
+      return;
+    }
+    setIsVerifyingCoach(true);
+    setCoachLoginMsg(null);
+
+    try {
+      let isMatch = false;
+      let targetTeamId = activeTeam;
+
+      // 1. Check against active team's coachCode or ID
+      if (activeTeam) {
+        if (
+          rawCode === (appData.coachCode || "").trim().toUpperCase() ||
+          rawCode === activeTeam.trim().toUpperCase()
+        ) {
+          isMatch = true;
+          targetTeamId = activeTeam;
+        }
+      }
+
+      // 2. Check share_codes in Firestore
+      if (!isMatch && isFirebaseAvailable && db) {
+        try {
+          const codeSnap = await getDoc(doc(db, "share_codes", rawCode));
+          if (codeSnap.exists()) {
+            const data = codeSnap.data();
+            if (data.role === "coach") {
+              isMatch = true;
+              targetTeamId = data.teamId;
+            }
+          }
+        } catch (e) {
+          console.log("share_codes check error:", e);
+        }
+      }
+
+      // 3. Check core settings in Firestore for activeTeam
+      if (!isMatch && isFirebaseAvailable && db && activeTeam) {
+        try {
+          const teamSettingsSnap = await getDoc(doc(db, `${publicPath}/${activeTeam}/settings/core`));
+          if (teamSettingsSnap.exists()) {
+            const coreData = teamSettingsSnap.data();
+            if (coreData.coachCode && coreData.coachCode.trim().toUpperCase() === rawCode) {
+              isMatch = true;
+              targetTeamId = activeTeam;
+            }
+          }
+        } catch (e) {
+          console.log("core settings check error:", e);
+        }
+      }
+
+      if (!isMatch) {
+        setCoachLoginMsg({
+          text: "Incorrect Coach Code. Please check the code provided by your coaching staff.",
+          isError: true,
+        });
+        setIsVerifyingCoach(false);
+        return;
+      }
+
+      const teamKey = targetTeamId || activeTeam || "default";
+      localStorage.setItem(`ucc_team_role_${teamKey}`, "coach");
+      localStorage.setItem("ucc_current_role", "coach");
+      localStorage.setItem(`ucc_coach_unlocked_${teamKey}`, "true");
+
+      if (user && isFirebaseAvailable && db && targetTeamId) {
+        try {
+          await setDoc(
+            doc(db, `${publicPath}/${targetTeamId}/members/${user.uid}`),
+            {
+              uid: user.uid,
+              role: "coach",
+              joinedAt: serverTimestamp(),
+              email: user.email || "",
+              displayName: user.displayName || user.email?.split("@")[0] || "Coach",
+              photoURL: user.photoURL || "",
+              lastActive: serverTimestamp(),
+            },
+            { merge: true },
+          );
+
+          const existing = myTeams.find((t) => t.id === targetTeamId);
+          let newTeams = [];
+          if (existing) {
+            newTeams = myTeams.map((t) =>
+              t.id === targetTeamId ? { ...t, role: "coach" } : t,
+            );
+          } else {
+            newTeams = [
+              ...myTeams,
+              {
+                id: targetTeamId,
+                name: effectiveTeamName,
+                color: "from-[#002B7A] to-blue-950",
+                role: "coach",
+              },
+            ];
+          }
+          setMyTeams(newTeams);
+          await setDoc(
+            doc(db, "users", user.uid),
+            { teams: newTeams },
+            { merge: true },
+          );
+        } catch (err) {
+          console.error("Failed to sync coach role to Firebase:", err);
+        }
+      }
+
+      if (targetTeamId && targetTeamId !== activeTeam) {
+        setActiveTeam(targetTeamId);
+        localStorage.setItem("ucc_vball_active_team", targetTeamId);
+      }
+
+      setCoachLoginMsg({
+        text: "Coach access verified! Full access granted.",
+        isError: false,
+      });
+
+      setTimeout(() => {
+        setShowCoachLoginModal(false);
+        setCoachCodeInput("");
+        setCoachLoginMsg(null);
+        setIsVerifyingCoach(false);
+      }, 700);
+    } catch (err: any) {
+      console.error("Coach verification error:", err);
+      setCoachLoginMsg({
+        text: err?.message || "Failed to verify coach code. Please try again.",
+        isError: true,
+      });
+      setIsVerifyingCoach(false);
+    }
+  };
+
+  const handleGoogleCoachSignIn = async () => {
+    const provider = new GoogleAuthProvider();
+    setIsVerifyingCoach(true);
+    setCoachLoginMsg(null);
+    try {
+      const res = await signInWithPopup(auth, provider);
+      if (res.user && activeTeam && isFirebaseAvailable && db) {
+        try {
+          const memberDoc = await getDoc(
+            doc(db, `${publicPath}/${activeTeam}/members/${res.user.uid}`),
+          );
+          const teamDoc = await getDoc(
+            doc(db, `${publicPath}/${activeTeam}`),
+          );
+          const isCreator = teamDoc.exists() && teamDoc.data()?.createdBy === res.user.uid;
+          const isMemberCoach = memberDoc.exists() && memberDoc.data()?.role === "coach";
+
+          if (isCreator || isMemberCoach) {
+            localStorage.setItem(`ucc_team_role_${activeTeam}`, "coach");
+            localStorage.setItem("ucc_current_role", "coach");
+            localStorage.setItem(`ucc_coach_unlocked_${activeTeam}`, "true");
+            setCoachLoginMsg({
+              text: `Recognized Coach Account (${res.user.email})! Access granted.`,
+              isError: false,
+            });
+            setTimeout(() => {
+              setShowCoachLoginModal(false);
+              setCoachLoginMsg(null);
+              setIsVerifyingCoach(false);
+            }, 700);
+            return;
+          }
+        } catch (e) {
+          console.log("Check coach doc error:", e);
+        }
+      }
+      setIsVerifyingCoach(false);
+      setCoachLoginMsg({
+        text: `Signed in as ${res.user.email}. If you have a Coach Code, enter it below to activate Coach permissions.`,
+        isError: false,
+      });
+    } catch (err: any) {
+      setIsVerifyingCoach(false);
+      if (err.code !== "auth/popup-closed-by-user") {
+        setCoachLoginMsg({
+          text: `Sign-in error: ${err.message}`,
+          isError: true,
+        });
+      }
+    }
+  };
 
   const togglePlayerAccess = async () => {
     const nextState = !isPlayerAccessAllowed;
@@ -957,16 +1174,39 @@ export default function App() {
     }
   }, [user, activeTeam, myTeams]);
 
+  // Member Coach Role Sync
+  useEffect(() => {
+    if (!user || !isFirebaseAvailable || !activeTeam || !db) return;
+    let unsub = () => {};
+    try {
+      unsub = onSnapshot(
+        doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            if (data?.role === "coach") {
+              localStorage.setItem(`ucc_team_role_${activeTeam}`, "coach");
+              localStorage.setItem("ucc_current_role", "coach");
+              localStorage.setItem(`ucc_coach_unlocked_${activeTeam}`, "true");
+              setMyTeams((prev: any[]) =>
+                prev.map((t) => (t.id === activeTeam ? { ...t, role: "coach" } : t)),
+              );
+            }
+          }
+        },
+        (err) => console.log("Member role listener error:", err),
+      );
+    } catch (e) {
+      console.log("Member role setup error:", e);
+    }
+    return () => unsub();
+  }, [user, activeTeam]);
+
   // Player Stats Access Audit Logger
   const logPlayerStatsAccess = async (targetViewName?: string) => {
     if (!user || !activeTeam || !db) return;
     try {
-      const isPlayer = Boolean(
-        activeTeamProfile?.role === "player" ||
-        localStorage.getItem(`ucc_team_role_${activeTeam}`) === "player" ||
-        localStorage.getItem("ucc_current_role") === "player" ||
-        (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "player"))
-      );
+      const isPlayer = isPlayerRole;
 
       const userEmail = user.email || "Unknown Google Account";
       const userDisplayName = user.displayName || user.email?.split("@")[0] || "Player";
@@ -4092,7 +4332,7 @@ export default function App() {
 
   const exportCSV = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
-    if (currentTeam?.role === "player") {
+    if (!isCoachRole && (currentTeam?.role === "player" || isPlayerRole)) {
       alert("Data export is disabled for player codes. Stats can only be viewed on your device.");
       return;
     }
@@ -4276,7 +4516,7 @@ export default function App() {
 
   const exportPDF = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
-    if (currentTeam?.role === "player") {
+    if (!isCoachRole && (currentTeam?.role === "player" || isPlayerRole)) {
       alert("PDF downloads are disabled for player codes. Stats can only be viewed on your device.");
       return;
     }
@@ -4734,9 +4974,41 @@ export default function App() {
         role = codeSnap.data().role;
       }
 
-      if (myTeams.find((t) => t.id === teamId)) {
-        alert("You are already in this team.");
-        return;
+      const existingTeam = myTeams.find((t) => t.id === teamId);
+      if (existingTeam) {
+        if (role === "coach") {
+          // Upgrade player membership to Coach
+          await setDoc(doc(db, `${publicPath}/${teamId}/members/${user.uid}`), {
+            uid: user.uid,
+            role: "coach",
+            joinedAt: serverTimestamp(),
+            email: user.email || "",
+            displayName: user.displayName || user.email?.split("@")[0] || "Coach",
+            photoURL: user.photoURL || "",
+            lastActive: serverTimestamp(),
+          }, { merge: true });
+
+          localStorage.setItem(`ucc_team_role_${teamId}`, "coach");
+          localStorage.setItem("ucc_current_role", "coach");
+          localStorage.setItem(`ucc_coach_unlocked_${teamId}`, "true");
+
+          const newTeams = myTeams.map((t) =>
+            t.id === teamId ? { ...t, role: "coach" } : t,
+          );
+          setMyTeams(newTeams);
+          await setDoc(
+            doc(db, "users", user.uid),
+            { teams: newTeams },
+            { merge: true },
+          );
+          alert(`Successfully verified Coach access for ${existingTeam.name}! You now have full access regardless of player lock.`);
+          setActiveTeam(teamId);
+          localStorage.setItem("ucc_vball_active_team", teamId);
+          return;
+        } else {
+          alert("You are already in this team.");
+          return;
+        }
       }
 
       // 1. Give Access (via permissive member creation rule)
@@ -4753,6 +5025,9 @@ export default function App() {
       // Persist role in local storage
       localStorage.setItem(`ucc_team_role_${teamId}`, role);
       localStorage.setItem("ucc_current_role", role);
+      if (role === "coach") {
+        localStorage.setItem(`ucc_coach_unlocked_${teamId}`, "true");
+      }
 
       // 2. Fetch metadata that we now have access to read
       const snap = await getDoc(
@@ -5047,12 +5322,183 @@ export default function App() {
   // RENDERERS
   // -------------------------------------------------------------
 
+  const renderCoachLoginModal = () => {
+    if (!showCoachLoginModal) return null;
+
+    return (
+      <div className="fixed inset-0 bg-slate-900/85 backdrop-blur-md z-[130] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
+          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 sm:p-6 text-white relative">
+            <button
+              type="button"
+              onClick={() => {
+                setShowCoachLoginModal(false);
+                setCoachLoginMsg(null);
+                setCoachCodeInput("");
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-2 rounded-full cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-12 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-400/30 flex items-center justify-center shrink-0 shadow-inner">
+                <Shield size={24} />
+              </div>
+              <div>
+                <h3 className="font-black text-lg sm:text-xl tracking-wider uppercase text-white">
+                  Coach Login & Unlock
+                </h3>
+                <p className="text-slate-300 text-xs mt-0.5 font-medium">
+                  Full access at all times, regardless of player lockout
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-5 sm:p-6 space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-900 leading-relaxed flex items-start gap-2.5">
+              <ShieldAlert size={18} className="text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Coaches Access Guarantee:</span>{" "}
+                Coaches maintain 100% full access to view stats, line-ups, and run games even when player access is disabled or locked.
+              </div>
+            </div>
+
+            {/* Google Coach Sign In Option */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-black uppercase tracking-wider text-slate-500 block">
+                Method 1: Sign in with Coach Google Account
+              </label>
+              {user ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0"></span>
+                    <span className="text-slate-600 font-medium truncate">{user.email}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await signOut(auth);
+                      setCoachLoginMsg({ text: "Signed out. Please sign in with your Coach account.", isError: false });
+                    }}
+                    className="text-indigo-600 hover:text-indigo-800 font-bold uppercase tracking-wider text-[10px] shrink-0 ml-2 cursor-pointer"
+                  >
+                    Switch Account
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleGoogleCoachSignIn}
+                  disabled={isVerifyingCoach}
+                  className="w-full bg-white hover:bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer"
+                >
+                  <img
+                    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                    alt="Google"
+                    className="w-4 h-4"
+                  />
+                  <span>Sign In with Coach Google Account</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 my-2">
+              <div className="h-px bg-slate-200 flex-1"></div>
+              <span className="text-[10px] uppercase font-bold text-slate-400">OR</span>
+              <div className="h-px bg-slate-200 flex-1"></div>
+            </div>
+
+            {/* Coach Code Option */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleVerifyCoachCode();
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label className="text-[11px] font-black uppercase tracking-wider text-slate-500 block mb-1">
+                  Method 2: Enter Coach Share Code
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={coachCodeInput}
+                    onChange={(e) => {
+                      setCoachCodeInput(e.target.value.toUpperCase());
+                      if (coachLoginMsg) setCoachLoginMsg(null);
+                    }}
+                    placeholder="Enter Coach Code (e.g. 6-digit code or Team ID)"
+                    className="w-full uppercase font-mono tracking-widest px-4 py-2.5 rounded-xl border border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-sm font-bold text-slate-800 transition-all placeholder:text-slate-400 placeholder:normal-case placeholder:font-sans placeholder:tracking-normal"
+                    disabled={isVerifyingCoach}
+                    autoFocus
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+                    <Key size={16} />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Coaches can find this code in the database menu or team settings.
+                </p>
+              </div>
+
+              {coachLoginMsg && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                    coachLoginMsg.isError
+                      ? "bg-red-50 text-red-700 border border-red-200"
+                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  }`}
+                >
+                  {coachLoginMsg.isError ? <AlertTriangle size={15} className="shrink-0" /> : <CheckCircle2 size={15} className="shrink-0" />}
+                  <span>{coachLoginMsg.text}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCoachLoginModal(false);
+                    setCoachLoginMsg(null);
+                    setCoachCodeInput("");
+                  }}
+                  className="w-1/3 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 font-black text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isVerifyingCoach || !coachCodeInput.trim()}
+                  className="w-2/3 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {isVerifyingCoach ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-slate-950/30 border-t-slate-950 rounded-full animate-spin"></div>
+                      <span>Verifying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Unlock size={15} />
+                      <span>Unlock Coach Access</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderPlayerSecurity = () => {
-    if (!isShieldProtectionActive) return null;
     return (
       <>
+        {renderCoachLoginModal()}
         {/* Anti-screenshot & capture shield overlay */}
-        {screenCaptureShieldActive && (
+        {isShieldProtectionActive && screenCaptureShieldActive && (
           <div
             onClick={() => {
               document.documentElement.classList.remove("shield-active");
@@ -5686,9 +6132,11 @@ export default function App() {
   }
 
   if (view === "menu") {
-    const teamInfo = myTeams.find((t) => t.id === activeTeam) || {
-      name: "Team Data",
-      color: "from-slate-600 to-slate-800",
+    const rawTeam = myTeams.find((t) => t.id === activeTeam);
+    const teamInfo = {
+      name: rawTeam?.name || effectiveTeamName || "Team Data",
+      color: rawTeam?.color || "from-slate-600 to-slate-800",
+      role: effectiveRole,
     };
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
@@ -5844,6 +6292,21 @@ export default function App() {
                       </span>
                     </button>
                   </>
+                )}
+                {isPlayerRole && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCoachLoginModal(true)}
+                    className="w-full mt-2 px-4 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 rounded-full text-amber-300 font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Shield size={15} className="text-amber-400 group-hover:scale-110 transition-transform" />
+                      <span>Coach Login / Enter Code</span>
+                    </div>
+                    <span className="text-[10px] bg-amber-500/30 text-amber-200 px-2.5 py-0.5 rounded-full font-black">
+                      Coach Access
+                    </span>
+                  </button>
                 )}
               </div>
             )}
@@ -10991,7 +11454,7 @@ export default function App() {
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
             ourTeamName={effectiveTeamName}
-            isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
+            isReadOnly={isPlayerRole}
           />
         )}
         <TeamNameEditModal
@@ -11823,7 +12286,7 @@ export default function App() {
             onDeleteStat={handleDeleteStat}
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
-            isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
+            isReadOnly={isPlayerRole}
           />
         )}
         {renderPlayerSecurity()}
@@ -12036,12 +12499,22 @@ export default function App() {
               <p className="text-slate-500 text-sm leading-relaxed mb-6 max-w-md mx-auto">
                 Your coaching staff has temporarily disabled player access to stats and comparisons.
               </p>
-              <button
-                onClick={() => setView("stats")}
-                className="px-6 py-2.5 bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-wider hover:bg-slate-700 transition-colors"
-              >
-                Return to Stats
-              </button>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={() => setView("stats")}
+                  className="px-6 py-2.5 bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-wider hover:bg-slate-700 transition-colors cursor-pointer"
+                >
+                  Return to Stats
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCoachLoginModal(true)}
+                  className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 rounded-xl font-black text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                >
+                  <Shield size={16} />
+                  <span>Coach Login / Enter Code</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
@@ -12359,10 +12832,11 @@ export default function App() {
   }
 
   if (view === "stats") {
-    const teamInfo = myTeams.find((t) => t.id === activeTeam) || {
-      name: "Team Data",
-      color: "from-slate-600 to-slate-800",
-      role: "none",
+    const rawTeam = myTeams.find((t) => t.id === activeTeam);
+    const teamInfo = {
+      name: rawTeam?.name || effectiveTeamName || "Team Data",
+      color: rawTeam?.color || "from-slate-600 to-slate-800",
+      role: effectiveRole,
     };
     return (
       <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col relative z-50">
@@ -12421,6 +12895,22 @@ export default function App() {
               >
                 <ArrowRightLeft className="mr-1 sm:mr-1.5" size={14} /> Compare
               </button>
+              {isPlayerRole && (
+                <button
+                  type="button"
+                  onClick={() => setShowCoachLoginModal(true)}
+                  className="flex-1 sm:flex-none bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                  title="Sign in with Coach account or enter Coach Code"
+                >
+                  <Shield className="mr-1 sm:mr-1.5" size={14} /> Coach Login
+                </button>
+              )}
+              {isCoachRole && (
+                <div className="hidden sm:flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider">
+                  <Shield size={13} className="text-emerald-400" />
+                  <span>Coach Mode</span>
+                </div>
+              )}
               {teamInfo.role !== "player" && (
                 <>
                   <button
@@ -13497,9 +13987,22 @@ export default function App() {
                       <p className="text-slate-300 text-sm leading-relaxed mb-6 max-w-md mx-auto">
                         Your coaching staff has temporarily closed player access to team statistics. Check back later or contact your coach.
                       </p>
-                      <div className="inline-flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-800/90 py-2 px-4 rounded-xl border border-slate-700">
+                      <div className="inline-flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-800/90 py-2 px-4 rounded-xl border border-slate-700 mb-6">
                         <span>Account:</span>
-                        <span className="text-amber-400 font-bold">{user?.email || "Google Account"}</span>
+                        <span className="text-amber-400 font-bold">{user?.email || "Guest / Google Account"}</span>
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => setShowCoachLoginModal(true)}
+                          className="px-6 py-3.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 rounded-2xl font-black text-xs sm:text-sm uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl mx-auto transition-transform active:scale-95 cursor-pointer"
+                        >
+                          <Shield size={18} />
+                          <span>Coach Login / Enter Coach Code</span>
+                        </button>
+                        <p className="text-slate-400 text-[11px] mt-2.5">
+                          Are you a coach? Log in or enter your coach code to access all stats regardless of lock.
+                        </p>
                       </div>
                     </div>
                   )}
@@ -15229,7 +15732,7 @@ export default function App() {
               </div>
 
               <div className="p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
-                {myTeams.find((t) => t.id === activeTeam)?.role !== "player" ? (
+                {!isPlayerRole ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -15303,7 +15806,7 @@ export default function App() {
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
             ourTeamName={effectiveTeamName}
-            isReadOnly={teamInfo.role === "player" || myTeams.find((t) => t.id === activeTeam)?.role === "player"}
+            isReadOnly={isPlayerRole}
           />
         )}
         <TeamNameEditModal
