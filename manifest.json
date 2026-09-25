@@ -7,7 +7,6 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "categories": ["sports", "productivity"],
   "background_color": "#001b5e",
   "theme_color": "#001b5e",
   "icons": [
