@@ -13,28 +13,12 @@
     <meta name="description" content="Comprehensive volleyball statistics tracking app for UCC Lancers, featuring multi-team management, live match tracking, practice stat analysis, data correction, and career stats aggregation." />
     <meta property="og:title" content="UCC Lancers Volleyball Stats" />
     <meta property="og:description" content="Comprehensive volleyball statistics tracking app for UCC Lancers, featuring multi-team management, live match tracking, practice stat analysis, data correction, and career stats aggregation." />
+    <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/pwa-512x512.png" />
     <link rel="shortcut icon" href="/pwa-192x192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon-precomposed.png" />
-    <script>
-      // Capture beforeinstallprompt immediately on page load
-      window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        window.__deferredInstallPrompt = e;
-        if (typeof window.__onBeforeInstallPrompt === 'function') {
-          window.__onBeforeInstallPrompt(e);
-        }
-      });
-      window.addEventListener('appinstalled', () => {
-        window.__isAppInstalled = true;
-        window.__deferredInstallPrompt = null;
-        if (typeof window.__onAppInstalled === 'function') {
-          window.__onAppInstalled();
-        }
-      });
-    </script>
   </head>
   <body>
     <div id="root">

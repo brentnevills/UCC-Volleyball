@@ -1049,9 +1049,6 @@ export default function App() {
     titleContext: "",
   });
   const [statFilter, setStatFilter] = useState("all");
-  const [isOnline, setIsOnline] = useState(() =>
-    typeof navigator !== "undefined" ? navigator.onLine : true,
-  );
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
@@ -1556,8 +1553,7 @@ export default function App() {
     // Detect standalone mode (already installed)
     const isStandalone =
       window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as any).standalone === true ||
-      document.referrer.includes("android-app://");
+      (window.navigator as any).standalone === true;
     setIsAppInstalled(isStandalone);
 
     // Detect iOS devices
@@ -1567,35 +1563,18 @@ export default function App() {
       (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
     setIsIOS(isIOSDevice);
 
-    if ((window as any).__deferredInstallPrompt) {
-      setDeferredPrompt((window as any).__deferredInstallPrompt);
-    }
-    if ((window as any).__isAppInstalled) {
-      setIsAppInstalled(true);
-    }
-
     const handleBeforeInstallPrompt = (e: any) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      (window as any).__deferredInstallPrompt = e;
     };
 
     const handleAppInstalled = () => {
       setIsAppInstalled(true);
       setDeferredPrompt(null);
-      (window as any).__deferredInstallPrompt = null;
     };
-
-    (window as any).__onBeforeInstallPrompt = handleBeforeInstallPrompt;
-    (window as any).__onAppInstalled = handleAppInstalled;
-
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     window.addEventListener("appinstalled", handleAppInstalled);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
 
     return () => {
       window.removeEventListener(
@@ -1603,8 +1582,6 @@ export default function App() {
         handleBeforeInstallPrompt,
       );
       window.removeEventListener("appinstalled", handleAppInstalled);
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
     };
   }, []);
 
@@ -3202,24 +3179,21 @@ export default function App() {
     if (e) {
       e.stopPropagation();
     }
-    const promptEvent = deferredPrompt || (window as any).__deferredInstallPrompt;
-    if (promptEvent) {
+    if (deferredPrompt) {
       try {
-        await promptEvent.prompt();
-        const { outcome } = await promptEvent.userChoice;
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
         if (outcome === "accepted") {
           setIsAppInstalled(true);
           setDeferredPrompt(null);
-          (window as any).__deferredInstallPrompt = null;
           setShowInstallModal(false);
-          return;
         }
       } catch (err) {
         setShowInstallModal(true);
-        return;
       }
+    } else {
+      setShowInstallModal(true);
     }
-    setShowInstallModal(true);
   };
 
   const handleBlockAssistChoice = (assistPlayerId) => {
@@ -5596,14 +5570,7 @@ export default function App() {
   };
 
   const renderInstallModal = () => {
-    const offlineBanner = !isOnline && (
-      <div className="fixed bottom-4 left-4 z-[9999] flex items-center gap-2 rounded-xl bg-amber-600/95 border border-amber-400 text-white px-3.5 py-2 text-xs font-bold shadow-2xl backdrop-blur-md pointer-events-none">
-        <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
-        <span>Offline Mode — Cached data is being used</span>
-      </div>
-    );
-
-    if (!showInstallModal) return offlineBanner;
+    if (!showInstallModal) return null;
     const ua = typeof window !== "undefined" ? window.navigator.userAgent.toLowerCase() : "";
     const isAndroidDevice = /android/.test(ua);
     const activeTab =
@@ -5616,12 +5583,10 @@ export default function App() {
         : installModalTab;
 
     return (
-      <>
-        {offlineBanner}
-        <div
-          className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[99999] font-sans"
-          onClick={() => setShowInstallModal(false)}
-        >
+      <div
+        className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[99999] font-sans"
+        onClick={() => setShowInstallModal(false)}
+      >
         <div
           className="bg-slate-900 border border-slate-700 rounded-3xl max-w-lg w-full p-6 text-white shadow-2xl relative overflow-hidden"
           onClick={(e) => e.stopPropagation()}
@@ -5668,33 +5633,29 @@ export default function App() {
           </div>
 
           {/* Direct 1-Click Install if prompt available */}
-          {(deferredPrompt || (window as any).__deferredInstallPrompt) && (
+          {deferredPrompt && (
             <div className="mb-5 bg-gradient-to-r from-indigo-900/60 to-blue-900/60 border border-indigo-500/40 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-bold text-white flex items-center gap-1.5">
                   <Sparkles size={16} className="text-amber-400" /> 1-Click Install Available
                 </div>
                 <div className="text-xs text-slate-300">
-                  Chrome has verified installability. Click below to install directly to your device.
+                  Click below to install directly onto your device
                 </div>
               </div>
               <button
                 onClick={async () => {
                   try {
-                    const p = deferredPrompt || (window as any).__deferredInstallPrompt;
-                    if (p) {
-                      await p.prompt();
-                      const { outcome } = await p.userChoice;
-                      if (outcome === "accepted") {
-                        setIsAppInstalled(true);
-                        setDeferredPrompt(null);
-                        (window as any).__deferredInstallPrompt = null;
-                        setShowInstallModal(false);
-                      }
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    if (outcome === "accepted") {
+                      setIsAppInstalled(true);
+                      setDeferredPrompt(null);
+                      setShowInstallModal(false);
                     }
                   } catch (e) {}
                 }}
-                className="w-full sm:w-auto bg-indigo-500 hover:bg-indigo-400 text-white font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
+                className="w-full sm:w-auto bg-indigo-500 hover:bg-indigo-400 text-white font-black text-xs uppercase tracking-widest px-4 py-2.5 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 whitespace-nowrap"
               >
                 <Download size={16} /> Install Now
               </button>
@@ -5866,9 +5827,9 @@ export default function App() {
                     1
                   </div>
                   <div>
-                    <span className="font-bold text-white">Google Chrome Address Bar</span>
+                    <span className="font-bold text-white">Look for the Install Icon</span>
                     <p className="text-xs text-slate-400">
-                      In Chrome, look for the <Download size={12} className="inline mx-1 text-indigo-400" /> <strong>Install UCC Lancers</strong> icon on the far right of the Chrome address (URL) bar, next to the bookmark star.
+                      In Chrome, Edge, or Brave, look for the <Download size={12} className="inline mx-1 text-indigo-400" /> icon on the right side of the address/URL bar.
                     </p>
                   </div>
                 </div>
@@ -5877,28 +5838,12 @@ export default function App() {
                     2
                   </div>
                   <div>
-                    <span className="font-bold text-white">Or via Chrome Menu (⋮)</span>
+                    <span className="font-bold text-white">Click "Install Lancer Volleyball"</span>
                     <p className="text-xs text-slate-400">
-                      Click the 3 dots (⋮) in top-right Chrome &gt; select <strong>Save and share</strong> &gt; click <strong>Install UCC Lancers...</strong> (or <em>Install page as app</em>).
+                      Click Install to run the tracker as a native standalone app with full screen capability and offline support!
                     </p>
                   </div>
                 </div>
-                {typeof window !== "undefined" && window.self !== window.top && (
-                  <div className="mt-3 p-3 rounded-xl bg-blue-950/60 border border-blue-500/40 text-xs text-blue-200">
-                    <p className="font-bold text-white mb-1">Testing inside Preview Frame?</p>
-                    <p className="mb-2 text-slate-300">
-                      Chrome restricts app installation inside iframe previews. Open the direct URL in a full Chrome tab to install:
-                    </p>
-                    <a
-                      href={window.location.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      <Download size={13} /> Open App in Full Chrome Tab
-                    </a>
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -5918,7 +5863,6 @@ export default function App() {
           </div>
         </div>
       </div>
-      </>
     );
   };
 
