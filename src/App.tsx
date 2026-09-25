@@ -10,7 +10,6 @@ import {
   Menu,
   Activity,
   Shield,
-  ShieldAlert,
   Crosshair,
   ArrowRightLeft,
   Save,
@@ -120,7 +119,7 @@ if (typeof window !== "undefined" && db) {
 const publicPath = `teams`;
 
 const APP_LOGO_SRC = `${import.meta.env.BASE_URL}lancer-logo.png`;
-const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}LancerVolleyballLogo.png`;
+const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}UCC%20Volleyball%20logo.jpg`;
 
 const DEFAULT_ROSTER = [
   { id: "1", name: "Player 1", number: "1" },
@@ -721,10 +720,6 @@ export default function App() {
   );
   const effectiveTeamName =
     myTeams.find((t) => t.id === activeTeam)?.name || customTeamName || "Lancers";
-  const activeTeamProfile = myTeams.find((t) => t.id === activeTeam);
-  const isPlayerRole = activeTeamProfile?.role === "player";
-  const [screenCaptureShieldActive, setScreenCaptureShieldActive] = useState(false);
-  const [screenshotAttemptNotice, setScreenshotAttemptNotice] = useState<string | null>(null);
   const [teamNameModalConfig, setTeamNameModalConfig] = useState<{
     isOpen: boolean;
     ourTeamName: string;
@@ -913,137 +908,6 @@ export default function App() {
       ).catch((e) => console.log("Role sync ignored", e));
     }
   }, [user, activeTeam, myTeams]);
-
-  // Player Code Security & Anti-Screenshot Enforcement
-  // Enforces that users with player codes can only view data on their device.
-  // Prevents screenshots (blur on snipping tool focus loss, PrtScn clearing, Mac screenshot shortcuts),
-  // disables right-click context menu, prevents saving content, blocks printing and PDF generation.
-  useEffect(() => {
-    if (!isPlayerRole) {
-      document.body.classList.remove("player-restricted");
-      setScreenCaptureShieldActive(false);
-      return;
-    }
-
-    document.body.classList.add("player-restricted");
-
-    let toastTimeout: any = null;
-    const triggerSecurityNotice = (msg: string) => {
-      setScreenshotAttemptNotice(msg);
-      clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(() => {
-        setScreenshotAttemptNotice(null);
-      }, 4000);
-    };
-
-    const handleBlur = () => {
-      setScreenCaptureShieldActive(true);
-    };
-
-    const handleFocus = () => {
-      setScreenCaptureShieldActive(false);
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        setScreenCaptureShieldActive(true);
-      } else {
-        setScreenCaptureShieldActive(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen") {
-        e.preventDefault();
-        e.stopPropagation();
-        setScreenCaptureShieldActive(true);
-        triggerSecurityNotice("Screenshots are disabled for player code access. View-only on device.");
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText("").catch(() => {});
-        }
-        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
-        return;
-      }
-
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        e.shiftKey &&
-        ["3", "4", "5", "6", "s", "S"].includes(e.key)
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-        setScreenCaptureShieldActive(true);
-        triggerSecurityNotice("Screen capture shortcuts are restricted for player codes.");
-        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
-        return;
-      }
-
-      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
-        e.preventDefault();
-        e.stopPropagation();
-        triggerSecurityNotice("Printing and PDF export are disabled for player codes.");
-        return;
-      }
-
-      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
-        e.preventDefault();
-        e.stopPropagation();
-        triggerSecurityNotice("Saving content is disabled for player codes.");
-        return;
-      }
-
-      if (
-        e.key === "F12" ||
-        ((e.ctrlKey || e.metaKey) && (e.key === "u" || e.key === "U")) ||
-        ((e.ctrlKey || e.metaKey) && e.shiftKey && ["i", "I", "j", "J", "c", "C"].includes(e.key))
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen") {
-        e.preventDefault();
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText("").catch(() => {});
-        }
-        setScreenCaptureShieldActive(true);
-        triggerSecurityNotice("Screenshots are disabled for player code access.");
-        setTimeout(() => setScreenCaptureShieldActive(false), 2000);
-      }
-    };
-
-    const handleContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-      triggerSecurityNotice("Right-click menu is disabled in player view-only mode.");
-    };
-
-    const handleBeforePrint = (e: Event) => {
-      e.preventDefault();
-      triggerSecurityNotice("Printing and PDF export are disabled for player accounts.");
-    };
-
-    window.addEventListener("blur", handleBlur);
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("keydown", handleKeyDown, true);
-    window.addEventListener("keyup", handleKeyUp, true);
-    window.addEventListener("contextmenu", handleContextMenu);
-    window.addEventListener("beforeprint", handleBeforePrint);
-
-    return () => {
-      clearTimeout(toastTimeout);
-      document.body.classList.remove("player-restricted");
-      window.removeEventListener("blur", handleBlur);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("keydown", handleKeyDown, true);
-      window.removeEventListener("keyup", handleKeyUp, true);
-      window.removeEventListener("contextmenu", handleContextMenu);
-      window.removeEventListener("beforeprint", handleBeforePrint);
-    };
-  }, [isPlayerRole]);
 
   // LOAD DATA BASED ON ACTIVE TEAM
   useEffect(() => {
@@ -3872,10 +3736,6 @@ export default function App() {
 
   const exportCSV = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
-    if (currentTeam?.role === "player") {
-      alert("Data export is disabled for player codes. Stats can only be viewed on your device.");
-      return;
-    }
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
@@ -4056,10 +3916,6 @@ export default function App() {
 
   const exportPDF = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
-    if (currentTeam?.role === "player") {
-      alert("PDF downloads are disabled for player codes. Stats can only be viewed on your device.");
-      return;
-    }
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
@@ -4810,61 +4666,6 @@ export default function App() {
   // RENDERERS
   // -------------------------------------------------------------
 
-  const renderPlayerSecurity = () => {
-    if (!isPlayerRole) return null;
-    return (
-      <>
-        {/* Anti-screenshot & capture shield overlay */}
-        {screenCaptureShieldActive && (
-          <div
-            onClick={() => setScreenCaptureShieldActive(false)}
-            className="fixed inset-0 z-[99999] bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center select-none backdrop-blur-2xl cursor-pointer"
-          >
-            <div className="h-20 w-20 rounded-3xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center mb-5 text-amber-300 shadow-2xl">
-              <ShieldAlert size={42} />
-            </div>
-            <h2 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2">
-              Screen Capture Protection
-            </h2>
-            <p className="text-slate-300 text-sm max-w-md font-medium leading-relaxed mb-6">
-              Player code access is restricted to on-device viewing only. Screenshots, recording, and snipping tools are blocked.
-            </p>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setScreenCaptureShieldActive(false);
-              }}
-              className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-6 py-3 rounded-2xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95"
-            >
-              Resume Viewing On Device
-            </button>
-          </div>
-        )}
-
-        {/* Security Warning Toast */}
-        {screenshotAttemptNotice && (
-          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100000] bg-amber-400 text-slate-950 px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider shadow-2xl flex items-center gap-2.5 border-2 border-amber-300 animate-pulse pointer-events-none">
-            <ShieldAlert size={18} className="shrink-0" />
-            <span>{screenshotAttemptNotice}</span>
-          </div>
-        )}
-
-        {/* Dynamic Security Watermark */}
-        <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden opacity-[0.035] select-none flex flex-wrap content-around justify-around p-4 rotate-[-12deg] scale-125">
-          {Array.from({ length: 36 }).map((_, i) => (
-            <div
-              key={i}
-              className="text-slate-900 dark:text-white font-black text-[11px] uppercase tracking-widest p-6 whitespace-nowrap"
-            >
-              PLAYER CODE VIEW ONLY • {effectiveTeamName.toUpperCase()} • NO SCREENSHOTS OR DOWNLOADS
-            </div>
-          ))}
-        </div>
-      </>
-    );
-  };
-
   const renderInstallModal = () => {
     if (!showInstallModal) return null;
     const ua = typeof window !== "undefined" ? window.navigator.userAgent.toLowerCase() : "";
@@ -4958,41 +4759,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Home Screen Shortcut & App Icon Preview */}
-          <div className="bg-gradient-to-r from-slate-800/90 to-[#001b5e]/40 border border-blue-500/30 rounded-2xl p-4 mb-4 flex items-center gap-4 shadow-lg">
-            <div className="relative shrink-0">
-              <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-[1.25rem] bg-[#001b5e] border-2 border-white/30 p-2.5 flex items-center justify-center shadow-xl overflow-hidden ring-2 ring-blue-500/40">
-                <img
-                  src={APP_LOGO_SRC}
-                  alt="UCC Lancers App Icon"
-                  className="h-full w-full object-contain filter drop-shadow-md"
-                  onError={(e) => {
-                    const target = e.currentTarget;
-                    if (!target.dataset.fallback) {
-                      target.dataset.fallback = "true";
-                      target.src = FALLBACK_LOGO_SRC;
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-black text-white text-base tracking-wide">UCC Lancers</span>
-                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[9px] font-black uppercase px-2 py-0.5 rounded-full">
-                  Home Screen Icon
-                </span>
-              </div>
-              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                This official logo will appear as your shortcut on Apple (iOS) and Android home screens.
-              </p>
-              <div className="text-[11px] text-emerald-400 font-semibold mt-1 flex items-center gap-1">
-                <CheckCircle2 size={12} className="shrink-0" />
-                <span>Offline support, fast launch, and full-screen layout</span>
-              </div>
-            </div>
-          </div>
-
           {/* Platform Selector Tabs */}
           <div className="flex bg-slate-800/80 p-1 rounded-xl mb-4 border border-slate-700/60">
             <button
@@ -5003,7 +4769,7 @@ export default function App() {
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              <Smartphone size={14} /> Apple (iPhone / iPad)
+              <Smartphone size={14} /> iPhone / iPad
             </button>
             <button
               onClick={() => setInstallModalTab("android")}
@@ -5036,9 +4802,9 @@ export default function App() {
                     1
                   </div>
                   <div>
-                    <span className="font-bold text-white">Open in Apple Safari</span>
+                    <span className="font-bold text-white">Open in Safari</span>
                     <p className="text-xs text-slate-400">
-                      Open this web app in Apple Safari on your iPhone or iPad.
+                      Make sure you are browsing this app in Apple Safari on your iPhone or iPad.
                     </p>
                   </div>
                 </div>
@@ -5060,18 +4826,7 @@ export default function App() {
                   <div>
                     <span className="font-bold text-white">Select "Add to Home Screen"</span>
                     <p className="text-xs text-slate-400">
-                      Scroll down the share sheet and tap <span className="inline-flex items-center text-white font-bold"><PlusCircle size={12} className="mx-1 inline text-blue-400" /> Add to Home Screen</span>.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="h-7 w-7 rounded-full bg-blue-500/20 text-blue-400 font-bold flex items-center justify-center shrink-0 text-xs">
-                    4
-                  </div>
-                  <div>
-                    <span className="font-bold text-white">Tap "Add"</span>
-                    <p className="text-xs text-slate-400">
-                      Confirm by tapping <strong>Add</strong> in the top-right corner. The UCC Lancers app shortcut with the official logo will appear right on your home screen!
+                      Scroll down the list, tap <span className="inline-flex items-center text-white font-bold"><PlusCircle size={12} className="mx-1 inline" /> Add to Home Screen</span>, then tap <strong>Add</strong>.
                     </p>
                   </div>
                 </div>
@@ -5085,7 +4840,7 @@ export default function App() {
                     1
                   </div>
                   <div>
-                    <span className="font-bold text-white">Open in Google Chrome</span>
+                    <span className="font-bold text-white">Open in Chrome</span>
                     <p className="text-xs text-slate-400">
                       Open this app in Google Chrome on your Android phone or tablet.
                     </p>
@@ -5096,7 +4851,7 @@ export default function App() {
                     2
                   </div>
                   <div>
-                    <span className="font-bold text-white">Tap the 3 Dots Menu (⋮)</span>
+                    <span className="font-bold text-white">Tap 3 Dots Menu (⋮)</span>
                     <p className="text-xs text-slate-400">
                       Tap the 3 dots in the top-right corner of Google Chrome.
                     </p>
@@ -5109,7 +4864,7 @@ export default function App() {
                   <div>
                     <span className="font-bold text-white">Tap "Install app" or "Add to Home screen"</span>
                     <p className="text-xs text-slate-400">
-                      Tap <strong>Install app</strong> (or <em>Add to Home screen</em>), then tap <strong>Install</strong> to add the UCC Lancers app directly to your device with the official logo!
+                      Tap <strong>Install</strong> to add the Lancer Volleyball app directly to your home screen!
                     </p>
                   </div>
                 </div>
@@ -5284,9 +5039,9 @@ export default function App() {
           <div className="mb-8 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
             <img
               src={APP_LOGO_SRC}
-              alt="UCC Lancers Logo"
+              alt="Lancers Logo"
               referrerPolicy="no-referrer"
-              className="h-full w-full object-contain filter drop-shadow-[0_10px_20px_rgba(0,0,0,0.4)]"
+              className="h-full w-full object-contain absolute inset-0 z-10"
               onError={(e) => {
                 const target = e.currentTarget;
                 if (!target.dataset.fallback) {
@@ -5297,6 +5052,7 @@ export default function App() {
                 }
               }}
             />
+            <Shield className="text-slate-800 h-12 w-12 sm:h-20 sm:w-20 absolute z-0" />
           </div>
           <h1 className="text-4xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center mb-2">
             UCC Lancers
@@ -5422,7 +5178,6 @@ export default function App() {
             )}
           </div>
         </div>
-        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
@@ -5479,9 +5234,9 @@ export default function App() {
             <div className="mb-4 sm:mb-6 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
               <img
                 src={APP_LOGO_SRC}
-                alt="UCC Lancers Logo"
+                alt="Lancers Logo"
                 referrerPolicy="no-referrer"
-                className="h-full w-full object-contain filter drop-shadow-[0_10px_20px_rgba(0,0,0,0.4)]"
+                className="h-full w-full object-contain absolute inset-0 z-10"
                 onError={(e) => {
                   const target = e.currentTarget;
                   if (!target.dataset.fallback) {
@@ -5492,6 +5247,7 @@ export default function App() {
                   }
                 }}
               />
+              <Shield className="text-slate-800 h-10 w-10 sm:h-16 sm:w-16 absolute z-0" />
             </div>
             <h1 className="text-3xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center">
               UCC Lancers
@@ -5552,6 +5308,15 @@ export default function App() {
                 )}
               </div>
             )}
+            <div className="mt-4 flex flex-col gap-2 w-full max-w-sm mx-auto">
+              <button
+                onClick={handleInstallApp}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold uppercase tracking-widest px-4 py-3 rounded-full border border-indigo-400/50 shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <Download size={16} />
+                {isAppInstalled ? "App Installed (Guide)" : "Download App"}
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
@@ -5891,7 +5656,6 @@ export default function App() {
           </div>
         )}
         {renderOpponentReportModal()}
-        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
@@ -5914,10 +5678,10 @@ export default function App() {
         <div className="w-full max-w-4xl bg-white rounded-2xl sm:rounded-[2rem] shadow-xl sm:shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex justify-between items-center shadow-md z-10 relative">
             <div className="flex items-center space-x-3 sm:space-x-4">
-              <div className="flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative shrink-0">
+              <div className="hidden sm:flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative">
                 <img
                   src={APP_LOGO_SRC}
-                  alt="UCC Lancers Logo"
+                  alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
                   onError={(e) => {
@@ -6670,7 +6434,6 @@ export default function App() {
           }
         />
         {renderOpponentReportModal()}
-        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
@@ -6693,10 +6456,10 @@ export default function App() {
         <header className="bg-gradient-to-r landscape:bg-gradient-to-b from-slate-900 via-[#001b5e] to-slate-900 text-white shadow-md z-10 border-b landscape:border-b-0 landscape:border-r border-white/10 shrink-0 landscape:w-48 xl:landscape:w-64">
           <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 landscape:py-6 flex flex-wrap sm:flex-nowrap landscape:flex-col items-center justify-between gap-1 sm:gap-4 landscape:h-full landscape:justify-around">
             <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
-              <div className="flex items-center justify-center h-8 w-8 sm:h-12 sm:w-12 overflow-hidden relative shrink-0">
+              <div className="hidden md:flex items-center justify-center h-12 w-12 overflow-hidden relative">
                 <img
                   src={APP_LOGO_SRC}
-                  alt="UCC Lancers Logo"
+                  alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
                   onError={(e) => {
@@ -6912,6 +6675,15 @@ export default function App() {
                 <Shield size={14} className="text-blue-600" />
                 <span className="hidden sm:inline">Opponents</span>
                 <span className="sm:hidden">Opp</span>
+              </button>
+              <button
+                onClick={() => setShowStatCorrectionModal(true)}
+                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-indigo-50 text-indigo-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-indigo-100 transition-colors flex items-center gap-1.5 border border-indigo-200 shadow-sm"
+                title="Review & Correct Stats"
+              >
+                <Edit3 size={14} className="text-indigo-600" />
+                <span className="hidden sm:inline">Data Correction</span>
+                <span className="sm:hidden">Correct</span>
               </button>
               <div
                 className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
@@ -10552,7 +10324,6 @@ export default function App() {
           onSave={handleSaveSetScore}
         />
         {renderOpponentReportModal()}
-        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
@@ -10567,26 +10338,9 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative">
         <div className="bg-slate-900 text-white p-4 shadow-lg sticky top-0 z-50 flex justify-between items-center">
-          <div className="flex items-center">
-            <div className="mr-2 sm:mr-3 flex items-center justify-center h-8 w-8 sm:h-10 sm:w-10 overflow-hidden relative shrink-0">
-              <img
-                src={APP_LOGO_SRC}
-                alt="UCC Lancers Logo"
-                referrerPolicy="no-referrer"
-                className="h-full w-full object-contain"
-                onError={(e) => {
-                  const target = e.currentTarget;
-                  if (!target.dataset.fallback) {
-                    target.dataset.fallback = "true";
-                    target.src = FALLBACK_LOGO_SRC;
-                  }
-                }}
-              />
-            </div>
-            <h1 className="text-xl font-black uppercase tracking-widest flex items-center">
-              <Activity className="mr-2 text-blue-400" size={24} /> Open Practice
-            </h1>
-          </div>
+          <h1 className="text-xl font-black uppercase tracking-widest flex items-center">
+            <Activity className="mr-2 text-blue-400" size={24} /> Open Practice
+          </h1>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setShowPracticeStats(true)}
@@ -11355,8 +11109,6 @@ export default function App() {
             isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
           />
         )}
-        {renderPlayerSecurity()}
-        {renderInstallModal()}
       </div>
     );
   }
@@ -11504,30 +11256,13 @@ export default function App() {
       <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col">
         <div className="max-w-4xl w-full mx-auto">
           <div className="bg-slate-900 text-white rounded-t-2xl sm:rounded-t-3xl p-4 sm:p-6 shadow-xl flex justify-between items-center z-10 relative">
-            <div className="flex items-center">
-              <div className="mr-2 sm:mr-3 flex items-center justify-center h-8 w-8 sm:h-10 sm:w-10 overflow-hidden relative shrink-0">
-                <img
-                  src={APP_LOGO_SRC}
-                  alt="UCC Lancers Logo"
-                  referrerPolicy="no-referrer"
-                  className="h-full w-full object-contain"
-                  onError={(e) => {
-                    const target = e.currentTarget;
-                    if (!target.dataset.fallback) {
-                      target.dataset.fallback = "true";
-                      target.src = FALLBACK_LOGO_SRC;
-                    }
-                  }}
-                />
-              </div>
-              <h1 className="text-xl sm:text-2xl font-black uppercase tracking-widest flex items-center">
-                <ArrowRightLeft
-                  className="mr-2 sm:mr-3 text-indigo-400"
-                  size={24}
-                />{" "}
-                Compare Stats
-              </h1>
-            </div>
+            <h1 className="text-xl sm:text-2xl font-black uppercase tracking-widest flex items-center">
+              <ArrowRightLeft
+                className="mr-2 sm:mr-3 text-indigo-400"
+                size={24}
+              />{" "}
+              Compare Stats
+            </h1>
             <div className="flex gap-2">
               <button
                 onClick={handleInstallApp}
@@ -11861,7 +11596,6 @@ export default function App() {
           </div>
         </div>
         {renderOpponentReportModal()}
-        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
@@ -11878,10 +11612,10 @@ export default function App() {
         <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-slate-200 flex-1 flex flex-col overflow-hidden max-w-[1400px] mx-auto w-full">
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center shadow-md gap-4">
             <div className="flex items-center w-full sm:w-auto">
-              <div className="mr-2.5 sm:mr-4 flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative shrink-0">
+              <div className="mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative">
                 <img
                   src={APP_LOGO_SRC}
-                  alt="UCC Lancers Logo"
+                  alt="Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
                   onError={(e) => {
@@ -11895,16 +11629,10 @@ export default function App() {
                   }}
                 />
               </div>
-              <div className="flex-1 flex flex-wrap items-center gap-2">
+              <div className="flex-1">
                 <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase drop-shadow-md">
                   Database Stats
                 </h1>
-                {isPlayerRole && (
-                  <span className="bg-amber-400/20 border border-amber-300/40 text-amber-200 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm backdrop-blur-sm">
-                    <ShieldAlert size={12} className="text-amber-300" />
-                    Player View (Device Only)
-                  </span>
-                )}
               </div>
             </div>
             <div className="flex space-x-2 w-full sm:w-auto">
@@ -11930,22 +11658,18 @@ export default function App() {
               >
                 <ArrowRightLeft className="mr-1 sm:mr-1.5" size={14} /> Compare
               </button>
-              {teamInfo.role !== "player" && (
-                <>
-                  <button
-                    onClick={exportCSV}
-                    className="flex-1 sm:flex-none bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors"
-                  >
-                    <Download className="mr-1 sm:mr-1.5" size={14} /> CSV
-                  </button>
-                  <button
-                    onClick={exportPDF}
-                    className="flex-1 sm:flex-none bg-red-500 hover:bg-red-600 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors"
-                  >
-                    <FileText className="mr-1 sm:mr-1.5" size={14} /> PDF
-                  </button>
-                </>
-              )}
+              <button
+                onClick={exportCSV}
+                className="flex-1 sm:flex-none bg-green-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+              >
+                <Download className="mr-1 sm:mr-1.5" size={14} /> CSV
+              </button>
+              <button
+                onClick={exportPDF}
+                className="flex-1 sm:flex-none bg-red-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+              >
+                <FileText className="mr-1 sm:mr-1.5" size={14} /> PDF
+              </button>
               <button
                 onClick={() => {
                   const currentMatchNav = statsPath.find((p) => p.level === "match");
@@ -12707,6 +12431,24 @@ export default function App() {
                     <span>Adjust Score</span>
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const activeMatchNav = statsPath.find((p) => p.level === "match");
+                    const activeSetNav = statsPath.find((p) => p.level === "set");
+                    setStatCorrectionConfig({
+                      isOpen: true,
+                      initialMatchId: activeMatchNav?.id || activeMatch?.id || null,
+                      initialSetId: activeSetNav?.id || activeSetId || null,
+                    });
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                  title={teamInfo.role === "player" ? "View stat log" : "Edit, correct, or add stats"}
+                >
+                  <Edit3 size={13} />
+                  <span>{teamInfo.role === "player" ? "View Stat Log" : "Edit Stats"}</span>
+                </button>
               </div>
             </div>
 
@@ -14544,26 +14286,20 @@ export default function App() {
               </div>
 
               <div className="p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
-                {myTeams.find((t) => t.id === activeTeam)?.role !== "player" ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      exportPDF();
-                      setShowPlayerFilterModal(false);
-                    }}
-                    className="bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center shadow-sm transition-colors"
-                  >
-                    <FileText size={14} className="mr-1.5" /> Export PDF
-                  </button>
-                ) : (
-                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <ShieldAlert size={14} className="text-amber-500" /> View Only On Device
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    exportPDF();
+                    setShowPlayerFilterModal(false);
+                  }}
+                  className="bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center shadow-sm transition-colors"
+                >
+                  <FileText size={14} className="mr-1.5" /> Export PDF
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowPlayerFilterModal(false)}
-                  className="bg-slate-800 hover:bg-slate-900 text-white font-black px-5 py-2 rounded-xl text-xs uppercase tracking-wider shadow-sm transition-colors ml-auto"
+                  className="bg-slate-800 hover:bg-slate-900 text-white font-black px-5 py-2 rounded-xl text-xs uppercase tracking-wider shadow-sm transition-colors"
                 >
                   Apply & Done
                 </button>
@@ -14693,7 +14429,6 @@ export default function App() {
             }
           }}
         />
-        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );

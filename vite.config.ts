@@ -17,59 +17,27 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: [
-          'lancer-logo.png',
-          'pwa-192x192.png',
-          'pwa-maskable-192x192.png',
-          'pwa-512x512.png',
-          'pwa-maskable-512x512.png',
-          'apple-touch-icon.png',
-          'apple-touch-icon-precomposed.png'
-        ],
+        includeAssets: ['lancer-logo.png'],
         manifest: {
           id: '/',
-          name: 'UCC Lancers Volleyball',
-          short_name: 'UCC Lancers',
-          description: 'Official Volleyball Statistics & Match Tracking Dashboard for UCC Lancers',
-          theme_color: '#001b5e',
-          background_color: '#001b5e',
+          name: 'Lancer Volleyball',
+          short_name: 'UCC Vball',
+          description: 'UCC Lancers Volleyball Dashboard',
+          theme_color: '#0033A0',
+          background_color: '#0033A0',
           display: 'standalone',
-          start_url: '/',
-          scope: '/',
+          start_url: './',
+          scope: './',
           icons: [
             {
-              src: '/pwa-192x192.png',
+              src: 'lancer-logo.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any'
             },
             {
-              src: '/pwa-maskable-192x192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'maskable'
-            },
-            {
-              src: '/pwa-512x512.png',
+              src: 'lancer-logo.png',
               sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any'
-            },
-            {
-              src: '/pwa-maskable-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable'
-            },
-            {
-              src: '/apple-touch-icon.png',
-              sizes: '180x180',
-              type: 'image/png',
-              purpose: 'any'
-            },
-            {
-              src: '/lancer-logo.png',
-              sizes: '1024x1024',
               type: 'image/png',
               purpose: 'any'
             }
