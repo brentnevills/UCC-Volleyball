@@ -567,6 +567,13 @@ export default function App() {
     localStorage.getItem("ucc_vball_active_team") ? "menu" : "team_select",
   );
   const [user, setUser] = useState(null);
+  const currentUser = user;
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).currentUser = user;
+    }
+  }, [user]);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [authTimeoutReached, setAuthTimeoutReached] = useState(false);
   const [myTeams, setMyTeams] = useState([]);
