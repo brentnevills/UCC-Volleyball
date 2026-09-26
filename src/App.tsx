@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Download,
   Users,
@@ -10,6 +10,7 @@ import {
   Menu,
   Activity,
   Shield,
+  ShieldAlert,
   Crosshair,
   ArrowRightLeft,
   Save,
@@ -46,6 +47,10 @@ import {
   Target,
   Plus,
   Minus,
+  Lock,
+  Unlock,
+  Key,
+  AlertTriangle,
 } from "lucide-react";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
@@ -55,6 +60,7 @@ import { TeamNameEditModal } from "./components/TeamNameEditModal";
 import { SetScoreEditModal } from "./components/SetScoreEditModal";
 import { OpponentReportModal } from "./components/OpponentReportModal";
 import { OpponentSubModal } from "./components/OpponentSubModal";
+import { PlayerAccessLogModal } from "./components/PlayerAccessLogModal";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -119,7 +125,7 @@ if (typeof window !== "undefined" && db) {
 const publicPath = `teams`;
 
 const APP_LOGO_SRC = `${import.meta.env.BASE_URL}lancer-logo.png`;
-const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}UCC%20Volleyball%20logo.jpg`;
+const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}LancerVolleyballLogo.png`;
 
 const DEFAULT_ROSTER = [
   { id: "1", name: "Player 1", number: "1" },
@@ -561,6 +567,13 @@ export default function App() {
     localStorage.getItem("ucc_vball_active_team") ? "menu" : "team_select",
   );
   const [user, setUser] = useState(null);
+  const currentUser = user;
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).currentUser = user;
+    }
+  }, [user]);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [authTimeoutReached, setAuthTimeoutReached] = useState(false);
   const [myTeams, setMyTeams] = useState([]);
@@ -636,6 +649,8 @@ export default function App() {
   const [selectedAceReceivers, setSelectedAceReceivers] = useState([]);
   const [oppServeReceivePrompt, setOppServeReceivePrompt] = useState<{
     passerId: string | null;
+    serverId?: string | null;
+    selectingAce?: boolean;
   } | null>(null);
   const [betweenSetsModal, setBetweenSetsModal] = useState<{
     nextSetNum: number;
@@ -720,6 +735,270 @@ export default function App() {
   );
   const effectiveTeamName =
     myTeams.find((t) => t.id === activeTeam)?.name || customTeamName || "Lancers";
+  const activeTeamProfile = myTeams.find((t) => t.id === activeTeam);
+
+  // Coaches Access: Anyone with coach role in team, or coach unlock key, or owner/creator of team, or coach email
+  const isCoachRole = Boolean(
+    activeTeamProfile?.role === "coach" ||
+    localStorage.getItem(`ucc_team_role_${activeTeam}`) === "coach" ||
+    localStorage.getItem("ucc_current_role") === "coach" ||
+    localStorage.getItem("ucc_coach_unlocked_global") === "true" ||
+    (activeTeam && localStorage.getItem(`ucc_coach_unlocked_${activeTeam}`) === "true") ||
+    (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "coach")) ||
+    (user && myTeams.some((t: any) => t.role === "coach")) ||
+    (appData.createdBy && user && appData.createdBy === user.uid) ||
+    (user && user.email && (
+      user.email.toLowerCase() === "brent.nevills@sccdsb.net" ||
+      user.email.toLowerCase().includes("coach")
+    ))
+  );
+
+  // A user is strictly in player role ONLY if they are NOT a coach and have player indicator
+  const isPlayerRole = !isCoachRole && Boolean(
+    activeTeamProfile?.role === "player" ||
+    localStorage.getItem(`ucc_team_role_${activeTeam}`) === "player" ||
+    localStorage.getItem("ucc_current_role") === "player" ||
+    (user && myTeams.some((t: any) => t.id === activeTeam && t.role === "player"))
+  );
+
+  const effectiveRole = isCoachRole
+    ? "coach"
+    : isPlayerRole
+    ? "player"
+    : activeTeamProfile?.role || "coach";
+
+  // Anti-screenshot protection is ONLY active for players, NEVER for coaches
+  const isShieldProtectionActive = Boolean(isPlayerRole && !isCoachRole);
+  const isPlayerAccessAllowed = (appData as any).playerAccessEnabled !== false;
+
+  const [showCoachLoginModal, setShowCoachLoginModal] = useState(false);
+  const [coachCodeInput, setCoachCodeInput] = useState("");
+  const [coachLoginMsg, setCoachLoginMsg] = useState<{ text: string; isError: boolean } | null>(null);
+  const [isVerifyingCoach, setIsVerifyingCoach] = useState(false);
+
+  const handleVerifyCoachCode = async (codeToVerify?: string) => {
+    const rawCode = (codeToVerify !== undefined ? codeToVerify : coachCodeInput).trim().toUpperCase();
+    if (!rawCode) {
+      setCoachLoginMsg({ text: "Please enter a valid Coach Code.", isError: true });
+      return;
+    }
+    setIsVerifyingCoach(true);
+    setCoachLoginMsg(null);
+
+    try {
+      let isMatch = false;
+      let targetTeamId = activeTeam;
+
+      // 1. Check against active team's coachCode or ID
+      if (activeTeam) {
+        if (
+          rawCode === (appData.coachCode || "").trim().toUpperCase() ||
+          rawCode === activeTeam.trim().toUpperCase()
+        ) {
+          isMatch = true;
+          targetTeamId = activeTeam;
+        }
+      }
+
+      // 2. Check share_codes in Firestore
+      if (!isMatch && isFirebaseAvailable && db) {
+        try {
+          const codeSnap = await getDoc(doc(db, "share_codes", rawCode));
+          if (codeSnap.exists()) {
+            const data = codeSnap.data();
+            if (data.role === "coach") {
+              isMatch = true;
+              targetTeamId = data.teamId;
+            }
+          }
+        } catch (e) {
+          console.log("share_codes check error:", e);
+        }
+      }
+
+      // 3. Check core settings in Firestore for activeTeam
+      if (!isMatch && isFirebaseAvailable && db && activeTeam) {
+        try {
+          const teamSettingsSnap = await getDoc(doc(db, `${publicPath}/${activeTeam}/settings/core`));
+          if (teamSettingsSnap.exists()) {
+            const coreData = teamSettingsSnap.data();
+            if (coreData.coachCode && coreData.coachCode.trim().toUpperCase() === rawCode) {
+              isMatch = true;
+              targetTeamId = activeTeam;
+            }
+          }
+        } catch (e) {
+          console.log("core settings check error:", e);
+        }
+      }
+
+      if (!isMatch) {
+        setCoachLoginMsg({
+          text: "Incorrect Coach Code. Please check the code provided by your coaching staff.",
+          isError: true,
+        });
+        setIsVerifyingCoach(false);
+        return;
+      }
+
+      const teamKey = targetTeamId || activeTeam || "default";
+      localStorage.setItem(`ucc_team_role_${teamKey}`, "coach");
+      localStorage.setItem("ucc_current_role", "coach");
+      localStorage.setItem(`ucc_coach_unlocked_${teamKey}`, "true");
+
+      if (user && isFirebaseAvailable && db && targetTeamId) {
+        try {
+          await setDoc(
+            doc(db, `${publicPath}/${targetTeamId}/members/${user.uid}`),
+            {
+              uid: user.uid,
+              role: "coach",
+              joinedAt: serverTimestamp(),
+              email: user.email || "",
+              displayName: user.displayName || user.email?.split("@")[0] || "Coach",
+              photoURL: user.photoURL || "",
+              lastActive: serverTimestamp(),
+            },
+            { merge: true },
+          );
+
+          const existing = myTeams.find((t) => t.id === targetTeamId);
+          let newTeams = [];
+          if (existing) {
+            newTeams = myTeams.map((t) =>
+              t.id === targetTeamId ? { ...t, role: "coach" } : t,
+            );
+          } else {
+            newTeams = [
+              ...myTeams,
+              {
+                id: targetTeamId,
+                name: effectiveTeamName,
+                color: "from-[#002B7A] to-blue-950",
+                role: "coach",
+              },
+            ];
+          }
+          setMyTeams(newTeams);
+          await setDoc(
+            doc(db, "users", user.uid),
+            { teams: newTeams },
+            { merge: true },
+          );
+        } catch (err) {
+          console.error("Failed to sync coach role to Firebase:", err);
+        }
+      }
+
+      if (targetTeamId && targetTeamId !== activeTeam) {
+        setActiveTeam(targetTeamId);
+        localStorage.setItem("ucc_vball_active_team", targetTeamId);
+      }
+
+      setCoachLoginMsg({
+        text: "Coach access verified! Full access granted.",
+        isError: false,
+      });
+
+      setTimeout(() => {
+        setShowCoachLoginModal(false);
+        setCoachCodeInput("");
+        setCoachLoginMsg(null);
+        setIsVerifyingCoach(false);
+      }, 700);
+    } catch (err: any) {
+      console.error("Coach verification error:", err);
+      setCoachLoginMsg({
+        text: err?.message || "Failed to verify coach code. Please try again.",
+        isError: true,
+      });
+      setIsVerifyingCoach(false);
+    }
+  };
+
+  const handleGoogleCoachSignIn = async () => {
+    const provider = new GoogleAuthProvider();
+    setIsVerifyingCoach(true);
+    setCoachLoginMsg(null);
+    try {
+      const res = await signInWithPopup(auth, provider);
+      if (res.user && activeTeam && isFirebaseAvailable && db) {
+        try {
+          const memberDoc = await getDoc(
+            doc(db, `${publicPath}/${activeTeam}/members/${res.user.uid}`),
+          );
+          const teamDoc = await getDoc(
+            doc(db, `${publicPath}/${activeTeam}`),
+          );
+          const isCreator = teamDoc.exists() && teamDoc.data()?.createdBy === res.user.uid;
+          const isMemberCoach = memberDoc.exists() && memberDoc.data()?.role === "coach";
+
+          if (isCreator || isMemberCoach) {
+            localStorage.setItem(`ucc_team_role_${activeTeam}`, "coach");
+            localStorage.setItem("ucc_current_role", "coach");
+            localStorage.setItem(`ucc_coach_unlocked_${activeTeam}`, "true");
+            setCoachLoginMsg({
+              text: `Recognized Coach Account (${res.user.email})! Access granted.`,
+              isError: false,
+            });
+            setTimeout(() => {
+              setShowCoachLoginModal(false);
+              setCoachLoginMsg(null);
+              setIsVerifyingCoach(false);
+            }, 700);
+            return;
+          }
+        } catch (e) {
+          console.log("Check coach doc error:", e);
+        }
+      }
+      setIsVerifyingCoach(false);
+      setCoachLoginMsg({
+        text: `Signed in as ${res.user.email}. If you have a Coach Code, enter it below to activate Coach permissions.`,
+        isError: false,
+      });
+    } catch (err: any) {
+      setIsVerifyingCoach(false);
+      if (err.code !== "auth/popup-closed-by-user") {
+        setCoachLoginMsg({
+          text: `Sign-in error: ${err.message}`,
+          isError: true,
+        });
+      }
+    }
+  };
+
+  const togglePlayerAccess = async () => {
+    const nextState = !isPlayerAccessAllowed;
+    setAppData((prev: any) => ({ ...prev, playerAccessEnabled: nextState }));
+
+    if (isFirebaseAvailable && user && activeTeam) {
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/settings/core`),
+          { playerAccessEnabled: nextState },
+          { merge: true }
+        );
+      } catch (e) {
+        console.error("Failed to update playerAccessEnabled in Firestore:", e);
+      }
+    } else if (!isFirebaseAvailable && activeTeam) {
+      writeLocalDb({ ...appData, playerAccessEnabled: nextState });
+      localStorage.setItem(`ucc_player_access_${activeTeam}`, String(nextState));
+    }
+
+    setScreenshotAttemptNotice(
+      nextState
+        ? "Player Access: ENABLED (Players can view stats)"
+        : "Player Access: DISABLED (Players locked out)"
+    );
+  };
+
+  const [showPlayerAccessModal, setShowPlayerAccessModal] = useState(false);
+  const [isFullTableRevealed, setIsFullTableRevealed] = useState(false);
+  const [revealedPlayerId, setRevealedPlayerId] = useState<string | null>(null);
+  const [screenCaptureShieldActive, setScreenCaptureShieldActive] = useState(false);
+  const [screenshotAttemptNotice, setScreenshotAttemptNotice] = useState<string | null>(null);
   const [teamNameModalConfig, setTeamNameModalConfig] = useState<{
     isOpen: boolean;
     ourTeamName: string;
@@ -782,6 +1061,13 @@ export default function App() {
   const [isIOS, setIsIOS] = useState(false);
   const [showInstallModal, setShowInstallModal] = useState(false);
   const [installModalTab, setInstallModalTab] = useState<"auto" | "ios" | "android" | "desktop">("auto");
+  const [installBannerDismissed, setInstallBannerDismissed] = useState(() => {
+    try {
+      return localStorage.getItem("ucc_install_banner_dismissed") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [showRetired, setShowRetired] = useState(false);
   const [compareMode, setCompareMode] = useState("players"); // "players" or "events"
   const [comparePlayer1, setComparePlayer1] = useState("");
@@ -817,6 +1103,170 @@ export default function App() {
   const [subnavCategoryFilter, setSubnavCategoryFilter] = useState("all");
   const [expandedOppTeams, setExpandedOppTeams] = useState({});
   const isProcessingPointRef = useRef(false);
+  const lastActiveViewRef = useRef<"game" | "open_practice" | null>(null);
+  const lastActiveMatchRef = useRef<any>(null);
+  const [debugNotice, setDebugNotice] = useState<string | null>(null);
+
+  // Track active game view and session for reliable return navigation
+  useEffect(() => {
+    if (view === "game" || view === "open_practice") {
+      lastActiveViewRef.current = view;
+      if (activeMatch) {
+        lastActiveMatchRef.current = activeMatch;
+        try {
+          sessionStorage.setItem("ucc_last_active_match_id", activeMatch.id);
+        } catch (e) {}
+      }
+    }
+  }, [view, activeMatch]);
+
+  // Robust Return-to-Game Handler that supports games, open practice, and live sessions
+  const returnToActiveGame = useCallback(() => {
+    console.log("[VBALL DEBUG] returnToActiveGame invoked.", {
+      currentView: view,
+      hasActiveMatch: !!activeMatch,
+      activeMatchId: activeMatch?.id,
+      lastActiveView: lastActiveViewRef.current,
+      activeSetId,
+      score,
+      setsWon,
+    });
+
+    // 1. If activeMatch is present in component state
+    if (activeMatch) {
+      if (
+        activeMatch.type === "Practice" &&
+        activeMatch.format === "Open Drill (Grid)"
+      ) {
+        setView("open_practice");
+        return;
+      }
+      setView("game");
+      return;
+    }
+
+    // 2. If activeMatch is null, check for live match in appData.matches
+    const liveMatches = (appData.matches || []).filter((m: any) => m.isLive === true);
+    if (liveMatches.length > 0) {
+      const latestMatch = liveMatches[liveMatches.length - 1];
+      const matchSets = (appData.sets || [])
+        .filter((s: any) => s.matchId === latestMatch.id)
+        .sort((a: any, b: any) => a.setNum - b.setNum);
+      const latestSet = matchSets[matchSets.length - 1];
+
+      setActiveMatch(latestMatch);
+      setActiveSetId(latestSet ? latestSet.id : null);
+      setOpponentName(latestMatch.opponent || "Opponent");
+      setMatchFormat(latestMatch.format || "Best of 5");
+
+      if (appData.opponents?.[latestMatch.opponent]) {
+        const opp = appData.opponents[latestMatch.opponent];
+        setOppLineup(opp.defaultLineup || ["O1", "O2", "O3", "O4", "O5", "O6"]);
+        setOppNotesMem(opp.notes || {});
+        setOppSetterId(opp.setterId || null);
+        setOppLiberoId(opp.liberoId || "");
+      }
+
+      if (latestMatch.type === "Practice" && latestMatch.format === "Open Drill (Grid)") {
+        setView("open_practice");
+      } else {
+        setView("game");
+      }
+      return;
+    }
+
+    // 3. Fallback to lastActiveMatchRef if remembered
+    if (lastActiveMatchRef.current) {
+      setActiveMatch(lastActiveMatchRef.current);
+      if (lastActiveViewRef.current === "open_practice") {
+        setView("open_practice");
+      } else {
+        setView("game");
+      }
+      return;
+    }
+
+    // 4. If no game is running, go to menu
+    console.warn("[VBALL DEBUG] No active or live match session found. Returning to menu.");
+    setView("menu");
+  }, [activeMatch, appData.matches, appData.sets, appData.opponents, view, activeSetId, score, setsWon]);
+
+  // Comprehensive System Diagnostics Tool
+  const runDebugDiagnostics = useCallback(() => {
+    const issues: string[] = [];
+    const liveMatches = (appData.matches || []).filter((m: any) => m.isLive === true);
+    const hasLiveOrActive = !!activeMatch || liveMatches.length > 0;
+
+    const report = {
+      CurrentView: view,
+      ActiveTeam: activeTeam || "None",
+      ActiveMatchId: activeMatch?.id || (liveMatches[0] ? `${liveMatches[0].id} (live in matches)` : "None"),
+      ActiveMatchOpponent: activeMatch?.opponent || (liveMatches[0] ? liveMatches[0].opponent : "None"),
+      ActiveSetId: activeSetId || "None",
+      Score: `${score.ucc} - ${score.opp}`,
+      SetsWon: `${setsWon.ucc} - ${setsWon.opp}`,
+      CurrentSetNum: currentSetNum,
+      Serving: serving,
+      LineupAssigned: lineup ? `${lineup.filter(Boolean).length}/6 players` : "None",
+      LastActiveView: lastActiveViewRef.current || "None",
+      TotalMatches: appData.matches?.length || 0,
+      LiveMatchesCount: liveMatches.length,
+      TotalSets: appData.sets?.length || 0,
+      TotalStatsCount: appData.stats?.length || 0,
+      Role: effectiveRole,
+      FirebaseConnected: isFirebaseAvailable,
+    };
+
+    if (!hasLiveOrActive) {
+      issues.push("No active match in state or live match in matches list.");
+    }
+    if (activeMatch && !activeSetId) {
+      issues.push("Active match is present but activeSetId is null.");
+    }
+    if (view === "game" && lineup.some((p) => p === null)) {
+      issues.push("Court lineup has unassigned positions.");
+    }
+
+    console.group("🏐 [VOLLEYBALL DEBUG & DIAGNOSTICS REPORT]");
+    console.table(report);
+    if (issues.length > 0) {
+      console.warn("⚠️ Detected Session Notices:", issues);
+    } else {
+      console.log("✅ All game and navigation systems healthy and verified.");
+    }
+    console.groupEnd();
+
+    const noticeText = issues.length === 0
+      ? `Debug OK: Game "${activeMatch ? activeMatch.opponent : "Match"}" Set ${currentSetNum} (${score.ucc}-${score.opp}) ready to return.`
+      : `Debug Notice: ${issues.join(" | ")}`;
+
+    setDebugNotice(noticeText);
+    setTimeout(() => setDebugNotice(null), 5000);
+    return { report, issues };
+  }, [view, activeTeam, activeMatch, activeSetId, score, setsWon, currentSetNum, serving, lineup, appData, effectiveRole, isFirebaseAvailable]);
+
+  // Expose global debug interface for console verification
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).__vball_debug = {
+        getState: () => ({
+          view,
+          activeTeam,
+          activeMatch,
+          activeSetId,
+          score,
+          setsWon,
+          currentSetNum,
+          serving,
+          lineup,
+          lastActiveView: lastActiveViewRef.current,
+        }),
+        returnToGame: returnToActiveGame,
+        diagnose: runDebugDiagnostics,
+        setView: (v: string) => setView(v),
+      };
+    }
+  }, [view, activeTeam, activeMatch, activeSetId, score, setsWon, currentSetNum, serving, lineup, returnToActiveGame, runDebugDiagnostics]);
 
   // -------------------------------------------------------------
   // INITIALIZATION (APP ICON & FIREBASE OR LOCAL FALLBACK)
@@ -844,7 +1294,8 @@ export default function App() {
         clearTimeout(timeout);
         setUser(u);
         setLoadingAuth(false);
-        if (!u && view !== "team_select") {
+        const storedTeam = localStorage.getItem("ucc_vball_active_team");
+        if (!u && !storedTeam) {
           setView("team_select");
         }
       });
@@ -866,7 +1317,7 @@ export default function App() {
       unsubscribe();
       clearTimeout(timeout);
     };
-  }, [view]);
+  }, []); // Run on initial mount only! Do not tear down on view changes!
 
   useEffect(() => {
     if (!user || !db || !isFirebaseAvailable) {
@@ -908,6 +1359,279 @@ export default function App() {
       ).catch((e) => console.log("Role sync ignored", e));
     }
   }, [user, activeTeam, myTeams]);
+
+  // Member Coach Role Sync
+  useEffect(() => {
+    if (!user || !isFirebaseAvailable || !activeTeam || !db) return;
+    let unsub = () => {};
+    try {
+      unsub = onSnapshot(
+        doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            if (data?.role === "coach") {
+              localStorage.setItem(`ucc_team_role_${activeTeam}`, "coach");
+              localStorage.setItem("ucc_current_role", "coach");
+              localStorage.setItem(`ucc_coach_unlocked_${activeTeam}`, "true");
+              setMyTeams((prev: any[]) =>
+                prev.map((t) => (t.id === activeTeam ? { ...t, role: "coach" } : t)),
+              );
+            }
+          }
+        },
+        (err) => console.log("Member role listener error:", err),
+      );
+    } catch (e) {
+      console.log("Member role setup error:", e);
+    }
+    return () => unsub();
+  }, [user, activeTeam]);
+
+  // Player Stats Access Audit Logger
+  const logPlayerStatsAccess = async (targetViewName?: string) => {
+    if (!user || !activeTeam || !db) return;
+    try {
+      const isPlayer = isPlayerRole;
+
+      const userEmail = user.email || "Unknown Google Account";
+      const userDisplayName = user.displayName || user.email?.split("@")[0] || "Player";
+      const userPhoto = user.photoURL || "";
+
+      // 1. Update or create member record in the team with Google account details
+      const memberRef = doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`);
+      await setDoc(
+        memberRef,
+        {
+          uid: user.uid,
+          email: userEmail,
+          displayName: userDisplayName,
+          photoURL: userPhoto,
+          role: isPlayer ? "player" : (activeTeamProfile?.role || "coach"),
+          lastStatsAccess: serverTimestamp(),
+          lastActive: serverTimestamp(),
+          lastViewedPath: targetViewName || "Stats Overview",
+          device: navigator.userAgent.includes("iPhone")
+            ? "iPhone (iOS)"
+            : navigator.userAgent.includes("iPad")
+            ? "iPad (iPadOS)"
+            : navigator.userAgent.includes("Android")
+            ? "Android Mobile"
+            : navigator.userAgent.includes("Mac")
+            ? "Mac (Desktop)"
+            : navigator.userAgent.includes("Win")
+            ? "Windows PC"
+            : "Mobile / Web Device",
+        },
+        { merge: true },
+      );
+
+      // 2. Also log audit record in player_access_logs if player role
+      if (isPlayer) {
+        const logId = `${user.uid}_${Date.now()}`;
+        const logRef = doc(db, `${publicPath}/${activeTeam}/player_access_logs/${logId}`);
+        await setDoc(logRef, {
+          id: logId,
+          uid: user.uid,
+          email: userEmail,
+          displayName: userDisplayName,
+          photoURL: userPhoto,
+          role: "player",
+          accessedAt: serverTimestamp(),
+          view: targetViewName || "Stats Overview",
+          device: navigator.userAgent.includes("iPhone")
+            ? "iPhone (iOS)"
+            : navigator.userAgent.includes("iPad")
+            ? "iPad (iPadOS)"
+            : navigator.userAgent.includes("Android")
+            ? "Android Mobile"
+            : navigator.userAgent.includes("Mac")
+            ? "Mac (Desktop)"
+            : navigator.userAgent.includes("Win")
+            ? "Windows PC"
+            : "Mobile / Web Device",
+        });
+      }
+    } catch (err) {
+      console.warn("Player stats access audit log notice:", err);
+    }
+  };
+
+  // Automatically record stats access whenever a player is in the stats view
+  useEffect(() => {
+    if (view === "stats" && user && activeTeam) {
+      const activeNavName = statsPath[statsPath.length - 1]?.name || "Season Totals";
+      logPlayerStatsAccess(activeNavName);
+    }
+  }, [view, activeTeam, user, statsPath]);
+
+  // Netflix-Grade Screen Capture Prevention & Instant Solid Blackout
+  // Produces a 100% pitch-black screen upon screenshot attempts, blur, visibility changes,
+  // hardware button triggers, or screen capture shortcuts (matching Netflix DRM behavior).
+  useEffect(() => {
+    if (!isShieldProtectionActive) {
+      document.documentElement.classList.remove("player-restricted");
+      document.documentElement.classList.remove("shield-active");
+      document.body.classList.remove("player-restricted");
+      document.body.classList.remove("shield-active");
+      setScreenCaptureShieldActive(false);
+      return;
+    }
+
+    document.documentElement.classList.add("player-restricted");
+    document.body.classList.add("player-restricted");
+
+    let toastTimeout: any = null;
+    const triggerSecurityNotice = (msg: string) => {
+      setScreenshotAttemptNotice(msg);
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        setScreenshotAttemptNotice(null);
+      }, 4000);
+    };
+
+    const activateShield = () => {
+      if (!isShieldProtectionActive) return;
+      document.documentElement.classList.add("shield-active");
+      document.body.classList.add("shield-active");
+      setScreenCaptureShieldActive(true);
+      setRevealedPlayerId(null);
+      setIsFullTableRevealed(false);
+    };
+
+    const handleTouchCancel = () => {
+      // Hardware screenshot combos (Power + Vol) interrupt touches
+      setRevealedPlayerId(null);
+      setIsFullTableRevealed(false);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // PrintScreen (Windows/Linux)
+      if (e.key === "PrintScreen" || e.code === "PrintScreen" || (e as any).keyCode === 44) {
+        e.preventDefault();
+        e.stopPropagation();
+        activateShield();
+        triggerSecurityNotice("Screenshots are blocked (Protected View).");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
+        }
+        return;
+      }
+
+      // Preemptive modifier interception:
+      // Mac screenshot combos (Cmd+Shift+3, Cmd+Shift+4, Cmd+Shift+5, Cmd+Shift+6)
+      // Windows Snipping Tool (Win+Shift+S)
+      // The moment both Meta/Ctrl and Shift are pressed down, screen turns solid black immediately
+      const isMetaShift = (e.metaKey || e.ctrlKey) && e.shiftKey;
+      if (isMetaShift) {
+        e.preventDefault();
+        e.stopPropagation();
+        activateShield();
+        triggerSecurityNotice("Screen capture shortcuts are blocked.");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
+        }
+        return;
+      }
+
+      // Print / PDF export shortcuts: Ctrl+P / Cmd+P
+      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P" || e.code === "KeyP")) {
+        e.preventDefault();
+        e.stopPropagation();
+        activateShield();
+        triggerSecurityNotice("Printing and PDF export are disabled.");
+        return;
+      }
+
+      // Save page shortcuts: Ctrl+S / Cmd+S
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S" || e.code === "KeyS")) {
+        e.preventDefault();
+        e.stopPropagation();
+        activateShield();
+        triggerSecurityNotice("Saving content is disabled.");
+        return;
+      }
+
+      // DevTools and View Source shortcuts: F12, Ctrl+U, Ctrl+Shift+I/J/C
+      if (
+        e.key === "F12" ||
+        ((e.ctrlKey || e.metaKey) && (e.key === "u" || e.key === "U" || e.code === "KeyU")) ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && ["i", "I", "j", "J", "c", "C"].includes(e.key))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "PrintScreen" || e.code === "PrintScreen" || (e as any).keyCode === 44) {
+        e.preventDefault();
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText("Protected Content. Screenshots are blocked.").catch(() => {});
+        }
+        activateShield();
+        triggerSecurityNotice("Screenshots are blocked (Protected View).");
+      }
+    };
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      triggerSecurityNotice("Right-click menu is disabled in protected view.");
+    };
+
+    const handleBeforePrint = (e: Event) => {
+      e.preventDefault();
+      activateShield();
+      triggerSecurityNotice("Printing and PDF export are disabled.");
+    };
+
+    const handleCopy = (e: ClipboardEvent) => {
+      e.preventDefault();
+      if (e.clipboardData) {
+        e.clipboardData.setData("text/plain", "Protected Content. Screen capture and copying are prohibited.");
+      }
+    };
+
+    window.addEventListener("touchcancel", handleTouchCancel, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("contextmenu", handleContextMenu);
+    window.addEventListener("beforeprint", handleBeforePrint);
+    window.addEventListener("copy", handleCopy);
+    window.addEventListener("cut", handleCopy);
+
+    // Intercept navigator.mediaDevices.getDisplayMedia to block screen capture extensions
+    let origGDM: any = null;
+    if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+      try {
+        origGDM = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getDisplayMedia = async function(...args) {
+          activateShield();
+          throw new DOMException("Screen capture is prohibited by security policy.", "NotAllowedError");
+        };
+      } catch {}
+    }
+
+    return () => {
+      clearTimeout(toastTimeout);
+      document.documentElement.classList.remove("player-restricted");
+      document.documentElement.classList.remove("shield-active");
+      document.body.classList.remove("player-restricted");
+      document.body.classList.remove("shield-active");
+      window.removeEventListener("touchcancel", handleTouchCancel, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("contextmenu", handleContextMenu);
+      window.removeEventListener("beforeprint", handleBeforePrint);
+      window.removeEventListener("copy", handleCopy);
+      window.removeEventListener("cut", handleCopy);
+      if (origGDM && navigator.mediaDevices) {
+        try {
+          navigator.mediaDevices.getDisplayMedia = origGDM;
+        } catch {}
+      }
+    };
+  }, [isShieldProtectionActive]);
 
   // LOAD DATA BASED ON ACTIVE TEAM
   useEffect(() => {
@@ -1088,11 +1812,44 @@ export default function App() {
       );
   };
 
+  const sortPlayersByNumberThenAlpha = useCallback(
+    (
+      a: { number?: string | number; name?: string; id?: string } | null | undefined,
+      b: { number?: string | number; name?: string; id?: string } | null | undefined,
+    ) => {
+      if (!a && !b) return 0;
+      if (!a) return 1;
+      if (!b) return -1;
+
+      const rawA = a.number != null ? String(a.number).trim() : "";
+      const rawB = b.number != null ? String(b.number).trim() : "";
+      const numA = parseInt(rawA.replace(/\D/g, ""), 10);
+      const numB = parseInt(rawB.replace(/\D/g, ""), 10);
+      const hasNumA = !isNaN(numA) && rawA !== "";
+      const hasNumB = !isNaN(numB) && rawB !== "";
+
+      if (hasNumA && hasNumB) {
+        if (numA !== numB) return numA - numB;
+        return (a.name || a.id || "").localeCompare(
+          b.name || b.id || "",
+          undefined,
+          { sensitivity: "base" },
+        );
+      }
+      if (hasNumA && !hasNumB) return -1;
+      if (!hasNumA && hasNumB) return 1;
+      return (a.name || a.id || "").localeCompare(
+        b.name || b.id || "",
+        undefined,
+        { sensitivity: "base" },
+      );
+    },
+    [],
+  );
+
   const sortedRoster = useMemo(() => {
-    return [...(appData.roster || [])].sort(
-      (a, b) => parseInt(a.number || 0) - parseInt(b.number || 0),
-    );
-  }, [appData.roster]);
+    return [...(appData.roster || [])].sort(sortPlayersByNumberThenAlpha);
+  }, [appData.roster, sortPlayersByNumberThenAlpha]);
 
   const updateSetState = async (updates) => {
     if (isFirebaseAvailable && user && activeSetId) {
@@ -2873,6 +3630,11 @@ export default function App() {
 
   const viewStatsWithCurrentMatch = () => {
     if (!activeMatch) return viewStatsFromMenu();
+    lastActiveMatchRef.current = activeMatch;
+    lastActiveViewRef.current =
+      activeMatch.type === "Practice" && activeMatch.format === "Open Drill (Grid)"
+        ? "open_practice"
+        : "game";
     const eventDetails = getEventDetails(activeMatch);
     if (activeMatch.type === "Practice") {
       setStatsPath([
@@ -3736,6 +4498,10 @@ export default function App() {
 
   const exportCSV = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
+    if (!isCoachRole && (currentTeam?.role === "player" || isPlayerRole)) {
+      alert("Data export is disabled for player codes. Stats can only be viewed on your device.");
+      return;
+    }
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
@@ -3916,6 +4682,10 @@ export default function App() {
 
   const exportPDF = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
+    if (!isCoachRole && (currentTeam?.role === "player" || isPlayerRole)) {
+      alert("PDF downloads are disabled for player codes. Stats can only be viewed on your device.");
+      return;
+    }
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
@@ -4247,9 +5017,11 @@ export default function App() {
     doc.save(filename);
   };
 
-  const benchPlayers = appData.roster.filter(
-    (p) => !lineup.includes(p.id) && !p.isRetired,
-  );
+  const benchPlayers = useMemo(() => {
+    return (appData.roster || [])
+      .filter((p) => !lineup.includes(p.id) && !p.isRetired)
+      .sort(sortPlayersByNumberThenAlpha);
+  }, [appData.roster, lineup, sortPlayersByNumberThenAlpha]);
   const selectedPlayerObj = appData.roster.find(
     (r) => r.id === selectedPlayerId,
   );
@@ -4282,7 +5054,14 @@ export default function App() {
         uid: user.uid,
         role: "coach",
         joinedAt: serverTimestamp(),
+        email: user.email || "",
+        displayName: user.displayName || user.email?.split("@")[0] || "Coach",
+        photoURL: user.photoURL || "",
+        lastActive: serverTimestamp(),
       });
+
+      localStorage.setItem(`ucc_team_role_${tId}`, "coach");
+      localStorage.setItem("ucc_current_role", "coach");
 
       // Core settings
       batch.set(doc(db, `${publicPath}/${tId}/settings/core`), {
@@ -4361,9 +5140,41 @@ export default function App() {
         role = codeSnap.data().role;
       }
 
-      if (myTeams.find((t) => t.id === teamId)) {
-        alert("You are already in this team.");
-        return;
+      const existingTeam = myTeams.find((t) => t.id === teamId);
+      if (existingTeam) {
+        if (role === "coach") {
+          // Upgrade player membership to Coach
+          await setDoc(doc(db, `${publicPath}/${teamId}/members/${user.uid}`), {
+            uid: user.uid,
+            role: "coach",
+            joinedAt: serverTimestamp(),
+            email: user.email || "",
+            displayName: user.displayName || user.email?.split("@")[0] || "Coach",
+            photoURL: user.photoURL || "",
+            lastActive: serverTimestamp(),
+          }, { merge: true });
+
+          localStorage.setItem(`ucc_team_role_${teamId}`, "coach");
+          localStorage.setItem("ucc_current_role", "coach");
+          localStorage.setItem(`ucc_coach_unlocked_${teamId}`, "true");
+
+          const newTeams = myTeams.map((t) =>
+            t.id === teamId ? { ...t, role: "coach" } : t,
+          );
+          setMyTeams(newTeams);
+          await setDoc(
+            doc(db, "users", user.uid),
+            { teams: newTeams },
+            { merge: true },
+          );
+          alert(`Successfully verified Coach access for ${existingTeam.name}! You now have full access regardless of player lock.`);
+          setActiveTeam(teamId);
+          localStorage.setItem("ucc_vball_active_team", teamId);
+          return;
+        } else {
+          alert("You are already in this team.");
+          return;
+        }
       }
 
       // 1. Give Access (via permissive member creation rule)
@@ -4371,7 +5182,18 @@ export default function App() {
         uid: user.uid,
         role,
         joinedAt: serverTimestamp(),
+        email: user.email || "",
+        displayName: user.displayName || user.email?.split("@")[0] || (role === "coach" ? "Coach" : "Player"),
+        photoURL: user.photoURL || "",
+        lastActive: serverTimestamp(),
       });
+
+      // Persist role in local storage
+      localStorage.setItem(`ucc_team_role_${teamId}`, role);
+      localStorage.setItem("ucc_current_role", role);
+      if (role === "coach") {
+        localStorage.setItem(`ucc_coach_unlocked_${teamId}`, "true");
+      }
 
       // 2. Fetch metadata that we now have access to read
       const snap = await getDoc(
@@ -4666,6 +5488,316 @@ export default function App() {
   // RENDERERS
   // -------------------------------------------------------------
 
+  const renderCoachLoginModal = () => {
+    if (!showCoachLoginModal) return null;
+
+    return (
+      <div className="fixed inset-0 bg-slate-900/85 backdrop-blur-md z-[130] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
+          <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 sm:p-6 text-white relative">
+            <button
+              type="button"
+              onClick={() => {
+                setShowCoachLoginModal(false);
+                setCoachLoginMsg(null);
+                setCoachCodeInput("");
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-2 rounded-full cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-12 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-400/30 flex items-center justify-center shrink-0 shadow-inner">
+                <Shield size={24} />
+              </div>
+              <div>
+                <h3 className="font-black text-lg sm:text-xl tracking-wider uppercase text-white">
+                  Coach Login & Unlock
+                </h3>
+                <p className="text-slate-300 text-xs mt-0.5 font-medium">
+                  Full access at all times, regardless of player lockout
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-5 sm:p-6 space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-900 leading-relaxed flex items-start gap-2.5">
+              <ShieldAlert size={18} className="text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Coaches Access Guarantee:</span>{" "}
+                Coaches maintain 100% full access to view stats, line-ups, and run games even when player access is disabled or locked.
+              </div>
+            </div>
+
+            {/* Google Coach Sign In Option */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-black uppercase tracking-wider text-slate-500 block">
+                Method 1: Sign in with Coach Google Account
+              </label>
+              {user ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0"></span>
+                    <span className="text-slate-600 font-medium truncate">{user.email}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await signOut(auth);
+                      setCoachLoginMsg({ text: "Signed out. Please sign in with your Coach account.", isError: false });
+                    }}
+                    className="text-indigo-600 hover:text-indigo-800 font-bold uppercase tracking-wider text-[10px] shrink-0 ml-2 cursor-pointer"
+                  >
+                    Switch Account
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleGoogleCoachSignIn}
+                  disabled={isVerifyingCoach}
+                  className="w-full bg-white hover:bg-slate-50 border-2 border-slate-200 text-slate-800 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 cursor-pointer"
+                >
+                  <img
+                    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                    alt="Google"
+                    className="w-4 h-4"
+                  />
+                  <span>Sign In with Coach Google Account</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 my-2">
+              <div className="h-px bg-slate-200 flex-1"></div>
+              <span className="text-[10px] uppercase font-bold text-slate-400">OR</span>
+              <div className="h-px bg-slate-200 flex-1"></div>
+            </div>
+
+            {/* Coach Code Option */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleVerifyCoachCode();
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label className="text-[11px] font-black uppercase tracking-wider text-slate-500 block mb-1">
+                  Method 2: Enter Coach Share Code
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={coachCodeInput}
+                    onChange={(e) => {
+                      setCoachCodeInput(e.target.value.toUpperCase());
+                      if (coachLoginMsg) setCoachLoginMsg(null);
+                    }}
+                    placeholder="Enter Coach Code (e.g. 6-digit code or Team ID)"
+                    className="w-full uppercase font-mono tracking-widest px-4 py-2.5 rounded-xl border border-slate-300 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-sm font-bold text-slate-800 transition-all placeholder:text-slate-400 placeholder:normal-case placeholder:font-sans placeholder:tracking-normal"
+                    disabled={isVerifyingCoach}
+                    autoFocus
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+                    <Key size={16} />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Coaches can find this code in the database menu or team settings.
+                </p>
+              </div>
+
+              {coachLoginMsg && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                    coachLoginMsg.isError
+                      ? "bg-red-50 text-red-700 border border-red-200"
+                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  }`}
+                >
+                  {coachLoginMsg.isError ? <AlertTriangle size={15} className="shrink-0" /> : <CheckCircle2 size={15} className="shrink-0" />}
+                  <span>{coachLoginMsg.text}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCoachLoginModal(false);
+                    setCoachLoginMsg(null);
+                    setCoachCodeInput("");
+                  }}
+                  className="w-1/3 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 font-black text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isVerifyingCoach || !coachCodeInput.trim()}
+                  className="w-2/3 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {isVerifyingCoach ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-slate-950/30 border-t-slate-950 rounded-full animate-spin"></div>
+                      <span>Verifying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Unlock size={15} />
+                      <span>Unlock Coach Access</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPlayerSecurity = () => {
+    if (!isShieldProtectionActive) {
+      return renderCoachLoginModal();
+    }
+    return (
+      <>
+        {renderCoachLoginModal()}
+        {/* Anti-screenshot & capture shield overlay */}
+        {screenCaptureShieldActive && (
+          <div
+            onClick={() => {
+              document.documentElement.classList.remove("shield-active");
+              document.body.classList.remove("shield-active");
+              setScreenCaptureShieldActive(false);
+            }}
+            className="fixed inset-0 z-[2147483647] bg-black flex flex-col items-center justify-center p-6 text-center select-none cursor-pointer"
+          >
+            <div className="h-16 w-16 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center mb-5 text-red-500 shadow-2xl">
+              <ShieldAlert size={36} />
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2">
+              Protected Content
+            </h2>
+            <p className="text-zinc-400 text-xs sm:text-sm max-w-md font-medium leading-relaxed mb-6">
+              Screen capture and recording are prohibited. Viewing is restricted to authorized devices.
+            </p>
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  document.documentElement.classList.remove("shield-active");
+                  document.body.classList.remove("shield-active");
+                  setScreenCaptureShieldActive(false);
+                }}
+                className="bg-[#e50914] hover:bg-red-600 text-white font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95 cursor-pointer"
+              >
+                Tap to Resume
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  document.documentElement.classList.remove("shield-active");
+                  document.body.classList.remove("shield-active");
+                  setScreenCaptureShieldActive(false);
+                  setShowCoachLoginModal(true);
+                }}
+                className="bg-amber-500 hover:bg-amber-600 text-black font-black px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95 cursor-pointer flex items-center gap-2"
+              >
+                <Key size={14} />
+                Coach Login / Verify
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Security Warning Toast */}
+        {screenshotAttemptNotice && (
+          <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100000] bg-red-600 text-white px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-wider shadow-2xl flex items-center gap-2.5 border border-red-400 animate-pulse pointer-events-none">
+            <ShieldAlert size={18} className="shrink-0" />
+            <span>{screenshotAttemptNotice}</span>
+          </div>
+        )}
+
+        {/* Dynamic Forensic Watermark with Player Google Account */}
+        <div className="pointer-events-none fixed inset-0 z-30 overflow-hidden opacity-[0.06] select-none flex flex-wrap content-around justify-around p-4 rotate-[-12deg] scale-125">
+          {Array.from({ length: 36 }).map((_, i) => (
+            <div
+              key={i}
+              className="text-slate-900 dark:text-white font-black text-[10px] uppercase tracking-widest p-6 whitespace-nowrap"
+            >
+              CONFIDENTIAL • {user?.email || "PLAYER VIEW"} • {effectiveTeamName.toUpperCase()} • VIEW-ONLY ON DEVICE
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  };
+
+  const renderPlayerAccessModal = () => {
+    return (
+      <PlayerAccessLogModal
+        isOpen={showPlayerAccessModal}
+        onClose={() => setShowPlayerAccessModal(false)}
+        teamId={activeTeam}
+        teamName={effectiveTeamName}
+        playerCode={appData.playerCode}
+        publicPath={publicPath}
+        db={db}
+      />
+    );
+  };
+
+  const renderInstallBanner = () => {
+    if (isAppInstalled || installBannerDismissed) return null;
+    return (
+      <div className="w-full bg-gradient-to-r from-[#001b5e] via-blue-900 to-indigo-950 border-b border-blue-500/40 px-3 sm:px-4 py-2 text-white flex items-center justify-between gap-3 shadow-lg relative z-50">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-8 w-8 rounded-lg bg-[#001b5e] border border-blue-400/40 p-1 flex items-center justify-center shrink-0 shadow">
+            <img src={APP_LOGO_SRC} alt="UCC Lancers" className="h-full w-full object-contain" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-extrabold text-xs sm:text-sm text-white flex items-center gap-1.5 truncate">
+              <span>Install UCC Lancers</span>
+              <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] uppercase px-1.5 py-0.2 rounded font-black hidden xs:inline">
+                Android App
+              </span>
+            </div>
+            <p className="text-[11px] text-blue-200 truncate">
+              Download to Android home screen for full-screen stats & offline use
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={handleInstallApp}
+            className="bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-black text-xs uppercase tracking-wider px-3 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+          >
+            <Download size={13} />
+            <span>Install</span>
+          </button>
+          <button
+            onClick={() => {
+              setInstallBannerDismissed(true);
+              try {
+                localStorage.setItem("ucc_install_banner_dismissed", "true");
+              } catch {}
+            }}
+            className="text-slate-400 hover:text-white p-1 rounded-md transition-colors cursor-pointer"
+            title="Dismiss banner"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const renderInstallModal = () => {
     if (!showInstallModal) return null;
     const ua = typeof window !== "undefined" ? window.navigator.userAgent.toLowerCase() : "";
@@ -4759,6 +5891,41 @@ export default function App() {
             </div>
           )}
 
+          {/* Home Screen Shortcut & App Icon Preview */}
+          <div className="bg-gradient-to-r from-slate-800/90 to-[#001b5e]/40 border border-blue-500/30 rounded-2xl p-4 mb-4 flex items-center gap-4 shadow-lg">
+            <div className="relative shrink-0">
+              <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-[1.25rem] bg-[#001b5e] border-2 border-white/30 p-2.5 flex items-center justify-center shadow-xl overflow-hidden ring-2 ring-blue-500/40">
+                <img
+                  src={APP_LOGO_SRC}
+                  alt="UCC Lancers App Icon"
+                  className="h-full w-full object-contain filter drop-shadow-md"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = "true";
+                      target.src = FALLBACK_LOGO_SRC;
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-black text-white text-base tracking-wide">UCC Lancers</span>
+                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[9px] font-black uppercase px-2 py-0.5 rounded-full">
+                  Home Screen Icon
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                This official logo will appear as your shortcut on Apple (iOS) and Android home screens.
+              </p>
+              <div className="text-[11px] text-emerald-400 font-semibold mt-1 flex items-center gap-1">
+                <CheckCircle2 size={12} className="shrink-0" />
+                <span>Offline support, fast launch, and full-screen layout</span>
+              </div>
+            </div>
+          </div>
+
           {/* Platform Selector Tabs */}
           <div className="flex bg-slate-800/80 p-1 rounded-xl mb-4 border border-slate-700/60">
             <button
@@ -4769,7 +5936,7 @@ export default function App() {
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              <Smartphone size={14} /> iPhone / iPad
+              <Smartphone size={14} /> Apple (iPhone / iPad)
             </button>
             <button
               onClick={() => setInstallModalTab("android")}
@@ -4802,9 +5969,9 @@ export default function App() {
                     1
                   </div>
                   <div>
-                    <span className="font-bold text-white">Open in Safari</span>
+                    <span className="font-bold text-white">Open in Apple Safari</span>
                     <p className="text-xs text-slate-400">
-                      Make sure you are browsing this app in Apple Safari on your iPhone or iPad.
+                      Open this web app in Apple Safari on your iPhone or iPad.
                     </p>
                   </div>
                 </div>
@@ -4826,7 +5993,18 @@ export default function App() {
                   <div>
                     <span className="font-bold text-white">Select "Add to Home Screen"</span>
                     <p className="text-xs text-slate-400">
-                      Scroll down the list, tap <span className="inline-flex items-center text-white font-bold"><PlusCircle size={12} className="mx-1 inline" /> Add to Home Screen</span>, then tap <strong>Add</strong>.
+                      Scroll down the share sheet and tap <span className="inline-flex items-center text-white font-bold"><PlusCircle size={12} className="mx-1 inline text-blue-400" /> Add to Home Screen</span>.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-blue-500/20 text-blue-400 font-bold flex items-center justify-center shrink-0 text-xs">
+                    4
+                  </div>
+                  <div>
+                    <span className="font-bold text-white">Tap "Add"</span>
+                    <p className="text-xs text-slate-400">
+                      Confirm by tapping <strong>Add</strong> in the top-right corner. The UCC Lancers app shortcut with the official logo will appear right on your home screen!
                     </p>
                   </div>
                 </div>
@@ -4835,12 +6013,36 @@ export default function App() {
 
             {activeTab === "android" && (
               <div className="space-y-3 text-sm">
+                {deferredPrompt && (
+                  <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl mb-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <div className="text-xs text-emerald-300">
+                      <span className="font-bold text-white block">Ready to Install on Android!</span>
+                      Tap below to download directly to your Android device
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          deferredPrompt.prompt();
+                          const { outcome } = await deferredPrompt.userChoice;
+                          if (outcome === "accepted") {
+                            setIsAppInstalled(true);
+                            setDeferredPrompt(null);
+                            setShowInstallModal(false);
+                          }
+                        } catch (e) {}
+                      }}
+                      className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider px-4 py-2.5 rounded-lg shrink-0 flex items-center justify-center gap-1.5 shadow-lg active:scale-95 transition-all"
+                    >
+                      <Download size={14} /> Install Now
+                    </button>
+                  </div>
+                )}
                 <div className="flex items-start gap-3">
                   <div className="h-7 w-7 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center shrink-0 text-xs">
                     1
                   </div>
                   <div>
-                    <span className="font-bold text-white">Open in Chrome</span>
+                    <span className="font-bold text-white">Open in Google Chrome</span>
                     <p className="text-xs text-slate-400">
                       Open this app in Google Chrome on your Android phone or tablet.
                     </p>
@@ -4851,7 +6053,7 @@ export default function App() {
                     2
                   </div>
                   <div>
-                    <span className="font-bold text-white">Tap 3 Dots Menu (⋮)</span>
+                    <span className="font-bold text-white">Tap the 3 Dots Menu (⋮)</span>
                     <p className="text-xs text-slate-400">
                       Tap the 3 dots in the top-right corner of Google Chrome.
                     </p>
@@ -4864,7 +6066,7 @@ export default function App() {
                   <div>
                     <span className="font-bold text-white">Tap "Install app" or "Add to Home screen"</span>
                     <p className="text-xs text-slate-400">
-                      Tap <strong>Install</strong> to add the Lancer Volleyball app directly to your home screen!
+                      Tap <strong>Install app</strong> (or <em>Add to Home screen</em>), then tap <strong>Install</strong> to download the UCC Lancers app directly to your Android device with the official logo!
                     </p>
                   </div>
                 </div>
@@ -5009,7 +6211,9 @@ export default function App() {
 
   if (view === "team_select") {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
+      <div className="min-h-screen bg-slate-900 flex flex-col font-sans relative overflow-hidden">
+        {renderInstallBanner()}
+        <div className="flex-1 flex items-center justify-center p-4 sm:p-8 relative">
         <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center"></div>
 
         <div className="absolute top-6 right-6 flex items-center gap-2 z-20">
@@ -5039,9 +6243,9 @@ export default function App() {
           <div className="mb-8 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
             <img
               src={APP_LOGO_SRC}
-              alt="Lancers Logo"
+              alt="UCC Lancers Logo"
               referrerPolicy="no-referrer"
-              className="h-full w-full object-contain absolute inset-0 z-10"
+              className="h-full w-full object-contain filter drop-shadow-[0_10px_20px_rgba(0,0,0,0.4)]"
               onError={(e) => {
                 const target = e.currentTarget;
                 if (!target.dataset.fallback) {
@@ -5052,7 +6256,6 @@ export default function App() {
                 }
               }}
             />
-            <Shield className="text-slate-800 h-12 w-12 sm:h-20 sm:w-20 absolute z-0" />
           </div>
           <h1 className="text-4xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center mb-2">
             UCC Lancers
@@ -5178,18 +6381,24 @@ export default function App() {
             )}
           </div>
         </div>
+        </div>
+        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
   }
 
   if (view === "menu") {
-    const teamInfo = myTeams.find((t) => t.id === activeTeam) || {
-      name: "Team Data",
-      color: "from-slate-600 to-slate-800",
+    const rawTeam = myTeams.find((t) => t.id === activeTeam);
+    const teamInfo = {
+      name: rawTeam?.name || effectiveTeamName || "Team Data",
+      color: rawTeam?.color || "from-slate-600 to-slate-800",
+      role: effectiveRole,
     };
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans p-4 sm:p-8 relative overflow-hidden">
+      <div className="min-h-screen bg-slate-900 flex flex-col font-sans relative overflow-hidden">
+        {renderInstallBanner()}
+        <div className="flex-1 flex items-center justify-center p-4 sm:p-8 relative">
         <div className="absolute inset-0 opacity-5 pointer-events-none flex items-center justify-center"></div>
 
         <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-[2rem] sm:rounded-[3rem] shadow-2xl p-6 sm:p-12 max-w-3xl w-full relative z-10 flex flex-col items-center">
@@ -5234,9 +6443,9 @@ export default function App() {
             <div className="mb-4 sm:mb-6 relative flex items-center justify-center h-24 w-24 sm:h-36 sm:w-36 group">
               <img
                 src={APP_LOGO_SRC}
-                alt="Lancers Logo"
+                alt="UCC Lancers Logo"
                 referrerPolicy="no-referrer"
-                className="h-full w-full object-contain absolute inset-0 z-10"
+                className="h-full w-full object-contain filter drop-shadow-[0_10px_20px_rgba(0,0,0,0.4)]"
                 onError={(e) => {
                   const target = e.currentTarget;
                   if (!target.dataset.fallback) {
@@ -5247,7 +6456,6 @@ export default function App() {
                   }
                 }}
               />
-              <Shield className="text-slate-800 h-10 w-10 sm:h-16 sm:w-16 absolute z-0" />
             </div>
             <h1 className="text-3xl sm:text-5xl font-black tracking-widest text-white uppercase drop-shadow-md text-center">
               UCC Lancers
@@ -5306,17 +6514,61 @@ export default function App() {
                     </button>
                   </div>
                 )}
+                {teamInfo.role === "coach" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setShowPlayerAccessModal(true)}
+                      className="w-full mt-1 px-4 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 rounded-full text-emerald-300 font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Eye size={15} className="text-emerald-400 group-hover:scale-110 transition-transform" />
+                        <span>Player Stats Access Audit</span>
+                      </div>
+                      <span className="text-[10px] bg-emerald-500/30 text-emerald-200 px-2.5 py-0.5 rounded-full font-black">
+                        Google Accounts
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={togglePlayerAccess}
+                      className={`w-full mt-1.5 px-4 py-2.5 ${
+                        isPlayerAccessAllowed
+                          ? "bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-400/40 text-emerald-300"
+                          : "bg-red-500/20 hover:bg-red-500/30 border-red-400/40 text-red-300"
+                      } border rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {isPlayerAccessAllowed ? (
+                          <Unlock size={15} className="text-emerald-400 group-hover:scale-110 transition-transform" />
+                        ) : (
+                          <Lock size={15} className="text-red-400 group-hover:scale-110 transition-transform" />
+                        )}
+                        <span>Available to Players</span>
+                      </div>
+                      <span className={`text-[10px] ${isPlayerAccessAllowed ? "bg-emerald-500/30 text-emerald-200" : "bg-red-500/30 text-red-200"} px-2.5 py-0.5 rounded-full font-black`}>
+                        {isPlayerAccessAllowed ? "ACCESS ON" : "ACCESS OFF"}
+                      </span>
+                    </button>
+                  </>
+                )}
+                {isPlayerRole && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCoachLoginModal(true)}
+                    className="w-full mt-2 px-4 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 rounded-full text-amber-300 font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Shield size={15} className="text-amber-400 group-hover:scale-110 transition-transform" />
+                      <span>Coach Login / Enter Code</span>
+                    </div>
+                    <span className="text-[10px] bg-amber-500/30 text-amber-200 px-2.5 py-0.5 rounded-full font-black">
+                      Coach Access
+                    </span>
+                  </button>
+                )}
               </div>
             )}
-            <div className="mt-4 flex flex-col gap-2 w-full max-w-sm mx-auto">
-              <button
-                onClick={handleInstallApp}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold uppercase tracking-widest px-4 py-3 rounded-full border border-indigo-400/50 shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                <Download size={16} />
-                {isAppInstalled ? "App Installed (Guide)" : "Download App"}
-              </button>
-            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
@@ -5656,7 +6908,10 @@ export default function App() {
           </div>
         )}
         {renderOpponentReportModal()}
+        {renderPlayerAccessModal()}
+        {renderPlayerSecurity()}
         {renderInstallModal()}
+        </div>
       </div>
     );
   }
@@ -5678,10 +6933,10 @@ export default function App() {
         <div className="w-full max-w-4xl bg-white rounded-2xl sm:rounded-[2rem] shadow-xl sm:shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
           <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex justify-between items-center shadow-md z-10 relative">
             <div className="flex items-center space-x-3 sm:space-x-4">
-              <div className="hidden sm:flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative">
+              <div className="flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative shrink-0">
                 <img
                   src={APP_LOGO_SRC}
-                  alt="Logo"
+                  alt="UCC Lancers Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
                   onError={(e) => {
@@ -6434,6 +7689,7 @@ export default function App() {
           }
         />
         {renderOpponentReportModal()}
+        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
@@ -6456,10 +7712,10 @@ export default function App() {
         <header className="bg-gradient-to-r landscape:bg-gradient-to-b from-slate-900 via-[#001b5e] to-slate-900 text-white shadow-md z-10 border-b landscape:border-b-0 landscape:border-r border-white/10 shrink-0 landscape:w-48 xl:landscape:w-64">
           <div className="max-w-7xl mx-auto px-2 sm:px-4 py-1.5 sm:py-2.5 landscape:py-6 flex flex-wrap sm:flex-nowrap landscape:flex-col items-center justify-between gap-1 sm:gap-4 landscape:h-full landscape:justify-around">
             <div className="flex items-center landscape:flex-col space-x-2 sm:space-x-4 landscape:space-x-0 landscape:space-y-4 order-1 sm:order-none">
-              <div className="hidden md:flex items-center justify-center h-12 w-12 overflow-hidden relative">
+              <div className="flex items-center justify-center h-8 w-8 sm:h-12 sm:w-12 overflow-hidden relative shrink-0">
                 <img
                   src={APP_LOGO_SRC}
-                  alt="Logo"
+                  alt="UCC Lancers Logo"
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-contain absolute inset-0 z-10"
                   onError={(e) => {
@@ -6573,6 +7829,15 @@ export default function App() {
                   {setsWon.opp}
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="mt-1 px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm transition-transform active:scale-95 cursor-pointer ring-1 ring-amber-300"
+                title="View Live Match Stats"
+              >
+                <Activity size={11} className="shrink-0" />
+                <span>Stats</span>
+              </button>
               {score.ucc === 0 && score.opp === 0 && (
                 <button
                   type="button"
@@ -6677,13 +7942,14 @@ export default function App() {
                 <span className="sm:hidden">Opp</span>
               </button>
               <button
-                onClick={() => setShowStatCorrectionModal(true)}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-indigo-50 text-indigo-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-indigo-100 transition-colors flex items-center gap-1.5 border border-indigo-200 shadow-sm"
-                title="Review & Correct Stats"
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                title="View Live Match Stats"
               >
-                <Edit3 size={14} className="text-indigo-600" />
-                <span className="hidden sm:inline">Data Correction</span>
-                <span className="sm:hidden">Correct</span>
+                <Activity size={14} className="text-slate-950" />
+                <span className="hidden sm:inline">Live Stats</span>
+                <span className="sm:hidden">Stats</span>
               </button>
               <div
                 className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
@@ -6744,6 +8010,18 @@ export default function App() {
           {showPositioning && (
             <div className="fixed inset-0 z-[150] bg-slate-900/80 backdrop-blur-md flex flex-col justify-center items-center p-4">
               <div className="bg-slate-100 p-4 rounded-[2rem] shadow-2xl relative w-full h-[90vh] max-w-[600px] flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPositioning(false);
+                    viewStatsWithCurrentMatch();
+                  }}
+                  className="absolute top-2 left-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-3 py-1.5 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1 shadow-sm z-10 cursor-pointer"
+                  title="View Live Stats"
+                >
+                  <Activity size={13} />
+                  <span>Stats</span>
+                </button>
                 <button
                   onClick={() => setShowPositioning(false)}
                   className="absolute top-2 right-2 text-slate-500 hover:text-slate-800 shrink-0 p-2 z-10 bg-white rounded-full shadow-sm"
@@ -6985,22 +8263,42 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(!viewOppStats ? lineup : oppLineup)
-                    .filter((id): id is string => Boolean(id))
-                    .map((id, index) => {
+                  {(() => {
+                    const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
+                      (id): id is string => Boolean(id),
+                    );
+                    const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
+                      if (!viewOppStats) {
+                        const pA = appData.roster.find((r) => r.id === idA);
+                        const pB = appData.roster.find((r) => r.id === idB);
+                        return sortPlayersByNumberThenAlpha(
+                          pA || { name: idA, id: idA },
+                          pB || { name: idB, id: idB },
+                        );
+                      } else {
+                        return sortPlayersByNumberThenAlpha(
+                          { number: idA, name: idA, id: idA },
+                          { number: idB, name: idB, id: idB },
+                        );
+                      }
+                    });
+
+                    return sortedCourtPlayers.map((id, index) => {
                       const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
                       const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
                       // Back-row ("background") players in standard rotation are indices 0, 4, 5 (Positions 1, 5, 6)
                       const isBackRow = [0, 4, 5].includes(posIndex);
                       const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
-                      const isServer = !viewOppStats && posIndex === 0 && serving === "ucc";
+                      const isServer = !viewOppStats
+                        ? posIndex === 0 && serving === "ucc"
+                        : posIndex === 0 && serving === "opp";
 
                       const pName = !viewOppStats
                         ? appData.roster.find((r) => r.id === id)?.name || id
                         : id;
                       const pNum = !viewOppStats
                         ? appData.roster.find((r) => r.id === id)?.number || "-"
-                        : "";
+                        : id.replace(/\D/g, "") || id;
                       return (
                         <tr
                           key={index}
@@ -7169,14 +8467,21 @@ export default function App() {
                           {trackedCategories.Serve && (
                             <td className="p-1.5">
                               <button
-                                onClick={() =>
-                                  setStatPrompt({
-                                    playerId: id,
-                                    type: "Serve",
-                                    isOpp: viewOppStats,
-                                  })
-                                }
-                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100"
+                                onClick={() => {
+                                  if (viewOppStats) {
+                                    setOppServeReceivePrompt({
+                                      passerId: null,
+                                      serverId: id,
+                                    });
+                                  } else {
+                                    setStatPrompt({
+                                      playerId: id,
+                                      type: "Serve",
+                                      isOpp: false,
+                                    });
+                                  }
+                                }}
+                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100 cursor-pointer"
                               >
                                 Serve
                               </button>
@@ -7232,7 +8537,8 @@ export default function App() {
                           )}
                         </tr>
                       );
-                    })}
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -7256,12 +8562,27 @@ export default function App() {
             </button>
             {rallyPhase === "serve" && !servePromptVisible ? (
               <button
-                onClick={() => setServePromptVisible(true)}
-                className="flex-1 bg-gradient-to-b from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30 transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none"
+                onClick={() => {
+                  if (serving === "opp") {
+                    setOppServeReceivePrompt({
+                      passerId: null,
+                      serverId: oppLineup[0],
+                    });
+                  } else {
+                    setServePromptVisible(true);
+                  }
+                }}
+                className={`flex-1 bg-gradient-to-b ${
+                  serving === "opp"
+                    ? "from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30"
+                    : "from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30"
+                } text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer`}
               >
-                <span>SERVE</span>
+                <span>{serving === "opp" ? "OPP SERVE" : "SERVE"}</span>
                 <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">
-                  TAP WHEN SERVED
+                  {serving === "opp"
+                    ? "TAP TO RECORD PASS / OUTCOME"
+                    : "TAP WHEN SERVED"}
                 </span>
               </button>
             ) : (
@@ -7274,10 +8595,11 @@ export default function App() {
             )}
             <button
               onClick={viewStatsWithCurrentMatch}
-              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase"
+              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase gap-1.5 shrink-0"
               title="View Live Stats"
             >
               <Activity size={18} />
+              <span className="hidden sm:inline font-black text-xs">STATS</span>
             </button>
             <button
               onClick={() => setShowStatCorrectionModal(true)}
@@ -7328,12 +8650,26 @@ export default function App() {
                   <Activity size={20} className="mr-2" />
                   {statPrompt.type}
                 </div>
-                <button
-                  onClick={() => setStatPrompt(null)}
-                  className="text-white/60 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors"
-                >
-                  <X size={24} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatPrompt(null);
+                      viewStatsWithCurrentMatch();
+                    }}
+                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-lg text-xs uppercase tracking-wider flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                    title="View stats"
+                  >
+                    <Activity size={13} />
+                    <span>Stats</span>
+                  </button>
+                  <button
+                    onClick={() => setStatPrompt(null)}
+                    className="text-white/60 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
               <div className="p-4 bg-slate-50 space-y-4 overflow-y-auto">
                 {/* Always Visible Score Banner */}
@@ -8264,6 +9600,27 @@ export default function App() {
               serving === "ucc" ? "bg-[#001b5e]/90" : "bg-slate-900/90"
             }`}
           >
+            {/* Top Navigation Bar while Waiting for Serve */}
+            <div className="absolute top-4 inset-x-4 sm:inset-x-8 flex items-center justify-between z-10">
+              <button
+                type="button"
+                onClick={() => setServePromptVisible(false)}
+                className="bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 border border-white/20 transition-colors cursor-pointer"
+                title="Return to court view"
+              >
+                <X size={15} />
+                <span>Court</span>
+              </button>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer ring-2 ring-amber-300/60"
+                title="Access stats while waiting for serve"
+              >
+                <Activity size={16} className="text-slate-950 shrink-0" />
+                <span>View Stats</span>
+              </button>
+            </div>
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-bounce drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
               <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
             </div>
@@ -8312,10 +9669,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  if (serving !== "opp") {
-                    setServing("opp");
-                    updateSetState({ serving: "opp" });
-                  }
+                  setServing("opp");
+                  updateSetState({ serving: "opp" });
+                  setServePromptVisible(false);
+                  setOppServeReceivePrompt({
+                    passerId: null,
+                    serverId: oppLineup[0],
+                  });
                 }}
                 className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
                   serving === "opp"
@@ -8361,11 +9721,42 @@ export default function App() {
                 ERROR <XCircle size={28} />
               </button>
             </div>
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="text-amber-300 hover:text-amber-200 text-xs font-black uppercase tracking-widest flex items-center gap-1.5 underline underline-offset-4 cursor-pointer"
+              >
+                <Activity size={14} />
+                <span>Open Stats Database</span>
+              </button>
+            </div>
           </div>
         )}
 
         {serveErrorPrompt && !setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+            {/* Top Navigation Bar while selecting serve error */}
+            <div className="absolute top-4 inset-x-4 sm:inset-x-8 flex items-center justify-between z-10">
+              <button
+                type="button"
+                onClick={() => setServeErrorPrompt(null)}
+                className="bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 border border-white/20 transition-colors cursor-pointer"
+                title="Cancel serve error selection"
+              >
+                <X size={15} />
+                <span>Cancel</span>
+              </button>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer ring-2 ring-amber-300/60"
+                title="View live stats"
+              >
+                <Activity size={16} className="text-slate-950 shrink-0" />
+                <span>View Stats</span>
+              </button>
+            </div>
             {/* Live Score Display */}
             <div className="mb-4 flex items-center justify-between gap-4 bg-white/10 backdrop-blur-md px-6 py-2 rounded-2xl border border-white/20 shadow-xl min-w-[280px]">
               <div className="text-left">
@@ -8695,6 +10086,27 @@ export default function App() {
 
         {endRallyVisible && !setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-40 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
+            {/* Top Navigation Bar */}
+            <div className="absolute top-4 inset-x-4 sm:inset-x-8 flex items-center justify-between z-10">
+              <button
+                type="button"
+                onClick={() => setEndRallyVisible(false)}
+                className="bg-white/10 hover:bg-white/20 text-white px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 border border-white/20 transition-colors cursor-pointer"
+                title="Return to court"
+              >
+                <X size={15} />
+                <span>Court</span>
+              </button>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer ring-2 ring-amber-300/60"
+                title="View live stats"
+              >
+                <Activity size={16} className="text-slate-950 shrink-0" />
+                <span>View Stats</span>
+              </button>
+            </div>
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-pulse drop-shadow-[0_0_30px_rgba(251,191,36,0.4)]">
               Trophy
             </div>
@@ -8729,6 +10141,21 @@ export default function App() {
 
         {setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-[60] flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-2xl">
+            {/* Top Navigation Bar */}
+            <div className="absolute top-4 inset-x-4 sm:inset-x-8 flex items-center justify-between z-10">
+              <span className="text-[10px] font-black uppercase text-amber-400 bg-amber-400/20 px-3 py-1.5 rounded-full border border-amber-400/30">
+                Set Finished
+              </span>
+              <button
+                type="button"
+                onClick={viewStatsWithCurrentMatch}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 shadow-lg transition-transform active:scale-95 cursor-pointer ring-2 ring-amber-300/60"
+                title="View full set & match stats"
+              >
+                <Activity size={16} className="text-slate-950 shrink-0" />
+                <span>View Set Stats</span>
+              </button>
+            </div>
             <Trophy
               size={80}
               className={`mb-3 sm:mb-4 drop-shadow-[0_0_50px_rgba(255,255,255,0.2)] sm:w-[100px] sm:h-[100px] ${
@@ -8857,9 +10284,9 @@ export default function App() {
           </div>
         )}
 
-        {/* OPPONENT SERVE RECEIVE PROMPT (WHO PASSED & RATING) */}
+        {/* OPPONENT SERVE RECEIVE PROMPT (WHO PASSED & RATING / ACE / ERROR) */}
         {oppServeReceivePrompt && !setWinnerModal && (
-          <div className="fixed inset-0 bg-slate-900/80 z-[110] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="fixed inset-0 bg-slate-900/85 z-[110] flex items-center justify-center p-3 sm:p-4 backdrop-blur-md animate-in fade-in duration-150">
             <div className="bg-white rounded-[2rem] p-4 sm:p-6 max-w-md w-full shadow-2xl flex flex-col items-center border border-slate-200">
               {/* Always Visible Score Banner */}
               <div className="w-full bg-slate-900 text-white rounded-2xl p-3 mb-3 flex items-center justify-between shadow-md">
@@ -8877,67 +10304,192 @@ export default function App() {
                 </div>
               </div>
 
-              <h2 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-widest text-center">
-                Opponent Serve
-              </h2>
+              {/* Title and Server Indicator + Stats & Dismiss */}
+              <div className="w-full flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg sm:text-xl font-black text-slate-800 uppercase tracking-widest">
+                    Opponent Serve
+                  </h2>
+                  <span className="text-[10px] font-black uppercase bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full border border-purple-200 shadow-xs">
+                    #{oppServeReceivePrompt.serverId || oppLineup[0] || "?"} Serving
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={viewStatsWithCurrentMatch}
+                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-lg text-xs uppercase tracking-wider flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                    title="View match stats"
+                  >
+                    <Activity size={13} />
+                    <span>Stats</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOppServeReceivePrompt(null)}
+                    className="text-slate-400 hover:text-slate-700 p-1 rounded-lg"
+                    title="Dismiss"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
               <p className="text-xs sm:text-sm font-bold text-slate-500 mb-3 text-center">
-                {oppServeReceivePrompt.passerId
+                {oppServeReceivePrompt.selectingAce
+                  ? "Who was aced? Tap player to log reception error (0 pass):"
+                  : oppServeReceivePrompt.passerId
                   ? "Record pass rating for this serve:"
                   : "Who passed the ball, or did the serve end?"}
               </p>
 
-              {!oppServeReceivePrompt.passerId ? (
-                <div className="w-full space-y-2.5">
-                  {/* Quick outcome buttons alongside who passed screen */}
-                  <div className="grid grid-cols-2 gap-2">
+              {oppServeReceivePrompt.selectingAce ? (
+                /* WHO GOT ACED SELECTION */
+                <div className="w-full space-y-3">
+                  <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-black">
+                        <CheckCircle2 size={18} />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black uppercase text-emerald-900 tracking-wider">
+                          Opponent Ace (+1 Pt Opp)
+                        </div>
+                        <div className="text-[10px] font-bold text-emerald-700">
+                          Select receiver who got aced:
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const uccCandidates = getSevenReceivers("ucc");
+                    const sortedReceivers = [...uccCandidates].sort(sortPlayersByNumberThenAlpha);
+
+                    return (
+                      <div className="space-y-2">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-between px-1">
+                          <span>All Passers (Sorted by Number)</span>
+                          <span className="text-[9px] text-slate-500 font-bold">Tap who got aced</span>
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                          {sortedReceivers.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                                logStat(item.id, "Pass", "Rating", 0, false);
+                                logStat(sId, "Serve", "Ace", 1, true);
+                                handlePoint("opp", true);
+                                setOppServeReceivePrompt(null);
+                              }}
+                              className={`p-2.5 rounded-xl border-2 flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer hover:border-emerald-500 hover:bg-emerald-50/50 ${
+                                item.isLibero
+                                  ? "bg-amber-50/80 border-amber-300 text-amber-900"
+                                  : "bg-slate-50 border-slate-200 text-slate-800"
+                              }`}
+                            >
+                              <span className="text-xl sm:text-2xl font-black leading-tight text-emerald-700">
+                                #{item.number}
+                              </span>
+                              <span className="text-[11px] font-bold truncate max-w-full">
+                                {item.name}
+                              </span>
+                              <span className="text-[8px] font-black uppercase mt-0.5 text-slate-400">
+                                {item.isLibero ? "Libero" : item.posLabel}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="pt-2 flex flex-col sm:flex-row gap-2">
                     <button
                       type="button"
                       onClick={() => {
+                        const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                        logStat(sId, "Serve", "Ace", 1, true);
+                        handlePoint("opp", true);
+                        setOppServeReceivePrompt(null);
+                      }}
+                      className="flex-1 py-2.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-xl font-black text-xs uppercase tracking-wider transition-colors cursor-pointer text-center"
+                    >
+                      Unassigned Ace (Nobody Touched)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOppServeReceivePrompt((prev) =>
+                          prev ? { ...prev, selectingAce: false } : null,
+                        )
+                      }
+                      className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer text-center"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : !oppServeReceivePrompt.passerId ? (
+                <div className="w-full space-y-2.5">
+                  {/* Quick outcome buttons: ERROR (RED) and ACE (GREEN) */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Error button: RED */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                        logStat(sId, "Serve", "Miss", 1, true);
                         handlePoint("ucc");
                         setOppServeReceivePrompt(null);
                       }}
-                      className="py-2.5 px-2 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="py-3 px-2.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-red-500/40"
                       title="Opponent Missed Serve (Net/Out) -> Point for Lancers"
                     >
-                      <CheckCircle2 size={16} />
-                      <span>Opp Error (+Pt)</span>
+                      <XCircle size={18} />
+                      <span>Error (+Pt)</span>
                     </button>
 
+                    {/* Ace button: GREEN */}
                     <button
                       type="button"
                       onClick={() => {
-                        handlePoint("opp");
-                        setOppServeReceivePrompt(null);
+                        setOppServeReceivePrompt((prev) => ({
+                          ...(prev || { passerId: null }),
+                          selectingAce: true,
+                        }));
                       }}
-                      className="py-2.5 px-2 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                      title="Opponent Aced UCC -> Point for Opponent"
+                      className="py-3 px-2.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-green-500/40"
+                      title="Opponent Aced UCC -> Choose who got aced -> Point for Opponent"
                     >
-                      <XCircle size={16} />
-                      <span>Opp Ace (+Pt)</span>
+                      <CheckCircle2 size={18} />
+                      <span>Ace (+Pt)</span>
                     </button>
                   </div>
 
                   {(() => {
                     const uccCandidates = getSevenReceivers("ucc");
-                    const sortedReceivers = [...uccCandidates].sort((a, b) => {
-                      const nA = parseInt((a.number || "").replace(/\D/g, ""), 10);
-                      const nB = parseInt((b.number || "").replace(/\D/g, ""), 10);
-                      if (!isNaN(nA) && !isNaN(nB)) return nA - nB;
-                      return (a.number || "").localeCompare(b.number || "");
-                    });
+                    const sortedReceivers = [...uccCandidates].sort(sortPlayersByNumberThenAlpha);
 
                     return (
                       <div className="space-y-2 pt-1">
                         <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-between px-1">
-                          <span>Receivers (Sorted by Number)</span>
+                          <span>Passers (Sorted by Number)</span>
                           <span className="text-[9px] text-slate-500 font-bold">7 Active Players</span>
                         </div>
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                           {sortedReceivers.map((item) => (
                             <button
                               key={item.id}
+                              type="button"
                               onClick={() =>
-                                setOppServeReceivePrompt({ passerId: item.id })
+                                setOppServeReceivePrompt((prev) => ({
+                                  ...(prev || {}),
+                                  passerId: item.id,
+                                  selectingAce: false,
+                                }))
                               }
                               className={`p-2.5 rounded-xl border flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer ${
                                 item.isLibero
@@ -8963,6 +10515,7 @@ export default function App() {
 
                   <div className="pt-2 flex gap-2">
                     <button
+                      type="button"
                       onClick={() => {
                         setOppServeReceivePrompt(null);
                         changeRallyPhase("play");
@@ -8994,10 +10547,15 @@ export default function App() {
                       </span>
                     </div>
                     <button
+                      type="button"
                       onClick={() =>
-                        setOppServeReceivePrompt({ passerId: null })
+                        setOppServeReceivePrompt((prev) => ({
+                          ...(prev || {}),
+                          passerId: null,
+                          selectingAce: false,
+                        }))
                       }
-                      className="text-xs text-blue-600 font-bold hover:underline"
+                      className="text-xs text-blue-600 font-bold hover:underline cursor-pointer"
                     >
                       Change Passer
                     </button>
@@ -9008,34 +10566,53 @@ export default function App() {
                       { val: 3, label: "Perfect (3)", desc: "All options", color: "from-green-500 to-green-600" },
                       { val: 2, label: "Good (2)", desc: "Medium", color: "from-teal-500 to-teal-600" },
                       { val: 1, label: "Poor (1)", desc: "Out of sys", color: "from-amber-500 to-amber-600" },
-                      { val: 0, label: "Error (0)", desc: "Overpass", color: "from-red-500 to-red-600" },
-                    ].map(({ val, desc, color }) => (
+                      { val: 0, label: "Aced (0)", desc: "Aced / Err", color: "from-red-500 to-red-600" },
+                    ].map(({ val, label, desc, color }) => (
                       <button
                         key={val}
+                        type="button"
                         onClick={() => {
-                          recordStatAndCheckPoint(
-                            oppServeReceivePrompt.passerId,
-                            "Pass",
-                            "Rating",
-                            val,
-                          );
-                          setOppServeReceivePrompt(null);
+                          if (val === 0) {
+                            // Recording rating 0 also logs that this receiver got aced and awards point to opponent
+                            const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                            logStat(
+                              oppServeReceivePrompt.passerId,
+                              "Pass",
+                              "Rating",
+                              0,
+                              false,
+                            );
+                            logStat(sId, "Serve", "Ace", 1, true);
+                            handlePoint("opp", true);
+                            setOppServeReceivePrompt(null);
+                          } else {
+                            recordStatAndCheckPoint(
+                              oppServeReceivePrompt.passerId,
+                              "Pass",
+                              "Rating",
+                              val,
+                            );
+                            setOppServeReceivePrompt(null);
+                          }
                         }}
-                        className={`bg-gradient-to-b ${color} text-white p-3 rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all`}
+                        className={`bg-gradient-to-b ${color} text-white p-3 rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all cursor-pointer`}
                       >
                         <span className="text-2xl sm:text-3xl leading-none">{val}</span>
-                        <span className="text-[9px] uppercase tracking-wider opacity-90 mt-1">{desc}</span>
+                        <span className="text-[9px] uppercase tracking-wider opacity-90 mt-1 text-center font-bold">
+                          {label}
+                        </span>
                       </button>
                     ))}
                   </div>
 
                   <div className="pt-2 flex gap-2">
                     <button
+                      type="button"
                       onClick={() => {
                         setOppServeReceivePrompt(null);
                         changeRallyPhase("play");
                       }}
-                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+                      className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
                     >
                       Skip Pass Rating (Play On)
                     </button>
@@ -9064,7 +10641,16 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={viewStatsWithCurrentMatch}
+                    className="bg-amber-400 hover:bg-amber-500 text-slate-950 font-black px-3 py-1.5 rounded-xl text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                    title="View match and player stats before next set"
+                  >
+                    <Activity size={13} />
+                    <span>View Stats</span>
+                  </button>
                   <span className="text-[10px] uppercase font-black tracking-wider bg-blue-50 text-[#0033A0] px-2.5 py-1 rounded-full border border-blue-200">
                     Switch Lineup
                   </span>
@@ -10292,7 +11878,7 @@ export default function App() {
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
             ourTeamName={effectiveTeamName}
-            isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
+            isReadOnly={isPlayerRole}
           />
         )}
         <TeamNameEditModal
@@ -10324,6 +11910,7 @@ export default function App() {
           onSave={handleSaveSetScore}
         />
         {renderOpponentReportModal()}
+        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
@@ -10338,9 +11925,26 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative">
         <div className="bg-slate-900 text-white p-4 shadow-lg sticky top-0 z-50 flex justify-between items-center">
-          <h1 className="text-xl font-black uppercase tracking-widest flex items-center">
-            <Activity className="mr-2 text-blue-400" size={24} /> Open Practice
-          </h1>
+          <div className="flex items-center">
+            <div className="mr-2 sm:mr-3 flex items-center justify-center h-8 w-8 sm:h-10 sm:w-10 overflow-hidden relative shrink-0">
+              <img
+                src={APP_LOGO_SRC}
+                alt="UCC Lancers Logo"
+                referrerPolicy="no-referrer"
+                className="h-full w-full object-contain"
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (!target.dataset.fallback) {
+                    target.dataset.fallback = "true";
+                    target.src = FALLBACK_LOGO_SRC;
+                  }
+                }}
+              />
+            </div>
+            <h1 className="text-xl font-black uppercase tracking-widest flex items-center">
+              <Activity className="mr-2 text-blue-400" size={24} /> Open Practice
+            </h1>
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setShowPracticeStats(true)}
@@ -11106,9 +12710,11 @@ export default function App() {
             onDeleteStat={handleDeleteStat}
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
-            isReadOnly={myTeams.find((t) => t.id === activeTeam)?.role === "player"}
+            isReadOnly={isPlayerRole}
           />
         )}
+        {renderPlayerSecurity()}
+        {renderInstallModal()}
       </div>
     );
   }
@@ -11256,13 +12862,30 @@ export default function App() {
       <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col">
         <div className="max-w-4xl w-full mx-auto">
           <div className="bg-slate-900 text-white rounded-t-2xl sm:rounded-t-3xl p-4 sm:p-6 shadow-xl flex justify-between items-center z-10 relative">
-            <h1 className="text-xl sm:text-2xl font-black uppercase tracking-widest flex items-center">
-              <ArrowRightLeft
-                className="mr-2 sm:mr-3 text-indigo-400"
-                size={24}
-              />{" "}
-              Compare Stats
-            </h1>
+            <div className="flex items-center">
+              <div className="mr-2 sm:mr-3 flex items-center justify-center h-8 w-8 sm:h-10 sm:w-10 overflow-hidden relative shrink-0">
+                <img
+                  src={APP_LOGO_SRC}
+                  alt="UCC Lancers Logo"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-contain"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.dataset.fallback) {
+                      target.dataset.fallback = "true";
+                      target.src = FALLBACK_LOGO_SRC;
+                    }
+                  }}
+                />
+              </div>
+              <h1 className="text-xl sm:text-2xl font-black uppercase tracking-widest flex items-center">
+                <ArrowRightLeft
+                  className="mr-2 sm:mr-3 text-indigo-400"
+                  size={24}
+                />{" "}
+                Compare Stats
+              </h1>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={handleInstallApp}
@@ -11289,8 +12912,37 @@ export default function App() {
             </div>
           </div>
 
-          <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
-            <div className="flex space-x-2 border-b border-slate-200 mb-4 pb-2">
+          {isPlayerRole && !isPlayerAccessAllowed ? (
+            <div className="bg-white shadow-xl p-8 sm:p-12 border-x border-b border-slate-200 text-center select-none rounded-b-2xl sm:rounded-b-3xl">
+              <div className="h-16 w-16 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto mb-4 text-red-500">
+                <Lock size={32} />
+              </div>
+              <h2 className="text-xl font-black uppercase tracking-wider text-slate-800 mb-2">
+                Player Access Currently Closed
+              </h2>
+              <p className="text-slate-500 text-sm leading-relaxed mb-6 max-w-md mx-auto">
+                Your coaching staff has temporarily disabled player access to stats and comparisons.
+              </p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={() => setView("stats")}
+                  className="px-6 py-2.5 bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-wider hover:bg-slate-700 transition-colors cursor-pointer"
+                >
+                  Return to Stats
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCoachLoginModal(true)}
+                  className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 rounded-xl font-black text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                >
+                  <Shield size={16} />
+                  <span>Coach Login / Enter Code</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white shadow-xl p-4 sm:p-6 border-x border-b border-slate-200">
+              <div className="flex space-x-2 border-b border-slate-200 mb-4 pb-2">
               <button
                 onClick={() => setCompareMode("players")}
                 className={`px-4 py-2 font-bold text-sm uppercase tracking-widest border-b-4 ${compareMode === "players" ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400"}`}
@@ -11594,112 +13246,212 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
         </div>
         {renderOpponentReportModal()}
+        {renderPlayerSecurity()}
         {renderInstallModal()}
       </div>
     );
   }
 
   if (view === "stats") {
-    const teamInfo = myTeams.find((t) => t.id === activeTeam) || {
-      name: "Team Data",
-      color: "from-slate-600 to-slate-800",
-      role: "none",
+    const rawTeam = myTeams.find((t) => t.id === activeTeam);
+    const teamInfo = {
+      name: rawTeam?.name || effectiveTeamName || "Team Data",
+      color: rawTeam?.color || "from-slate-600 to-slate-800",
+      role: effectiveRole,
     };
     return (
       <div className="min-h-screen bg-slate-100 p-2 sm:p-8 font-sans flex flex-col relative z-50">
         <div className="bg-white rounded-2xl sm:rounded-[2.5rem] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.1)] border border-slate-200 flex-1 flex flex-col overflow-hidden max-w-[1400px] mx-auto w-full">
-          <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center shadow-md gap-4">
-            <div className="flex items-center w-full sm:w-auto">
-              <div className="mr-3 sm:mr-4 hidden sm:flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative">
-                <img
-                  src={APP_LOGO_SRC}
-                  alt="Logo"
-                  referrerPolicy="no-referrer"
-                  className="h-full w-full object-contain absolute inset-0 z-10"
-                  onError={(e) => {
-                    const target = e.currentTarget;
-                    if (!target.dataset.fallback) {
-                      target.dataset.fallback = "true";
-                      target.src = FALLBACK_LOGO_SRC;
-                    } else {
-                      target.style.display = "none";
-                    }
-                  }}
-                />
+          <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white shadow-md">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="mr-1 sm:mr-2 flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative shrink-0">
+                  <img
+                    src={APP_LOGO_SRC}
+                    alt="UCC Lancers Logo"
+                    referrerPolicy="no-referrer"
+                    className="h-full w-full object-contain absolute inset-0 z-10"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (!target.dataset.fallback) {
+                        target.dataset.fallback = "true";
+                        target.src = FALLBACK_LOGO_SRC;
+                      } else {
+                        target.style.display = "none";
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase drop-shadow-md">
+                      Database Stats
+                    </h1>
+                    {isPlayerRole && (
+                      <span className="bg-amber-400/20 border border-amber-300/40 text-amber-200 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm backdrop-blur-sm">
+                        <ShieldAlert size={12} className="text-amber-300" />
+                        Player View (Device Only)
+                      </span>
+                    )}
+                    {isCoachRole && (
+                      <div className="hidden sm:flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider">
+                        <Shield size={12} className="text-emerald-400" />
+                        <span>Coach Mode</span>
+                      </div>
+                    )}
+                  </div>
+                  {activeMatch && (
+                    <div className="text-[11px] font-semibold text-blue-200 flex items-center gap-1.5 mt-0.5">
+                      <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>
+                        Match in Session: <strong className="text-white">{activeMatch.opponent ? `vs ${activeMatch.opponent}` : activeMatch.title || "Match"}</strong> (Set {currentSetNum}, {score.ucc}-{score.opp})
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex-1">
-                <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase drop-shadow-md">
-                  Database Stats
-                </h1>
-              </div>
-            </div>
-            <div className="flex space-x-2 w-full sm:w-auto">
-              <button
-                onClick={handleInstallApp}
-                className="flex-1 sm:flex-none bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20"
-                title="Download App"
-              >
-                <Download className="mr-1 sm:mr-1.5" size={14} />
-                <span className="hidden sm:inline">App</span>
-              </button>
-              <button
-                onClick={toggleFullscreen}
-                className="flex-1 sm:flex-none bg-white/10 hover:bg-white/20 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20"
-                title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
-              >
-                {isFullscreen ? <Minimize className="mr-1 sm:mr-1.5" size={14} /> : <Maximize className="mr-1 sm:mr-1.5" size={14} />}
-                <span className="hidden sm:inline">{isFullscreen ? "Exit Full" : "Full"}</span>
-              </button>
-              <button
-                onClick={() => setView("compare")}
-                className="flex-1 sm:flex-none bg-indigo-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
-              >
-                <ArrowRightLeft className="mr-1 sm:mr-1.5" size={14} /> Compare
-              </button>
-              <button
-                onClick={exportCSV}
-                className="flex-1 sm:flex-none bg-green-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
-              >
-                <Download className="mr-1 sm:mr-1.5" size={14} /> CSV
-              </button>
-              <button
-                onClick={exportPDF}
-                className="flex-1 sm:flex-none bg-red-500 text-white px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
-              >
-                <FileText className="mr-1 sm:mr-1.5" size={14} /> PDF
-              </button>
-              <button
-                onClick={() => {
-                  const currentMatchNav = statsPath.find((p) => p.level === "match");
-                  const currentSetNav = statsPath.find((p) => p.level === "set");
-                  setStatCorrectionConfig({
-                    isOpen: true,
-                    initialMatchId: currentMatchNav?.id || activeMatch?.id || null,
-                    initialSetId: currentSetNav?.id || activeSetId || null,
-                  });
-                }}
-                className="flex-1 sm:flex-none bg-amber-400 hover:bg-amber-500 text-slate-950 px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer"
-                title={teamInfo.role === "player" ? "View recorded stats" : "Edit recorded stats"}
-              >
-                <Edit3 className="mr-1 sm:mr-1.5" size={14} /> {teamInfo.role === "player" ? "View Stat Log" : "Edit Stats"}
-              </button>
-              {activeMatch ? (
+
+              {/* ACTION TOOLBAR & NAVIGATION */}
+              <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-start lg:justify-end">
+                {/* 1. PRIMARY GAME & MENU BUTTONS - ALWAYS PROMINENT AND VISIBLE */}
+                {(activeMatch || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || lastActiveMatchRef.current) && (
+                  <button
+                    type="button"
+                    onClick={returnToActiveGame}
+                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-4 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-lg text-xs sm:text-sm uppercase tracking-wider transition-all duration-150 active:scale-95 cursor-pointer ring-2 ring-emerald-300"
+                    title="Return directly back into the live game or practice"
+                  >
+                    <Play className="mr-1.5 fill-current shrink-0" size={15} />
+                    <span>
+                      {activeMatch?.type === "Practice" || lastActiveMatchRef.current?.type === "Practice"
+                        ? "Return to Practice"
+                        : "Return to Game"}
+                    </span>
+                  </button>
+                )}
+
                 <button
-                  onClick={() => setView("game")}
-                  className="flex-1 sm:flex-none bg-white text-[#0033A0] px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black justify-center flex items-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
-                >
-                  Game
-                </button>
-              ) : (
-                <button
+                  type="button"
                   onClick={() => setView("menu")}
-                  className="flex-1 sm:flex-none bg-white text-[#0033A0] px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black justify-center flex items-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider"
+                  className="bg-white/15 hover:bg-white/25 text-white px-3.5 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[11px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors cursor-pointer active:scale-95"
+                  title="Main Menu"
                 >
-                  Menu
+                  <Home className="mr-1.5 shrink-0" size={14} />
+                  <span>Menu</span>
                 </button>
-              )}
+
+                <button
+                  type="button"
+                  onClick={runDebugDiagnostics}
+                  className="bg-indigo-600/80 hover:bg-indigo-600 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-indigo-400/30 transition-colors cursor-pointer active:scale-95"
+                  title="Run state & session diagnostics"
+                >
+                  <Activity className="mr-1 sm:mr-1.5 shrink-0" size={13} />
+                  <span>Debug</span>
+                </button>
+
+                {/* 2. SECONDARY TOOLS */}
+                <button
+                  onClick={() => setView("compare")}
+                  className="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  <ArrowRightLeft className="mr-1 sm:mr-1.5" size={13} /> Compare
+                </button>
+
+                {isPlayerRole && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCoachLoginModal(true)}
+                    className="bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                    title="Sign in with Coach account or enter Coach Code"
+                  >
+                    <Shield className="mr-1 sm:mr-1.5" size={13} /> Coach Login
+                  </button>
+                )}
+
+                {teamInfo.role !== "player" && (
+                  <>
+                    <button
+                      onClick={() => setShowPlayerAccessModal(true)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                      title="View which players & Google accounts have accessed stats"
+                    >
+                      <Eye className="mr-1 sm:mr-1.5" size={13} /> Player Access
+                    </button>
+                    <button
+                      type="button"
+                      onClick={togglePlayerAccess}
+                      className={`flex-none ${
+                        isPlayerAccessAllowed
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+                          : "bg-red-600 hover:bg-red-700 text-white shadow-red-500/20"
+                      } px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer`}
+                      title={
+                        isPlayerAccessAllowed
+                          ? "Player access to stats is currently OPEN. Click to lock/disable."
+                          : "Player access to stats is currently LOCKED. Click to unlock/allow."
+                      }
+                    >
+                      {isPlayerAccessAllowed ? (
+                        <>
+                          <Unlock className="mr-1 sm:mr-1.5" size={13} /> Players: ON
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="mr-1 sm:mr-1.5" size={13} /> Players: OFF
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={exportCSV}
+                      className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                    >
+                      <Download className="mr-1 sm:mr-1.5" size={13} /> CSV
+                    </button>
+                    <button
+                      onClick={exportPDF}
+                      className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                    >
+                      <FileText className="mr-1 sm:mr-1.5" size={13} /> PDF
+                    </button>
+                  </>
+                )}
+
+                <button
+                  onClick={() => {
+                    const currentMatchNav = statsPath.find((p) => p.level === "match");
+                    const currentSetNav = statsPath.find((p) => p.level === "set");
+                    setStatCorrectionConfig({
+                      isOpen: true,
+                      initialMatchId: currentMatchNav?.id || activeMatch?.id || null,
+                      initialSetId: currentSetNav?.id || activeSetId || null,
+                    });
+                  }}
+                  className="bg-amber-400 hover:bg-amber-500 text-slate-950 px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer transition-colors"
+                  title={teamInfo.role === "player" ? "View recorded stats" : "Edit recorded stats"}
+                >
+                  <Edit3 className="mr-1 sm:mr-1.5" size={13} /> {teamInfo.role === "player" ? "Stat Log" : "Edit Stats"}
+                </button>
+
+                <button
+                  onClick={toggleFullscreen}
+                  className="bg-white/10 hover:bg-white/20 text-white px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors"
+                  title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+                >
+                  {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}
+                </button>
+
+                <button
+                  onClick={handleInstallApp}
+                  className="bg-white/10 hover:bg-white/20 text-white px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors"
+                  title="Download App"
+                >
+                  <Download size={13} />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -12431,24 +14183,6 @@ export default function App() {
                     <span>Adjust Score</span>
                   </button>
                 )}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    const activeMatchNav = statsPath.find((p) => p.level === "match");
-                    const activeSetNav = statsPath.find((p) => p.level === "set");
-                    setStatCorrectionConfig({
-                      isOpen: true,
-                      initialMatchId: activeMatchNav?.id || activeMatch?.id || null,
-                      initialSetId: activeSetNav?.id || activeSetId || null,
-                    });
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap"
-                  title={teamInfo.role === "player" ? "View stat log" : "Edit, correct, or add stats"}
-                >
-                  <Edit3 size={13} />
-                  <span>{teamInfo.role === "player" ? "View Stat Log" : "Edit Stats"}</span>
-                </button>
               </div>
             </div>
 
@@ -12646,6 +14380,9 @@ export default function App() {
                   : "0.0%";
               const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
+              const isTeamTotConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== "TEAM_TOTALS";
+              const isShownTotConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== "SHOWN_PLAYERS";
+
               return (
                 <div className="flex flex-col">
                   {/* Hidden players alert banner with interactive unhide chips */}
@@ -12702,7 +14439,145 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative">
+                  {/* Player Access Closed Notice */}
+                  {isPlayerRole && !isPlayerAccessAllowed && (
+                    <div className="bg-slate-900 border-2 border-red-500/40 rounded-3xl p-8 sm:p-12 my-6 text-white text-center shadow-2xl max-w-xl mx-auto select-none">
+                      <div className="h-20 w-20 rounded-3xl bg-red-500/20 border border-red-500/30 flex items-center justify-center mx-auto mb-5 text-red-400 shadow-inner">
+                        <Lock size={40} />
+                      </div>
+                      <h2 className="text-xl sm:text-2xl font-black uppercase tracking-wider text-white mb-2">
+                        Player Access Currently Closed
+                      </h2>
+                      <p className="text-slate-300 text-sm leading-relaxed mb-6 max-w-md mx-auto">
+                        Your coaching staff has temporarily closed player access to team statistics. Check back later or contact your coach.
+                      </p>
+                      <div className="inline-flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-800/90 py-2 px-4 rounded-xl border border-slate-700 mb-6">
+                        <span>Account:</span>
+                        <span className="text-amber-400 font-bold">{user?.email || "Guest / Google Account"}</span>
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => setShowCoachLoginModal(true)}
+                          className="px-6 py-3.5 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 rounded-2xl font-black text-xs sm:text-sm uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl mx-auto transition-transform active:scale-95 cursor-pointer"
+                        >
+                          <Shield size={18} />
+                          <span>Coach Login / Enter Coach Code</span>
+                        </button>
+                        <p className="text-slate-400 text-[11px] mt-2.5">
+                          Are you a coach? Log in or enter your coach code to access all stats regardless of lock.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Player Confidential View Banner & Hold-to-Reveal Control */}
+                  {isPlayerRole && isPlayerAccessAllowed && (
+                    <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-2 border-amber-500/40 rounded-2xl p-4 mb-4 text-white shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 select-none">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30 flex items-center justify-center shrink-0 shadow-inner">
+                          <Shield size={20} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-xs uppercase tracking-wider text-amber-300">
+                              Player View-Only Mode
+                            </span>
+                            <span className="text-[10px] bg-red-950/90 text-red-300 px-2.5 py-0.5 rounded-full font-bold border border-red-800 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                              Screenshot Shield Active
+                            </span>
+                            <span className="text-[10px] bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full font-mono border border-slate-700">
+                              {user?.email || "Google Account"}
+                            </span>
+                          </div>
+                          <p className="text-slate-300 text-xs mt-0.5 leading-relaxed">
+                            Press & hold any player row or use the button to reveal numbers. Taking screenshots or screen recordings produces a solid black screen and is audited to your coach.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                        <button
+                          type="button"
+                          onMouseDown={() => setIsFullTableRevealed(true)}
+                          onMouseUp={() => setIsFullTableRevealed(false)}
+                          onTouchStart={() => setIsFullTableRevealed(true)}
+                          onTouchEnd={() => setIsFullTableRevealed(false)}
+                          className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg transition-all select-none cursor-pointer"
+                        >
+                          <Eye size={16} />
+                          <span>Hold to Reveal All</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Coach Player Access Control Bar */}
+                  {!isPlayerRole && (
+                    <div className="bg-slate-900/90 border border-slate-700/80 rounded-2xl p-4 mb-4 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`h-10 w-10 rounded-xl ${
+                            isPlayerAccessAllowed
+                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                              : "bg-red-500/20 text-red-400 border-red-500/30"
+                          } border flex items-center justify-center shrink-0`}
+                        >
+                          {isPlayerAccessAllowed ? <Unlock size={20} /> : <Lock size={20} />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-xs uppercase tracking-wider text-white">
+                              Player Access Control
+                            </span>
+                            <span
+                              className={`text-[10px] ${
+                                isPlayerAccessAllowed
+                                  ? "bg-emerald-950 text-emerald-300 border-emerald-800"
+                                  : "bg-red-950 text-red-300 border-red-800"
+                              } px-2.5 py-0.5 rounded-full font-black border`}
+                            >
+                              {isPlayerAccessAllowed ? "AVAILABLE TO PLAYERS" : "ACCESS CLOSED"}
+                            </span>
+                            <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-bold border border-slate-700">
+                              Anti-Screenshot Always Active
+                            </span>
+                          </div>
+                          <p className="text-slate-400 text-xs mt-0.5">
+                            {isPlayerAccessAllowed
+                              ? "Players with the team code can log in and view stats on personal devices (with screenshot prevention)."
+                              : "Players are locked out. Stats are hidden from all player accounts until you re-enable access."}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                        <button
+                          type="button"
+                          onClick={togglePlayerAccess}
+                          className={`px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer shadow-md active:scale-95 ${
+                            isPlayerAccessAllowed
+                              ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20"
+                              : "bg-red-600 hover:bg-red-500 text-white shadow-red-500/20"
+                          }`}
+                        >
+                          {isPlayerAccessAllowed ? (
+                            <>
+                              <Unlock size={15} />
+                              <span>Available to Players: ON</span>
+                            </>
+                          ) : (
+                            <>
+                              <Lock size={15} />
+                              <span>Available to Players: OFF</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {(!isPlayerRole || isPlayerAccessAllowed) && (
+                    <div className={`bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative ${isPlayerRole ? "select-none" : ""}`}>
                     {/* Scroll indicator for mobile */}
                     <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
 
@@ -12846,7 +14721,13 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {/* TOP STICKY TEAM TOTALS ROW (WHOLE TEAM) */}
-                        <tr className="bg-gradient-to-r from-blue-950 via-[#002B7A] to-blue-950 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-blue-400">
+                        <tr
+                          onMouseDown={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
+                          onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                          onTouchStart={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
+                          onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                          className={`bg-gradient-to-r from-blue-950 via-[#002B7A] to-blue-950 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-blue-400 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                        >
                           <td
                             onClick={() =>
                               setStatBreakdownModal({
@@ -12883,7 +14764,7 @@ export default function App() {
                                 titleContext: "Team Passing Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/40 cursor-pointer hover:bg-blue-800/50 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/40 cursor-pointer hover:bg-blue-800/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Passing breakdown (3/2/1/0 scores)"
                           >
                             <span className="text-sm sm:text-base text-amber-300">
@@ -12903,7 +14784,7 @@ export default function App() {
                                 titleContext: "Team Dig Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Dig breakdown"
                           >
                             <span className="text-blue-300 font-black text-sm">
@@ -12924,7 +14805,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
                             <span className="font-black text-white">
@@ -12956,7 +14837,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
                             {teamKillPct}
@@ -12971,7 +14852,7 @@ export default function App() {
                                 titleContext: "Team Block Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Block breakdown"
                           >
                             <span className="font-black text-white">
@@ -13003,7 +14884,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors"
+                            className={`p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Serve breakdown"
                           >
                             <span className="font-black text-white">
@@ -13028,7 +14909,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Serve breakdown"
                           >
                             <span
@@ -13049,7 +14930,13 @@ export default function App() {
 
                         {/* TOP STICKY SHOWN PLAYERS ROW (IF PLAYERS HIDDEN) */}
                         {hasHiddenPlayers && (
-                          <tr className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-indigo-400">
+                          <tr
+                            onMouseDown={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
+                            onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                            onTouchStart={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
+                            onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                            className={`bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b-2 border-indigo-400 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                          >
                             <td
                               onClick={() =>
                                 setStatBreakdownModal({
@@ -13086,7 +14973,7 @@ export default function App() {
                                   titleContext: "Shown Players Passing Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/40 cursor-pointer hover:bg-indigo-800/50 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/40 cursor-pointer hover:bg-indigo-800/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Passing breakdown"
                             >
                               <span className="text-sm sm:text-base text-indigo-300">
@@ -13106,7 +14993,7 @@ export default function App() {
                                   titleContext: "Shown Players Dig Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Dig breakdown"
                             >
                               <span className="text-indigo-300 font-black text-sm">
@@ -13127,7 +15014,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
                               <span className="font-black text-white">
@@ -13159,7 +15046,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
                               {shownKillPct}
@@ -13174,7 +15061,7 @@ export default function App() {
                                   titleContext: "Shown Players Block Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Block breakdown"
                             >
                               <span className="font-black text-white">
@@ -13206,7 +15093,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors"
+                              className={`p-2 sm:p-3 text-center border-l border-white/10 bg-purple-950/30 cursor-pointer hover:bg-purple-900/40 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span className="font-black text-white">
@@ -13231,7 +15118,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span
@@ -13263,6 +15150,7 @@ export default function App() {
                           </tr>
                         ) : (
                           visibleUccPlayers.map((p) => {
+                            const isConcealed = isPlayerRole && !isFullTableRevealed && revealedPlayerId !== p.id;
                             const passAvg =
                               p.passCount > 0
                                 ? (p.passSum / p.passCount).toFixed(2)
@@ -13279,7 +15167,12 @@ export default function App() {
                             return (
                               <tr
                                 key={p.id}
-                                className="hover:bg-blue-50/30 text-[10px] sm:text-xs transition-colors group"
+                                onMouseDown={() => isPlayerRole && setRevealedPlayerId(p.id)}
+                                onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                                touch-action="manipulation"
+                                onTouchStart={() => isPlayerRole && setRevealedPlayerId(p.id)}
+                                onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                                className={`hover:bg-blue-50/30 text-[10px] sm:text-xs transition-colors group ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
                               >
                                 <td className="p-2 sm:p-3 sticky left-0 bg-white shadow-[2px_0_5px_rgba(0,0,0,0.02)] border-r-2 border-transparent group-hover:border-indigo-400">
                                   <div className="flex items-center justify-between gap-1.5 sm:gap-2">
@@ -13324,7 +15217,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors"
+                                  className={`p-2 sm:p-3 font-bold text-slate-700 text-center border-l border-slate-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Passing breakdown (3/2/1/0 scores)`}
                                 >
                                   {passAvg}{" "}
@@ -13342,7 +15235,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50 cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center bg-slate-50/50 cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Dig breakdown`}
                                 >
                                   <span className="text-blue-600 font-black text-sm">
@@ -13365,7 +15258,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Attack breakdown (Front/Back, Net, Out, Stuffed)`}
                                 >
                                   <span className="font-bold text-slate-600">
@@ -13401,7 +15294,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30 cursor-pointer hover:bg-green-100/50 transition-colors"
+                                  className={`p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30 cursor-pointer hover:bg-green-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Attack breakdown`}
                                 >
                                   {killPct}
@@ -13416,7 +15309,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center whitespace-nowrap hidden lg:table-cell cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Block breakdown`}
                                 >
                                   <span className="font-bold">{blkTot}</span>(
@@ -13438,7 +15331,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden cursor-pointer hover:bg-slate-200/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 bg-slate-50/50 text-center lg:hidden cursor-pointer hover:bg-slate-200/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Block breakdown`}
                                 >
                                   <div className="flex flex-col">
@@ -13474,7 +15367,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors"
+                                  className={`p-2 sm:p-3 border-l border-slate-100 text-center bg-purple-50/20 cursor-pointer hover:bg-purple-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Serve breakdown (Net, Wide, Long, Foot Fault)`}
                                 >
                                   <span className="font-bold text-slate-600">
@@ -13503,7 +15396,7 @@ export default function App() {
                                       titleContext: `${p.name} (#${p.number || "-"})`,
                                     })
                                   }
-                                  className="p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors"
+                                  className={`p-2 sm:p-3 font-black text-center border-l border-slate-100 bg-blue-50/50 text-xs sm:text-sm cursor-pointer hover:bg-blue-100/60 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Serve breakdown`}
                                 >
                                   <span
@@ -13530,7 +15423,13 @@ export default function App() {
                       <tfoot className="border-t-2 border-[#0033A0] shadow-md">
                         {/* SHOWN PLAYERS ROW (IF PLAYERS ARE HIDDEN) */}
                         {hasHiddenPlayers && (
-                          <tr className="bg-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b border-indigo-500/30">
+                          <tr
+                            onMouseDown={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
+                            onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                            onTouchStart={() => isPlayerRole && setRevealedPlayerId("SHOWN_PLAYERS")}
+                            onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                            className={`bg-slate-900 text-white font-bold text-[10px] sm:text-xs tracking-wider border-b border-indigo-500/30 ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                          >
                             <td className="p-2.5 sm:p-3 sticky left-0 bg-slate-900 text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-indigo-400">
                               <div className="flex items-center space-x-1.5 sm:space-x-2">
                                 <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
@@ -13556,7 +15455,7 @@ export default function App() {
                                   titleContext: "Shown Players Passing Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/30 cursor-pointer hover:bg-indigo-800/40 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-indigo-900/30 cursor-pointer hover:bg-indigo-800/40 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Passing breakdown"
                             >
                               <span className="text-sm sm:text-base text-indigo-300">
@@ -13576,7 +15475,7 @@ export default function App() {
                                   titleContext: "Shown Players Dig Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Dig breakdown"
                             >
                               <span className="text-indigo-300 font-black text-sm">
@@ -13597,7 +15496,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
                               <span className="font-black text-white">
@@ -13629,7 +15528,7 @@ export default function App() {
                                   titleContext: "Shown Players Attack Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
                               {shownKillPct}
@@ -13644,7 +15543,7 @@ export default function App() {
                                   titleContext: "Shown Players Block Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Block breakdown"
                             >
                               <span className="font-black text-white">
@@ -13676,7 +15575,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                              className={`p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span className="font-black text-white">
@@ -13701,7 +15600,7 @@ export default function App() {
                                   titleContext: "Shown Players Serve Breakdown",
                                 })
                               }
-                              className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Serve breakdown"
                             >
                               <span
@@ -13722,7 +15621,13 @@ export default function App() {
                         )}
 
                         {/* WHOLE TEAM TOTALS ROW */}
-                        <tr className="bg-[#001f5c] text-white font-bold text-[10px] sm:text-xs tracking-wider">
+                        <tr
+                          onMouseDown={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
+                          onMouseUp={() => isPlayerRole && setRevealedPlayerId(null)}
+                          onTouchStart={() => isPlayerRole && setRevealedPlayerId("TEAM_TOTALS")}
+                          onTouchEnd={() => isPlayerRole && setRevealedPlayerId(null)}
+                          className={`bg-[#001f5c] text-white font-bold text-[10px] sm:text-xs tracking-wider ${isPlayerRole ? "cursor-pointer select-none" : ""}`}
+                        >
                           <td className="p-2.5 sm:p-3 sticky left-0 bg-[#001f5c] text-white shadow-[2px_0_5px_rgba(0,0,0,0.2)] z-10 border-r-2 border-blue-400">
                             <div className="flex items-center space-x-1.5 sm:space-x-2">
                               <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-amber-400 text-slate-950 font-black flex items-center justify-center text-[9px] sm:text-[10px] shadow-sm">
@@ -13749,7 +15654,7 @@ export default function App() {
                                 titleContext: "Team Passing Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-blue-900/30 cursor-pointer hover:bg-blue-800/40 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Passing breakdown"
                           >
                             <span className="text-sm sm:text-base text-amber-300">
@@ -13769,7 +15674,7 @@ export default function App() {
                                 titleContext: "Team Dig Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 text-center bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Dig breakdown"
                           >
                             <span className="text-blue-300 font-black text-sm">
@@ -13790,7 +15695,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 text-center cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
                             <span className="font-black text-white">
@@ -13822,7 +15727,7 @@ export default function App() {
                                 titleContext: "Team Attack Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
                             {teamKillPct}
@@ -13837,7 +15742,7 @@ export default function App() {
                                 titleContext: "Team Block Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 border-l border-white/10 bg-white/5 text-center whitespace-nowrap cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Block breakdown"
                           >
                             <span className="font-black text-white">
@@ -13869,7 +15774,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors"
+                            className={`p-2 sm:p-3 text-center border-l border-white/10 bg-white/5 cursor-pointer hover:bg-white/15 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Serve breakdown"
                           >
                             <span className="font-black text-white">
@@ -13894,7 +15799,7 @@ export default function App() {
                                 titleContext: "Team Serve Breakdown",
                               })
                             }
-                            className="p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors"
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-white/10 text-xs sm:text-sm cursor-pointer hover:bg-white/20 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Serve breakdown"
                           >
                             <span
@@ -13916,14 +15821,17 @@ export default function App() {
                     </table>
                   </div>
                 </div>
+              )}
               </div>
             );
             })()}
 
-            <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
-              <Users className="mr-2 text-slate-500" size={18} /> Opponents
-            </h2>
-            <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-4xl mb-8 relative">
+            {(!isPlayerRole || isPlayerAccessAllowed) && (
+              <>
+                <h2 className="text-lg sm:text-xl font-black text-slate-800 mb-3 sm:mb-4 tracking-widest uppercase flex items-center">
+                  <Users className="mr-2 text-slate-500" size={18} /> Opponents
+                </h2>
+                <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-4xl mb-8 relative">
               <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[700px]">
@@ -14161,6 +16069,8 @@ export default function App() {
                 </table>
               </div>
             </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -14286,20 +16196,26 @@ export default function App() {
               </div>
 
               <div className="p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => {
-                    exportPDF();
-                    setShowPlayerFilterModal(false);
-                  }}
-                  className="bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center shadow-sm transition-colors"
-                >
-                  <FileText size={14} className="mr-1.5" /> Export PDF
-                </button>
+                {!isPlayerRole ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      exportPDF();
+                      setShowPlayerFilterModal(false);
+                    }}
+                    className="bg-red-600 hover:bg-red-700 text-white font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider flex items-center shadow-sm transition-colors"
+                  >
+                    <FileText size={14} className="mr-1.5" /> Export PDF
+                  </button>
+                ) : (
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <ShieldAlert size={14} className="text-amber-500" /> View Only On Device
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowPlayerFilterModal(false)}
-                  className="bg-slate-800 hover:bg-slate-900 text-white font-black px-5 py-2 rounded-xl text-xs uppercase tracking-wider shadow-sm transition-colors"
+                  className="bg-slate-800 hover:bg-slate-900 text-white font-black px-5 py-2 rounded-xl text-xs uppercase tracking-wider shadow-sm transition-colors ml-auto"
                 >
                   Apply & Done
                 </button>
@@ -14354,7 +16270,7 @@ export default function App() {
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
             ourTeamName={effectiveTeamName}
-            isReadOnly={teamInfo.role === "player" || myTeams.find((t) => t.id === activeTeam)?.role === "player"}
+            isReadOnly={isPlayerRole}
           />
         )}
         <TeamNameEditModal
@@ -14429,7 +16345,72 @@ export default function App() {
             }
           }}
         />
+        {renderPlayerAccessModal()}
+        {renderPlayerSecurity()}
         {renderInstallModal()}
+
+        {/* Floating Persistent Return-to-Game Action Bar for Stats */}
+        {(activeMatch || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || lastActiveMatchRef.current) && (
+          <aside
+            aria-label="Active Match Return Bar"
+            className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-lg w-[calc(100%-1.5rem)] bg-slate-950/95 text-white px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.65)] border border-emerald-500/50 backdrop-blur-lg flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300 ring-1 ring-emerald-400/30"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="relative flex h-3 w-3 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+              <div className="min-w-0">
+                <div className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">
+                  {activeMatch?.type === "Practice" || lastActiveMatchRef.current?.type === "Practice"
+                    ? "Practice Session Active"
+                    : "Live Game In Progress"}
+                </div>
+                <div className="text-xs font-bold text-slate-100 truncate">
+                  {activeMatch
+                    ? `${activeMatch.opponent ? `vs ${activeMatch.opponent}` : activeMatch.title || "Match"} • Set ${currentSetNum} (${score.ucc}-${score.opp})`
+                    : "Active match ready to resume"}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setView("menu")}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-2.5 sm:px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-colors cursor-pointer border border-slate-700"
+                title="Go to Menu"
+              >
+                <Home size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={returnToActiveGame}
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-3.5 sm:px-4 py-2 rounded-xl text-xs uppercase tracking-widest flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95 transition-all cursor-pointer ring-2 ring-emerald-300"
+              >
+                <Play size={13} className="fill-current shrink-0" />
+                <span>Return to Game</span>
+              </button>
+            </div>
+          </aside>
+        )}
+
+        {/* Debug Diagnostics Toast / Notice */}
+        {debugNotice && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[100] max-w-md w-[calc(100%-2rem)] bg-slate-900/95 text-white p-3.5 rounded-2xl shadow-2xl border border-indigo-500/50 backdrop-blur-md flex items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <Activity size={16} className="text-indigo-400 shrink-0" />
+              <p className="text-xs font-semibold text-slate-200 leading-tight">
+                {debugNotice}
+              </p>
+            </div>
+            <button
+              onClick={() => setDebugNotice(null)}
+              className="text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
       </div>
     );
   }

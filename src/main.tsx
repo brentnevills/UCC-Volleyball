@@ -5,6 +5,28 @@ import './index.css';
 
 console.log("UCC Lancers App: Initializing...");
 
+// Provide safe global definition for currentUser to guard against ReferenceError
+if (typeof window !== 'undefined') {
+  (window as any).currentUser = (window as any).currentUser || null;
+  // Register PWA service worker for offline support and Android / Chrome installability
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker
+        .register('/sw.js', { scope: '/' })
+        .then((reg) => {
+          console.log('UCC Lancers PWA ServiceWorker active with scope:', reg.scope);
+        })
+        .catch((err) => {
+          console.warn('UCC Lancers PWA ServiceWorker registration failed:', err);
+        });
+    });
+  }
+}
+
+// Ensure clean startup without residual security blackout classes
+document.documentElement.classList.remove('shield-active', 'player-restricted');
+document.body.classList.remove('shield-active', 'player-restricted');
+
 window.addEventListener('error', (event) => {
   console.error("Global Error Caught:", event.error);
   const rootElement = document.getElementById('root');

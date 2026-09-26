@@ -8,3 +8,27 @@ html, body, #root {
   padding: 0;
 }
 
+/* Security protections for player restricted code view (device-only view) */
+body.player-restricted {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+body.player-restricted img,
+body.player-restricted svg,
+body.player-restricted canvas {
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* Player privacy styling */
+.secure-stat-concealed {
+  filter: blur(7px);
+  user-select: none;
+  transition: filter 0.12s ease-out;
+}
+
+.secure-stat-revealed {
+  filter: blur(0px) !important;
+}
