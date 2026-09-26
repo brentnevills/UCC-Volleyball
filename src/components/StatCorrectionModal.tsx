@@ -13,7 +13,10 @@ import {
   Shield,
   Layers,
   Calendar,
+  FileSpreadsheet,
+  Table,
 } from "lucide-react";
+import { StatSpreadsheetEditor } from "./StatSpreadsheetEditor";
 
 interface StatCorrectionModalProps {
   isOpen: boolean;
@@ -30,6 +33,12 @@ interface StatCorrectionModalProps {
   onDeleteStat: (statId: string) => void;
   onUpdateStat: (statId: string, updatedFields: any) => void;
   onAddStat: (statData: any) => void;
+  onApplyStatsBatch?: (batch: {
+    matchId: string;
+    setId: string;
+    statsToAdd: any[];
+    statIdsToDelete: string[];
+  }) => Promise<void> | void;
   ourTeamName?: string;
   isReadOnly?: boolean;
 }
@@ -49,9 +58,11 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
   onDeleteStat,
   onUpdateStat,
   onAddStat,
+  onApplyStatsBatch,
   ourTeamName = "Lancers",
   isReadOnly = false,
 }) => {
+  const [modalMode, setModalMode] = useState<"spreadsheet" | "log">("spreadsheet");
   // Navigation & Scope state
   const [selectedMatchId, setSelectedMatchId] = useState<string>(() => {
     if (initialMatchId) return initialMatchId;
@@ -329,7 +340,70 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
           </div>
         </div>
 
-        {/* ADD MISSED STAT FORM */}
+        {/* MODE SWITCHER TAB BAR */}
+        <div className="bg-slate-900 px-4 py-2 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setModalMode("spreadsheet")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                modalMode === "spreadsheet"
+                  ? "bg-blue-600 text-white shadow-md ring-2 ring-blue-400"
+                  : "bg-slate-800 text-slate-400 hover:text-white"
+              }`}
+            >
+              <FileSpreadsheet size={15} />
+              <span>Spreadsheet Mode (Type Numbers)</span>
+              <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black uppercase px-1.5 py-0.2 rounded border border-emerald-500/40">
+                Live
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setModalMode("log")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                modalMode === "log"
+                  ? "bg-slate-700 text-white shadow-md ring-2 ring-slate-500"
+                  : "bg-slate-800 text-slate-400 hover:text-white"
+              }`}
+            >
+              <Table size={14} />
+              <span>Play-by-Play Event Log</span>
+            </button>
+          </div>
+          <div className="text-[11px] text-slate-400 hidden sm:block">
+            {modalMode === "spreadsheet"
+              ? "💡 Type stats directly into cells. Press Tab for next stat, Enter for next player."
+              : "Review and delete individual play-by-play timestamps"}
+          </div>
+        </div>
+
+        {modalMode === "spreadsheet" ? (
+          <div className="flex-1 overflow-y-auto p-2 sm:p-4 bg-slate-950 flex flex-col">
+            <StatSpreadsheetEditor
+              roster={roster}
+              matches={matches}
+              sets={sets}
+              stats={stats}
+              activeMatch={activeMatch}
+              activeSetId={activeSetId}
+              initialMatchId={initialMatchId || (selectedMatchId !== "all" ? selectedMatchId : undefined)}
+              initialSetId={initialSetId || (selectedSetId !== "all" ? selectedSetId : undefined)}
+              onApplyStatsBatch={async (batch) => {
+                if (onApplyStatsBatch) {
+                  await onApplyStatsBatch(batch);
+                } else {
+                  batch.statIdsToDelete.forEach((id) => onDeleteStat(id));
+                  batch.statsToAdd.forEach((s) => onAddStat(s));
+                }
+              }}
+              isReadOnly={isReadOnly}
+              ourTeamName={ourTeamName}
+            />
+          </div>
+        ) : (
+          <>
+            {/* ADD MISSED STAT FORM */}
         {showAddForm && (
           <form
             onSubmit={handleCreateStat}
@@ -942,6 +1016,8 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
             Done
           </button>
         </div>
+        </>
+        )}
 
       </div>
     </div>

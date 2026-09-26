@@ -11,12 +11,16 @@ const __dirname = path.dirname(__filename);
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
-    base: '/',
+    base: './',
     plugins: [
       react(),
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        workbox: {
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,webmanifest}'],
+        },
         includeAssets: [
           'lancer-logo.png',
           'pwa-192x192.png',
@@ -27,48 +31,48 @@ export default defineConfig(({mode}) => {
           'apple-touch-icon-precomposed.png'
         ],
         manifest: {
-          id: '/',
+          id: './',
           name: 'UCC Lancers Volleyball',
           short_name: 'UCC Lancers',
           description: 'Official Volleyball Statistics & Match Tracking Dashboard for UCC Lancers',
           theme_color: '#001b5e',
           background_color: '#001b5e',
           display: 'standalone',
-          start_url: '/',
-          scope: '/',
+          start_url: './',
+          scope: './',
           icons: [
             {
-              src: '/pwa-192x192.png',
+              src: 'pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any'
             },
             {
-              src: '/pwa-maskable-192x192.png',
+              src: 'pwa-maskable-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'maskable'
             },
             {
-              src: '/pwa-512x512.png',
+              src: 'pwa-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any'
             },
             {
-              src: '/pwa-maskable-512x512.png',
+              src: 'pwa-maskable-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable'
             },
             {
-              src: '/apple-touch-icon.png',
+              src: 'apple-touch-icon.png',
               sizes: '180x180',
               type: 'image/png',
               purpose: 'any'
             },
             {
-              src: '/lancer-logo.png',
+              src: 'lancer-logo.png',
               sizes: '1024x1024',
               type: 'image/png',
               purpose: 'any'
@@ -80,6 +84,18 @@ export default defineConfig(({mode}) => {
         }
       })
     ],
+    build: {
+      chunkSizeWarningLimit: 3000,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+            firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+            pdf: ['jspdf', 'jspdf-autotable'],
+          },
+        },
+      },
+    },
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },

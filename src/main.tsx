@@ -11,8 +11,9 @@ if (typeof window !== 'undefined') {
   // Register PWA service worker for offline support and Android / Chrome installability
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
+      const swUrl = `${import.meta.env.BASE_URL}sw.js`;
       navigator.serviceWorker
-        .register('/sw.js', { scope: '/' })
+        .register(swUrl)
         .then((reg) => {
           console.log('UCC Lancers PWA ServiceWorker active with scope:', reg.scope);
         })

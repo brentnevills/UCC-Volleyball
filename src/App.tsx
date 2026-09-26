@@ -51,10 +51,13 @@ import {
   Unlock,
   Key,
   AlertTriangle,
+  FileSpreadsheet,
+  Table,
 } from "lucide-react";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
 import { StatCorrectionModal } from "./components/StatCorrectionModal";
+import { StatSpreadsheetEditor } from "./components/StatSpreadsheetEditor";
 import { StatBreakdownModal } from "./components/StatBreakdownModal";
 import { TeamNameEditModal } from "./components/TeamNameEditModal";
 import { SetScoreEditModal } from "./components/SetScoreEditModal";
@@ -1069,6 +1072,7 @@ export default function App() {
     }
   });
   const [showRetired, setShowRetired] = useState(false);
+  const [statsViewMode, setStatsViewMode] = useState<"standard" | "spreadsheet">("standard");
   const [compareMode, setCompareMode] = useState("players"); // "players" or "events"
   const [comparePlayer1, setComparePlayer1] = useState("");
   const [comparePlayer2, setComparePlayer2] = useState("");
@@ -2732,6 +2736,48 @@ export default function App() {
       writeLocalDb({
         ...appData,
         stats: [...appData.stats, newStat],
+      });
+    }
+  };
+
+  const handleBatchStatSync = async ({
+    matchId,
+    setId,
+    statsToAdd,
+    statIdsToDelete,
+  }: {
+    matchId: string;
+    setId: string;
+    statsToAdd: any[];
+    statIdsToDelete: string[];
+  }) => {
+    const toDeleteSet = new Set(statIdsToDelete);
+    setAppData((prev) => {
+      const retained = prev.stats.filter((s) => !toDeleteSet.has(s.id));
+      return {
+        ...prev,
+        stats: [...retained, ...statsToAdd],
+      };
+    });
+
+    if (isFirebaseAvailable && user) {
+      try {
+        const batch = writeBatch(db);
+        for (const id of statIdsToDelete) {
+          batch.delete(doc(db, `${publicPath}/${activeTeam}/stats/${id}`));
+        }
+        for (const s of statsToAdd) {
+          batch.set(doc(db, `${publicPath}/${activeTeam}/stats/${s.id}`), s);
+        }
+        await batch.commit();
+      } catch (err) {
+        console.error("Batch stat sync to cloud failed:", err);
+      }
+    } else if (!isFirebaseAvailable) {
+      const retained = appData.stats.filter((s) => !toDeleteSet.has(s.id));
+      writeLocalDb({
+        ...appData,
+        stats: [...retained, ...statsToAdd],
       });
     }
   };
@@ -11877,6 +11923,7 @@ export default function App() {
             onDeleteStat={handleDeleteStat}
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
+            onApplyStatsBatch={handleBatchStatSync}
             ourTeamName={effectiveTeamName}
             isReadOnly={isPlayerRole}
           />
@@ -12707,9 +12754,13 @@ export default function App() {
             roster={sortedRoster}
             activeSetId={activeSetId}
             activeMatch={activeMatch}
+            matches={appData.matches}
+            sets={appData.sets}
             onDeleteStat={handleDeleteStat}
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
+            onApplyStatsBatch={handleBatchStatSync}
+            ourTeamName={effectiveTeamName}
             isReadOnly={isPlayerRole}
           />
         )}
@@ -13419,6 +13470,20 @@ export default function App() {
                     </button>
                   </>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => setStatsViewMode(statsViewMode === "spreadsheet" ? "standard" : "spreadsheet")}
+                  className={`${
+                    statsViewMode === "spreadsheet"
+                      ? "bg-emerald-400 hover:bg-emerald-300 text-slate-950 ring-2 ring-emerald-300 shadow-md"
+                      : "bg-blue-600 hover:bg-blue-500 text-white"
+                  } px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95`}
+                  title="Toggle Spreadsheet Mode - Type in stats directly like a spreadsheet"
+                >
+                  <FileSpreadsheet className="mr-1 sm:mr-1.5 shrink-0" size={13} />
+                  <span>{statsViewMode === "spreadsheet" ? "Standard View" : "Spreadsheet Mode"}</span>
+                </button>
 
                 <button
                   onClick={() => {
@@ -14576,7 +14641,92 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* Spreadsheet vs Standard Toggle Tabs */}
                   {(!isPlayerRole || isPlayerAccessAllowed) && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4 bg-white p-2.5 sm:p-3 rounded-2xl border border-slate-200 shadow-2xs">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setStatsViewMode("standard")}
+                          className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                            statsViewMode === "standard"
+                              ? "bg-[#001b5e] text-white shadow-md ring-2 ring-blue-400/30"
+                              : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                          }`}
+                        >
+                          <Table size={14} />
+                          <span>Standard Summary Table</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setStatsViewMode("spreadsheet")}
+                          className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                            statsViewMode === "spreadsheet"
+                              ? "bg-blue-600 text-white shadow-md ring-2 ring-blue-400"
+                              : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                          }`}
+                          title="Type numbers directly into stats like a spreadsheet"
+                        >
+                          <FileSpreadsheet size={15} className={statsViewMode === "spreadsheet" ? "text-emerald-300" : "text-blue-600"} />
+                          <span>Spreadsheet Edit Mode</span>
+                          <span className="bg-emerald-500/20 text-emerald-700 border border-emerald-500/40 text-[9px] font-black uppercase px-1.5 py-0.2 rounded hidden sm:inline">
+                            Type Numbers
+                          </span>
+                        </button>
+                      </div>
+
+                      <div className="text-[11px] font-bold text-slate-500 hidden md:flex items-center gap-1.5">
+                        {statsViewMode === "spreadsheet" ? (
+                          <>
+                            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span>Type numbers directly • <kbd className="px-1 py-0.5 bg-slate-100 rounded border text-[10px]">Enter</kbd> moves down • <kbd className="px-1 py-0.5 bg-slate-100 rounded border text-[10px]">Tab</kbd> moves right</span>
+                          </>
+                        ) : (
+                          <span>💡 Want to type numbers like Excel? Switch to <strong>Spreadsheet Edit Mode</strong></span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {statsViewMode === "spreadsheet" && (!isPlayerRole || isPlayerAccessAllowed) && (
+                    <div className="mb-8">
+                      <StatSpreadsheetEditor
+                        roster={appData.roster}
+                        matches={appData.matches}
+                        sets={appData.sets}
+                        stats={appData.stats}
+                        activeMatch={activeMatch}
+                        activeSetId={activeSetId}
+                        initialMatchId={statsPath.find((p) => p.level === "match")?.id || activeMatch?.id}
+                        initialSetId={statsPath.find((p) => p.level === "set")?.id || activeSetId}
+                        onApplyStatsBatch={handleBatchStatSync}
+                        isReadOnly={isPlayerRole && !isCoachRole}
+                        ourTeamName={effectiveTeamName}
+                        onAddPlayerToRoster={async (name, num) => {
+                          const newPlayer = {
+                            id: Date.now().toString(),
+                            name,
+                            number: num || "",
+                            isRetired: false,
+                          };
+                          const newRoster = [...appData.roster, newPlayer];
+                          setAppData((prev) => ({ ...prev, roster: newRoster }));
+                          if (isFirebaseAvailable && user) {
+                            await setDoc(
+                              doc(db, `${publicPath}/${activeTeam}/settings/core`),
+                              { roster: newRoster },
+                              { merge: true },
+                            );
+                          } else if (!isFirebaseAvailable) {
+                            writeLocalDb({ ...appData, roster: newRoster });
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {statsViewMode === "standard" && (!isPlayerRole || isPlayerAccessAllowed) && (
                     <div className={`bg-white rounded-xl sm:rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8 relative ${isPlayerRole ? "select-none" : ""}`}>
                     {/* Scroll indicator for mobile */}
                     <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-white to-transparent pointer-events-none sm:hidden"></div>
@@ -16269,6 +16419,7 @@ export default function App() {
             onDeleteStat={handleDeleteStat}
             onUpdateStat={handleUpdateStat}
             onAddStat={handleAddManualStat}
+            onApplyStatsBatch={handleBatchStatSync}
             ourTeamName={effectiveTeamName}
             isReadOnly={isPlayerRole}
           />

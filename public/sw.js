@@ -1,21 +1,23 @@
 // UCC Lancers Volleyball - Service Worker for PWA Offline Support & Android Installability
-const CACHE_NAME = 'ucc-lancers-v2';
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/pwa-192x192.png',
-  '/pwa-maskable-192x192.png',
-  '/pwa-512x512.png',
-  '/pwa-maskable-512x512.png',
-  '/apple-touch-icon.png',
-  '/lancer-logo.png'
-];
+const CACHE_NAME = 'ucc-lancers-v3';
 
 self.addEventListener('install', (event) => {
+  const scopeUrl = self.registration.scope;
+  const staticAssets = [
+    scopeUrl,
+    new URL('index.html', scopeUrl).href,
+    new URL('manifest.json', scopeUrl).href,
+    new URL('pwa-192x192.png', scopeUrl).href,
+    new URL('pwa-maskable-192x192.png', scopeUrl).href,
+    new URL('pwa-512x512.png', scopeUrl).href,
+    new URL('pwa-maskable-512x512.png', scopeUrl).href,
+    new URL('apple-touch-icon.png', scopeUrl).href,
+    new URL('lancer-logo.png', scopeUrl).href
+  ];
+
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS).catch((err) => {
+      return cache.addAll(staticAssets).catch((err) => {
         console.warn('SW Precache failed for some assets:', err);
       });
     }).then(() => self.skipWaiting())
@@ -59,7 +61,8 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(async () => {
-          const cached = await caches.match('/index.html') || await caches.match('/');
+          const indexUrl = new URL('index.html', self.registration.scope).href;
+          const cached = (await caches.match(indexUrl)) || (await caches.match(self.registration.scope)) || (await caches.match('/index.html'));
           return cached || new Response('Offline', { status: 503, statusText: 'Offline' });
         })
     );
