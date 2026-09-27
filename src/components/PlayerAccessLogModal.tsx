@@ -15,6 +15,10 @@ import {
   AlertTriangle,
   Mail,
   UserCheck,
+  Copy,
+  Check,
+  Lock,
+  Unlock,
 } from "lucide-react";
 import {
   collection,
@@ -57,6 +61,10 @@ interface PlayerAccessLogModalProps {
   teamId: string;
   teamName: string;
   playerCode?: string;
+  coachCode?: string;
+  isPlayerAccessAllowed?: boolean;
+  onTogglePlayerAccess?: () => void;
+  onPreviewAsPlayer?: () => void;
   publicPath?: string;
   db?: any;
 }
@@ -67,6 +75,10 @@ export const PlayerAccessLogModal: React.FC<PlayerAccessLogModalProps> = ({
   teamId,
   teamName,
   playerCode,
+  coachCode,
+  isPlayerAccessAllowed = true,
+  onTogglePlayerAccess,
+  onPreviewAsPlayer,
   publicPath = "teams",
   db,
 }) => {
@@ -77,6 +89,18 @@ export const PlayerAccessLogModal: React.FC<PlayerAccessLogModalProps> = ({
   const [history, setHistory] = useState<PlayerAccessHistoryEntry[]>([]);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleCopyCode = (text: string, keyName: string) => {
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+    setCopiedKey(keyName);
+    setTimeout(() => {
+      setCopiedKey(null);
+    }, 2000);
+  };
 
   const fetchAccessData = async () => {
     if (!teamId || !db) {
@@ -285,8 +309,128 @@ export const PlayerAccessLogModal: React.FC<PlayerAccessLogModalProps> = ({
           </div>
         </div>
 
-        {/* Quick Stats Banner */}
+        {/* Master Access Control Bar */}
+        <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 border-b border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div
+              className={`h-11 w-11 rounded-2xl ${
+                isPlayerAccessAllowed
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                  : "bg-red-500/20 text-red-400 border border-red-500/40"
+              } flex items-center justify-center shrink-0 shadow-inner`}
+            >
+              {isPlayerAccessAllowed ? <Unlock size={22} /> : <Lock size={22} />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-white font-black text-xs uppercase tracking-wider">
+                  Player Access Status:
+                </span>
+                <span
+                  className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
+                    isPlayerAccessAllowed
+                      ? "bg-emerald-950 text-emerald-300 border-emerald-800"
+                      : "bg-red-950 text-red-300 border-red-800"
+                  }`}
+                >
+                  {isPlayerAccessAllowed ? "Stats Open to Players" : "Players Locked Out"}
+                </span>
+              </div>
+              <p className="text-slate-400 text-xs mt-0.5">
+                {isPlayerAccessAllowed
+                  ? "Players can view team stats on personal devices with anti-screenshot protection."
+                  : "Stats are hidden for players. Only coaches can view or edit stats."}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            {onTogglePlayerAccess && (
+              <button
+                type="button"
+                onClick={onTogglePlayerAccess}
+                className={`px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer ${
+                  isPlayerAccessAllowed
+                    ? "bg-red-600 hover:bg-red-500 text-white"
+                    : "bg-emerald-500 hover:bg-emerald-400 text-slate-950"
+                }`}
+              >
+                {isPlayerAccessAllowed ? (
+                  <>
+                    <Lock size={14} />
+                    <span>Close Player Access</span>
+                  </>
+                ) : (
+                  <>
+                    <Unlock size={14} />
+                    <span>Open Player Access</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            {onPreviewAsPlayer && (
+              <button
+                type="button"
+                onClick={onPreviewAsPlayer}
+                className="px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md transition-all active:scale-95 cursor-pointer"
+                title="Preview what players see (view-only mode & watermarks)"
+              >
+                <Eye size={14} />
+                <span>Test as Player</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Quick Stats & Codes Banner */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-4 sm:p-5 bg-slate-950/60 border-b border-slate-800">
+          <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
+            <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Shield size={12} className="text-amber-400" />
+                Player Code
+              </span>
+              {playerCode && (
+                <button
+                  type="button"
+                  onClick={() => handleCopyCode(playerCode, "player")}
+                  className="text-amber-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                  title="Copy player code"
+                >
+                  {copiedKey === "player" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                </button>
+              )}
+            </div>
+            <div className="text-sm sm:text-base font-black text-amber-300 mt-1.5 tracking-wider font-mono truncate">
+              {playerCode || "N/A"}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5 truncate">Share with your athletes</div>
+          </div>
+
+          <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
+            <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Shield size={12} className="text-indigo-400" />
+                Coach Code
+              </span>
+              {coachCode && (
+                <button
+                  type="button"
+                  onClick={() => handleCopyCode(coachCode, "coach")}
+                  className="text-indigo-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors cursor-pointer"
+                  title="Copy coach code"
+                >
+                  {copiedKey === "coach" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                </button>
+              )}
+            </div>
+            <div className="text-sm sm:text-base font-black text-indigo-300 mt-1.5 tracking-wider font-mono truncate">
+              {coachCode || "N/A"}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5 truncate">For coaching staff only</div>
+          </div>
+
           <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
             <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
               <Users size={12} className="text-blue-400" />
@@ -307,26 +451,6 @@ export const PlayerAccessLogModal: React.FC<PlayerAccessLogModalProps> = ({
             </div>
             <div className="text-xl sm:text-2xl font-black text-emerald-400 mt-1 tabular-nums">
               {totalAccesses}
-            </div>
-          </div>
-
-          <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
-            <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <Shield size={12} className="text-amber-400" />
-              Player Code
-            </div>
-            <div className="text-sm sm:text-base font-black text-amber-300 mt-1.5 tracking-wider font-mono truncate">
-              {playerCode || "N/A"}
-            </div>
-          </div>
-
-          <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-2xl">
-            <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <Clock size={12} className="text-purple-400" />
-              Last Synced
-            </div>
-            <div className="text-xs sm:text-sm font-bold text-slate-300 mt-1.5 truncate">
-              {lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </div>
           </div>
         </div>
