@@ -105,9 +105,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(codeId);
     }
 
+    match /test/{docId} {
+      allow read: if isSignedIn();
+    }
+
     match /teams/{teamId} {
       allow create: if isSignedIn() && isValidId(teamId) && isTeamMember(teamId);
       allow get: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId);
+      allow update: if isSignedIn() && isCoach(teamId);
       allow delete: if isSignedIn() && isCoach(teamId);
 
       match /members/{userId} {
@@ -132,6 +137,11 @@ service cloud.firestore {
       }
 
       match /opponents/{opponentId} {
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow write: if isSignedIn() && isCoach(teamId);
+      }
+
+      match /opponent_notes/{oppName} {
         allow read: if isSignedIn() && isTeamMember(teamId);
         allow write: if isSignedIn() && isCoach(teamId);
       }

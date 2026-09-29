@@ -65,13 +65,14 @@ service cloud.firestore {
     }
 
     function isValidSetting(data) {
-      return data.keys().hasAny(['roster', 'savedRosters', 'savedLineups', 'teamName', 'coachCode', 'playerCode'])
+      return data.keys().hasAny(['roster', 'savedRosters', 'savedLineups', 'teamName', 'coachCode', 'playerCode', 'playerAccessEnabled'])
         && (!('roster' in data) || data.roster is list && data.roster.size() <= 100)
         && (!('savedRosters' in data) || data.savedRosters is map)
         && (!('savedLineups' in data) || data.savedLineups is map)
         && (!('teamName' in data) || data.teamName is string && data.teamName.size() <= 100)
         && (!('coachCode' in data) || data.coachCode is string && data.coachCode.size() <= 20)
-        && (!('playerCode' in data) || data.playerCode is string && data.playerCode.size() <= 20);
+        && (!('playerCode' in data) || data.playerCode is string && data.playerCode.size() <= 20)
+        && (!('playerAccessEnabled' in data) || data.playerAccessEnabled is bool);
     }
 
     function isValidMatch(data) {
@@ -104,9 +105,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(codeId);
     }
 
+    match /test/{docId} {
+      allow read: if isSignedIn();
+    }
+
     match /teams/{teamId} {
       allow create: if isSignedIn() && isValidId(teamId) && isTeamMember(teamId);
       allow get: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId);
+      allow update: if isSignedIn() && isCoach(teamId);
       allow delete: if isSignedIn() && isCoach(teamId);
 
       match /members/{userId} {
@@ -131,6 +137,11 @@ service cloud.firestore {
       }
 
       match /opponents/{opponentId} {
+        allow read: if isSignedIn() && isTeamMember(teamId);
+        allow write: if isSignedIn() && isCoach(teamId);
+      }
+
+      match /opponent_notes/{oppName} {
         allow read: if isSignedIn() && isTeamMember(teamId);
         allow write: if isSignedIn() && isCoach(teamId);
       }
