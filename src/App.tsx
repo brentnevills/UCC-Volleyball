@@ -110,9 +110,15 @@ import {
   enableIndexedDbPersistence,
   disableNetwork,
   enableNetwork,
+  setLogLevel,
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 import { handleFirestoreError, OperationType } from "./firebaseErrors";
+
+// Silence internal Firestore SDK retry and backoff log spam
+try {
+  setLogLevel("silent");
+} catch {}
 
 // -------------------------------------------------------------
 // ENVIRONMENT & CLOUD CONFIGURATION
@@ -136,6 +142,14 @@ try {
 // Enable Persistence for "Offline Changes"
 if (typeof window !== "undefined" && db) {
   try {
+    if (
+      sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true" ||
+      localStorage.getItem("ucc_firestore_quota_exceeded") === "true"
+    ) {
+      disableNetwork(db).catch(() => {});
+    }
+  } catch {}
+  try {
     enableIndexedDbPersistence(db).catch((err) => {
       if (err.code === "failed-precondition") {
         console.warn("Persistence failed: Multiple tabs open.");
@@ -151,16 +165,24 @@ if (typeof window !== "undefined" && db) {
 async function testConnection() {
   if (!db) return;
   try {
-    if (typeof window !== "undefined" && sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true") {
+    if (
+      typeof window !== "undefined" &&
+      (sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true" ||
+        localStorage.getItem("ucc_firestore_quota_exceeded") === "true")
+    ) {
       disableNetwork(db).catch(() => {});
       return;
     }
     await getDocFromServer(doc(db, "test", "connection"));
   } catch (error: any) {
-    if (error?.code === "resource-exhausted" || (error?.message && error.message.includes("Quota exceeded"))) {
+    if (
+      error?.code === "resource-exhausted" ||
+      (error?.message && (error.message.includes("Quota") || error.message.includes("quota")))
+    ) {
       console.warn("Firestore daily quota limit reached. Using local offline storage mode.");
       try {
         sessionStorage.setItem("ucc_firestore_quota_exceeded", "true");
+        localStorage.setItem("ucc_firestore_quota_exceeded", "true");
         disableNetwork(db).catch(() => {});
       } catch {}
       return;
@@ -848,7 +870,10 @@ export default function App() {
 
   const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(() => {
     try {
-      return sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true";
+      return (
+        sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true" ||
+        localStorage.getItem("ucc_firestore_quota_exceeded") === "true"
+      );
     } catch {
       return false;
     }
@@ -858,11 +883,22 @@ export default function App() {
     setIsQuotaExceeded(true);
     try {
       sessionStorage.setItem("ucc_firestore_quota_exceeded", "true");
+      localStorage.setItem("ucc_firestore_quota_exceeded", "true");
       if (db) {
         disableNetwork(db).catch(() => {});
       }
     } catch {}
   };
+
+  useEffect(() => {
+    const handleQuotaExceededEvent = () => {
+      markQuotaExceeded();
+    };
+    window.addEventListener("ucc-quota-exceeded", handleQuotaExceededEvent);
+    return () => {
+      window.removeEventListener("ucc-quota-exceeded", handleQuotaExceededEvent);
+    };
+  }, []);
 
   const [showRuggedStorageModal, setShowRuggedStorageModal] = useState(false);
   const [storageHealth, setStorageHealth] = useState<{
@@ -1213,6 +1249,13 @@ export default function App() {
     category: "serve",
     titleContext: "",
   });
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: "match" | "set" | "drill" | "event" | "team";
+    id: string;
+    name: string;
+    subText?: string;
+    details?: string[];
+  } | null>(null);
   const [statFilter, setStatFilter] = useState("all");
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
@@ -1542,7 +1585,7 @@ export default function App() {
   // Role Recovery Mechanism
   // This must run every time myTeams updates, otherwise if it's empty during initial load, we miss the role sync.
   useEffect(() => {
-    if (!user || !isFirebaseAvailable || !activeTeam || myTeams.length === 0)
+    if (!user || !isFirebaseAvailable || !activeTeam || myTeams.length === 0 || isQuotaExceeded)
       return;
     const existingTeam = myTeams.find((t) => t.id === activeTeam);
     if (existingTeam) {
@@ -1550,9 +1593,14 @@ export default function App() {
         doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
         { uid: user.uid, joinedAt: serverTimestamp(), role: existingTeam.role },
         { merge: true },
-      ).catch((e) => console.log("Role sync ignored", e));
+      ).catch((e) => {
+        if (e?.code === "resource-exhausted" || (e?.message && (e.message.includes("Quota") || e.message.includes("quota")))) {
+          markQuotaExceeded();
+        }
+        console.log("Role sync ignored", e);
+      });
     }
-  }, [user, activeTeam, myTeams]);
+  }, [user, activeTeam, myTeams, isQuotaExceeded]);
 
   // Member Coach Role Sync
   useEffect(() => {
@@ -1584,7 +1632,7 @@ export default function App() {
 
   // Player Stats Access Audit Logger
   const logPlayerStatsAccess = async (targetViewName?: string) => {
-    if (!user || !activeTeam || !db) return;
+    if (!user || !activeTeam || !db || isQuotaExceeded) return;
     try {
       const isPlayer = isPlayerRole;
 
@@ -1646,7 +1694,10 @@ export default function App() {
             : "Mobile / Web Device",
         });
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === "resource-exhausted" || (err?.message && (err.message.includes("Quota") || err.message.includes("quota")))) {
+        markQuotaExceeded();
+      }
       console.warn("Player stats access audit log notice:", err);
     }
   };
@@ -2052,14 +2103,17 @@ export default function App() {
       });
     }
 
-    if (isFirebaseAvailable && user && activeTeam && activeSetId && db) {
+    if (isFirebaseAvailable && user && activeTeam && activeSetId && db && !isQuotaExceeded) {
       try {
         await setDoc(
           doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
           updates,
           { merge: true },
         );
-      } catch (e) {
+      } catch (e: any) {
+        if (e?.code === "resource-exhausted" || (e?.message && (e.message.includes("Quota") || e.message.includes("quota")))) {
+          markQuotaExceeded();
+        }
         console.warn("Set state cloud sync deferred (saved locally):", e);
       }
     }
@@ -3289,10 +3343,23 @@ export default function App() {
       }
     }
 
+    const currentSet = appData.sets.find((s) => s.id === activeSetId);
+    const existingPoints = currentSet?.pointHistory || [];
+    const pointEntry = {
+      pointNum: newUcc + newOpp,
+      team,
+      scoreUcc: newUcc,
+      scoreOpp: newOpp,
+      server: serving || "ucc",
+      timestamp: new Date().toISOString(),
+    };
+    const updatedPointHistory = [...existingPoints, pointEntry];
+
     if (isFirebaseAvailable && user) {
       updateSetState({
         scoreUcc: newUcc,
         scoreOpp: newOpp,
+        pointHistory: updatedPointHistory,
         serving:
           serving === "opp" && team === "ucc"
             ? "ucc"
@@ -3305,7 +3372,18 @@ export default function App() {
         ...appData,
         sets: appData.sets.map((s) =>
           s.id === activeSetId
-            ? { ...s, scoreUcc: newUcc, scoreOpp: newOpp }
+            ? {
+                ...s,
+                scoreUcc: newUcc,
+                scoreOpp: newOpp,
+                pointHistory: updatedPointHistory,
+                serving:
+                  serving === "opp" && team === "ucc"
+                    ? "ucc"
+                    : serving === "ucc" && team !== "ucc"
+                      ? "opp"
+                      : serving,
+              }
             : s,
         ),
       });
@@ -5707,16 +5785,9 @@ export default function App() {
     }
   };
 
-  const handleDeleteTeam = async (teamId) => {
+  const executeDeleteTeam = async (teamId) => {
     const team = myTeams.find((t) => t.id === teamId);
     if (!team) return;
-
-    const confirmMsg =
-      team.role === "coach"
-        ? `DISBAND / LEAVE TEAM: Are you sure you want to remove "${team.name}"?`
-        : `LEAVE TEAM: Are you sure you want to remove "${team.name}" from your list?`;
-
-    if (!window.confirm(confirmMsg)) return;
 
     try {
       // 1. Remove from user profile instantly so they are unblocked
@@ -5753,6 +5824,20 @@ export default function App() {
     }
   };
 
+  const handleDeleteTeam = (teamId) => {
+    const team = myTeams.find((t) => t.id === teamId);
+    if (!team) return;
+    setDeleteTarget({
+      type: "team",
+      id: teamId,
+      name: team.name,
+      subText:
+        team.role === "coach"
+          ? `Are you sure you want to remove and disband "${team.name}"?`
+          : `Are you sure you want to remove "${team.name}" from your team list?`,
+    });
+  };
+
   const executeBatchedDeletions = async (docRefs) => {
     // Process in batches of 400 to stay safely under Firestore's 500 limit
     const validRefs = docRefs.filter(
@@ -5765,7 +5850,7 @@ export default function App() {
     }
   };
 
-  const handleDeleteEvent = async (eventId, isPracticeSessions = false) => {
+  const executeDeleteEvent = async (eventId, isPracticeSessions = false) => {
     try {
       let matchesToDelete = [];
       if (isPracticeSessions || eventId === "practice_sessions") {
@@ -5804,6 +5889,7 @@ export default function App() {
         setView("menu");
       }
 
+      setStatsPath([{ level: "all", name: "All Matches & Events" }]);
       showToast(
         "Day/Event and all associated games and stats deleted.",
         "success",
@@ -5824,8 +5910,8 @@ export default function App() {
             .forEach((s) => {
               refsToDelete.push(doc(db, `${publicPath}/${teamId}/sets/${s.id}`));
             });
-          matchIds.forEach((id) => {
-            refsToDelete.push(doc(db, `${publicPath}/${teamId}/matches/${id}`));
+          matchIds.forEach((mId) => {
+            refsToDelete.push(doc(db, `${publicPath}/${teamId}/matches/${mId}`));
           });
           await executeBatchedDeletions(refsToDelete);
         } catch (cloudErr) {
@@ -5838,16 +5924,18 @@ export default function App() {
     }
   };
 
-  const handleDeleteMatch = async (matchId) => {
+  const handleDeleteEvent = (eventId, isPracticeSessions = false) => {
+    setDeleteTarget({
+      type: "event",
+      id: eventId,
+      name: isPracticeSessions || eventId === "practice_sessions" ? "Practice Sessions" : "League Day / Tournament",
+      subText: "This will permanently remove all matches, sets, and stats for this entire day.",
+    });
+  };
+
+  const executeDeleteMatch = async (matchId) => {
     const match = (appData.matches || []).find((m) => m.id === matchId);
     if (!match) return;
-
-    if (
-      !window.confirm(
-        `DELETE GAME: Are you sure you want to delete the match vs ${match.opponent}?\n\nThis will permanently erase all stats and sets for this game. This cannot be undone.`,
-      )
-    )
-      return;
 
     try {
       // 1. Immediately update locally
@@ -5870,7 +5958,14 @@ export default function App() {
         setView("menu");
       }
 
-      showToast("Game and all associated stats deleted successfully.", "success");
+      setStatsPath((prev) => {
+        if (prev.some((p) => p.id === matchId)) {
+          return [{ level: "all", name: "All Matches & Events" }];
+        }
+        return prev;
+      });
+
+      showToast(`Game vs ${match.opponent || 'Opponent'} and all associated stats deleted.`, "success");
 
       // 2. Cloud sync in background
       if (isFirebaseAvailable && user && db) {
@@ -5901,15 +5996,27 @@ export default function App() {
     }
   };
 
-  const handleDeleteSet = async (setId) => {
+  const handleDeleteMatch = (matchId) => {
+    const match = (appData.matches || []).find((m) => m.id === matchId);
+    if (!match) return;
+    const matchSets = (appData.sets || []).filter((s) => s.matchId === matchId);
+    const matchStats = (appData.stats || []).filter((s) => s.matchId === matchId);
+    setDeleteTarget({
+      type: "match",
+      id: matchId,
+      name: match.opponent ? `Match vs ${match.opponent}` : match.title || "Match",
+      subText: "This will permanently erase this match, along with all recorded sets and player stats.",
+      details: [
+        `${matchSets.length} Sets Played`,
+        `${matchStats.length} Recorded Stats`,
+        match.date ? new Date(match.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Recent Game",
+      ],
+    });
+  };
+
+  const executeDeleteSet = async (setId) => {
     const s = (appData.sets || []).find((set) => set.id === setId);
     if (!s) return;
-    if (
-      !window.confirm(
-        `DELETE SET: Are you sure you want to delete Set ${s.setNum}?\n\nAll stats recorded during this set will be permanently erased.`,
-      )
-    )
-      return;
 
     try {
       // 1. Immediately update locally
@@ -5920,7 +6027,14 @@ export default function App() {
         stats: newStats,
         sets: newSets,
       });
-      showToast(`Set ${s.setNum} and associated stats deleted.`, "success");
+
+      if (activeSetId === setId) {
+        setActiveSetId(null);
+        setView("menu");
+      }
+
+      setStatsPath((prev) => prev.filter((p) => p.id !== setId));
+      showToast(`Set ${s.setNum || 1} and associated stats deleted.`, "success");
 
       // 2. Cloud sync in background
       if (isFirebaseAvailable && user && db) {
@@ -5944,6 +6058,35 @@ export default function App() {
     } catch (e: any) {
       console.error("Delete Set Error:", e);
       showToast("Failed to delete set.", "error");
+    }
+  };
+
+  const handleDeleteSet = (setId) => {
+    const s = (appData.sets || []).find((set) => set.id === setId);
+    if (!s) return;
+    const setStats = (appData.stats || []).filter((st) => st.setId === setId);
+    setDeleteTarget({
+      type: "set",
+      id: setId,
+      name: `Set ${s.setNum || 1} (${s.scoreUcc || 0}-${s.scoreOpp || 0})`,
+      subText: "All stats recorded during this set will be permanently erased.",
+      details: [`${setStats.length} Recorded Stats in this set`],
+    });
+  };
+
+  const confirmDeleteTarget = async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setDeleteTarget(null);
+
+    if (target.type === "match") {
+      await executeDeleteMatch(target.id);
+    } else if (target.type === "set") {
+      await executeDeleteSet(target.id);
+    } else if (target.type === "event") {
+      await executeDeleteEvent(target.id, target.id === "practice_sessions");
+    } else if (target.type === "team") {
+      await executeDeleteTeam(target.id);
     }
   };
 
@@ -6544,6 +6687,7 @@ export default function App() {
             onClick={() => {
               try {
                 sessionStorage.removeItem("ucc_firestore_quota_exceeded");
+                localStorage.removeItem("ucc_firestore_quota_exceeded");
                 if (db) {
                   enableNetwork(db).catch(() => {});
                 }
@@ -6657,12 +6801,68 @@ export default function App() {
     );
   };
 
+  const renderDeleteConfirmationModal = () => {
+    if (!deleteTarget) return null;
+
+    return (
+      <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 relative overflow-hidden">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="h-12 w-12 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center shrink-0">
+              <Trash2 size={24} />
+            </div>
+            <div>
+              <div className="text-xs font-black uppercase tracking-wider text-rose-600">
+                Confirm Deletion
+              </div>
+              <h3 className="text-base font-black text-slate-900 leading-tight">
+                {deleteTarget.name}
+              </h3>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+            {deleteTarget.subText || "Are you sure you want to permanently delete this item? This action cannot be undone."}
+          </p>
+
+          {deleteTarget.details && deleteTarget.details.length > 0 && (
+            <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200 mb-5 flex flex-wrap gap-2 text-xs font-bold text-slate-700">
+              {deleteTarget.details.map((detail, idx) => (
+                <span key={idx} className="bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                  {detail}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(null)}
+              className="w-1/2 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDeleteTarget}
+              className="w-1/2 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-rose-600/30 transition-all active:scale-95 cursor-pointer"
+            >
+              Delete Permanently
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderPlayerSecurity = () => {
     return (
       <>
         {renderRuggedStorageModal()}
         {renderCoachLoginModal()}
         {renderEndGameModal()}
+        {renderDeleteConfirmationModal()}
         {renderToastNotice()}
 
         {/* Security Warning Toast */}
@@ -15126,34 +15326,21 @@ export default function App() {
                         )}
                         {teamInfo.role === "coach" && (
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               if (opt.level === "drill") {
-                                if (
-                                  window.confirm(
-                                    `DELETE DRILL: Are you sure you want to delete "${opt.name}"? All stats recorded during this drill will be permanently erased.`,
-                                  )
-                                ) {
-                                  if (opt.setId) handleDeleteSet(opt.setId);
-                                  else if (opt.matchId) handleDeleteMatch(opt.matchId);
-                                }
+                                if (opt.setId) handleDeleteSet(opt.setId);
+                                else if (opt.matchId) handleDeleteMatch(opt.matchId);
                                 return;
                               }
-                              if (opt.level === "match")
-                                handleDeleteMatch(opt.id);
+                              if (opt.level === "match") handleDeleteMatch(opt.id);
                               if (opt.level === "set") handleDeleteSet(opt.id);
                               if (opt.level === "event") {
-                                if (
-                                  window.confirm(
-                                    `DELETE DAY: Are you sure you want to delete this entire day/event "${opt.name}"? This will permanently erase all games and stats within it.`,
-                                  )
-                                ) {
-                                  handleDeleteEvent(
-                                    opt.id,
-                                    opt.id === "practice_sessions" ||
-                                      opt.isPractice,
-                                  );
-                                }
+                                handleDeleteEvent(
+                                  opt.id,
+                                  opt.id === "practice_sessions" || opt.isPractice,
+                                );
                               }
                             }}
                             className="px-2.5 py-2 text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors border-l border-slate-200 cursor-pointer"
@@ -15313,6 +15500,24 @@ export default function App() {
                   <Shield size={13} className="text-[#0033A0]" />
                   <span>Adjust Names</span>
                 </button>
+
+                {teamInfo.role !== "player" && (statsPath.some((p) => p.level === "match") || activeMatch) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const activeMatchNav = statsPath.find((p) => p.level === "match");
+                      const matchObj = activeMatchNav
+                        ? appData.matches.find((m) => m.id === activeMatchNav.id)
+                        : activeMatch;
+                      if (matchObj) handleDeleteMatch(matchObj.id);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                    title="Delete this entire match and its stats"
+                  >
+                    <Trash2 size={13} className="text-rose-600" />
+                    <span>Delete Game</span>
+                  </button>
+                )}
 
                 {currentNav.level === "set" && (
                   <button
@@ -15807,7 +16012,10 @@ export default function App() {
                       matches={appData.matches || []}
                       sets={appData.sets || []}
                       roster={appData.roster || []}
-                      currentMatchId={activeMatch?.id}
+                      currentMatchId={activeMatch?.id || statsPath.find((p) => p.level === "match")?.id || null}
+                      currentSetId={activeSetId || statsPath.find((p) => p.level === "set")?.id || null}
+                      teamName={effectiveTeamName}
+                      onDeleteMatch={handleDeleteMatch}
                     />
                   )}
 

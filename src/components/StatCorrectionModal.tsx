@@ -80,6 +80,7 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
   const [filterPlayer, setFilterPlayer] = useState<string>(() => initialPlayerId || "all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [showAddForm, setShowAddForm] = useState<boolean>(false);
+  const [pendingDeleteStatId, setPendingDeleteStatId] = useState<string | null>(null);
 
   // Sync with initial props whenever modal opens or props change
   useEffect(() => {
@@ -983,17 +984,37 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                           >
                             <Edit3 size={16} />
                           </button>
-                          <button
-                            onClick={() => {
-                              if (window.confirm("Are you sure you want to delete this recorded stat?")) {
-                                onDeleteStat(stat.id);
-                              }
-                            }}
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                            title="Delete Stat"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                          {pendingDeleteStatId === stat.id ? (
+                            <div className="flex items-center gap-1 bg-red-50 p-1 rounded-lg border border-red-200">
+                              <span className="text-[10px] font-bold text-red-700">Delete?</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onDeleteStat(stat.id);
+                                  setPendingDeleteStatId(null);
+                                }}
+                                className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-black uppercase cursor-pointer"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingDeleteStatId(null)}
+                                className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[10px] font-bold cursor-pointer"
+                              >
+                                No
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteStatId(stat.id)}
+                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete Stat"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
                         </div>
                       )}
                     </>

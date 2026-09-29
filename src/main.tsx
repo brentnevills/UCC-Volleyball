@@ -1,7 +1,12 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
+import {setLogLevel} from 'firebase/firestore';
 import App from './App.tsx';
 import './index.css';
+
+try {
+  setLogLevel('silent');
+} catch {}
 
 console.log("UCC Lancers App: Initializing...");
 
@@ -29,6 +34,23 @@ document.documentElement.classList.remove('shield-active', 'player-restricted');
 document.body.classList.remove('shield-active', 'player-restricted');
 
 window.addEventListener('error', (event) => {
+  const msg = event.message || event.error?.message || '';
+  if (
+    event.error?.code === 'resource-exhausted' ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Quota exceeded')
+  ) {
+    try {
+      sessionStorage.setItem('ucc_firestore_quota_exceeded', 'true');
+      localStorage.setItem('ucc_firestore_quota_exceeded', 'true');
+      window.dispatchEvent(new CustomEvent('ucc-quota-exceeded'));
+    } catch {}
+    event.preventDefault();
+    console.warn('Firestore daily quota limit reached. Local offline storage active.');
+    return;
+  }
+
   console.error("Global Error Caught:", event.error);
   const rootElement = document.getElementById('root');
   if (rootElement && rootElement.innerText.includes('Loading Dashboard...')) {
@@ -46,6 +68,23 @@ window.addEventListener('error', (event) => {
 });
 
 window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const msg = reason?.message || String(reason || '');
+  if (
+    reason?.code === 'resource-exhausted' ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Quota exceeded')
+  ) {
+    try {
+      sessionStorage.setItem('ucc_firestore_quota_exceeded', 'true');
+      localStorage.setItem('ucc_firestore_quota_exceeded', 'true');
+      window.dispatchEvent(new CustomEvent('ucc-quota-exceeded'));
+    } catch {}
+    event.preventDefault();
+    console.warn('Firestore daily quota limit reached. Local offline storage active.');
+    return;
+  }
   console.error("Unhandled Promise Rejection:", event.reason);
 });
 
