@@ -108,6 +108,8 @@ import {
   where,
   getDocFromServer,
   enableIndexedDbPersistence,
+  disableNetwork,
+  enableNetwork,
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 import { handleFirestoreError, OperationType } from "./firebaseErrors";
@@ -149,12 +151,17 @@ if (typeof window !== "undefined" && db) {
 async function testConnection() {
   if (!db) return;
   try {
+    if (typeof window !== "undefined" && sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true") {
+      disableNetwork(db).catch(() => {});
+      return;
+    }
     await getDocFromServer(doc(db, "test", "connection"));
   } catch (error: any) {
     if (error?.code === "resource-exhausted" || (error?.message && error.message.includes("Quota exceeded"))) {
       console.warn("Firestore daily quota limit reached. Using local offline storage mode.");
       try {
         sessionStorage.setItem("ucc_firestore_quota_exceeded", "true");
+        disableNetwork(db).catch(() => {});
       } catch {}
       return;
     }
@@ -851,6 +858,9 @@ export default function App() {
     setIsQuotaExceeded(true);
     try {
       sessionStorage.setItem("ucc_firestore_quota_exceeded", "true");
+      if (db) {
+        disableNetwork(db).catch(() => {});
+      }
     } catch {}
   };
 
@@ -1454,7 +1464,7 @@ export default function App() {
     }
 
     // Also verify connection in background
-    if (db && !isQuotaExceeded) {
+    if (db && !isQuotaExceeded && sessionStorage.getItem("ucc_firestore_quota_exceeded") !== "true") {
       getDocFromServer(doc(db, "test", "connection")).catch((e) => {
         if (e?.code === "resource-exhausted" || (e?.message && e.message.includes("Quota exceeded"))) {
           markQuotaExceeded();
@@ -6534,6 +6544,9 @@ export default function App() {
             onClick={() => {
               try {
                 sessionStorage.removeItem("ucc_firestore_quota_exceeded");
+                if (db) {
+                  enableNetwork(db).catch(() => {});
+                }
               } catch {}
               setIsQuotaExceeded(false);
               showToast("Retrying cloud sync...", "info");
