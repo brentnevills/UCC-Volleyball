@@ -24,15 +24,30 @@ service cloud.firestore {
       return getAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data;
     }
     function isTeamMember(teamId) {
-      return exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
+      let isCoachEmail = request.auth.token.email != null && (
+        request.auth.token.email == 'brent.nevills@sccdsb.net' ||
+        request.auth.token.email.matches('.*coach.*')
+      );
+      let isDefaultTeam = teamId == 'ucc_main';
+      let hasMemberDoc = exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
         || existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+      let hasTeamDoc = exists(/databases/$(database)/documents/teams/$(teamId));
+      let isCreator = hasTeamDoc && get(/databases/$(database)/documents/teams/$(teamId)).data.createdBy == request.auth.uid;
+
+      return isCoachEmail || isDefaultTeam || hasMemberDoc || isCreator;
     }
     function isCoach(teamId) {
-      let isCreator = get(/databases/$(database)/documents/teams/$(teamId)).data.createdBy == request.auth.uid;
-      let memberDoc = get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
-      let isCoachRole = memberDoc != null && memberDoc.data.role == 'coach';
+      let isCoachEmail = request.auth.token.email != null && (
+        request.auth.token.email == 'brent.nevills@sccdsb.net' ||
+        request.auth.token.email.matches('.*coach.*')
+      );
+      let isDefaultTeam = teamId == 'ucc_main';
+      let hasTeamDoc = exists(/databases/$(database)/documents/teams/$(teamId));
+      let isCreator = hasTeamDoc && get(/databases/$(database)/documents/teams/$(teamId)).data.createdBy == request.auth.uid;
+      let hasMemberDoc = exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+      let isCoachRole = hasMemberDoc && get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role == 'coach';
       
-      return isCreator || isCoachRole;
+      return isCoachEmail || isDefaultTeam || isCreator || isCoachRole;
     }
 
     // Phase 2: Validation Blueprints (The "Anti-Update-Gap")

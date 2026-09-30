@@ -1,12 +1,8 @@
+import './silenceLogs';
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
-import {setLogLevel} from 'firebase/firestore';
 import App from './App.tsx';
 import './index.css';
-
-try {
-  setLogLevel('silent');
-} catch {}
 
 console.log("UCC Lancers App: Initializing...");
 

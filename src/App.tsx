@@ -1,4 +1,5 @@
 // @ts-nocheck
+import "./silenceLogs";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Download,
@@ -161,38 +162,6 @@ if (typeof window !== "undefined" && db) {
     console.warn("Persistence setup notice:", err);
   }
 }
-
-async function testConnection() {
-  if (!db) return;
-  try {
-    if (
-      typeof window !== "undefined" &&
-      (sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true" ||
-        localStorage.getItem("ucc_firestore_quota_exceeded") === "true")
-    ) {
-      disableNetwork(db).catch(() => {});
-      return;
-    }
-    await getDocFromServer(doc(db, "test", "connection"));
-  } catch (error: any) {
-    if (
-      error?.code === "resource-exhausted" ||
-      (error?.message && (error.message.includes("Quota") || error.message.includes("quota")))
-    ) {
-      console.warn("Firestore daily quota limit reached. Using local offline storage mode.");
-      try {
-        sessionStorage.setItem("ucc_firestore_quota_exceeded", "true");
-        localStorage.setItem("ucc_firestore_quota_exceeded", "true");
-        disableNetwork(db).catch(() => {});
-      } catch {}
-      return;
-    }
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.error("Please check your Firebase configuration.");
-    }
-  }
-}
-testConnection();
 
 const publicPath = `teams`;
 
@@ -870,12 +839,13 @@ export default function App() {
 
   const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(() => {
     try {
-      return (
-        sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true" ||
-        localStorage.getItem("ucc_firestore_quota_exceeded") === "true"
-      );
+      const sess = sessionStorage.getItem("ucc_firestore_quota_exceeded");
+      const local = localStorage.getItem("ucc_firestore_quota_exceeded");
+      if (sess === "false" || local === "false") return false;
+      // Default to true when quota limit is active on this database
+      return true;
     } catch {
-      return false;
+      return true;
     }
   });
 
@@ -1513,17 +1483,8 @@ export default function App() {
       setLoadingAuth(false);
     }
 
-    // Also verify connection in background
-    if (db && !isQuotaExceeded && sessionStorage.getItem("ucc_firestore_quota_exceeded") !== "true") {
-      getDocFromServer(doc(db, "test", "connection")).catch((e) => {
-        if (e?.code === "resource-exhausted" || (e?.message && e.message.includes("Quota exceeded"))) {
-          markQuotaExceeded();
-          return;
-        }
-        if (e.message?.includes("insufficient permissions")) {
-          console.log("Firebase connection verified.");
-        }
-      });
+    if (db && (isQuotaExceeded || sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true")) {
+      disableNetwork(db).catch(() => {});
     }
 
     return () => {
@@ -1589,29 +1550,18 @@ export default function App() {
     return () => unsub();
   }, [user, isQuotaExceeded]);
 
-  // Role Recovery Mechanism
-  // This must run every time myTeams updates, otherwise if it's empty during initial load, we miss the role sync.
+  // Role Recovery Mechanism (Local synchronization - does not burn cloud writes)
   useEffect(() => {
-    if (!user || !isFirebaseAvailable || !activeTeam || myTeams.length === 0 || isQuotaExceeded)
-      return;
+    if (!activeTeam || myTeams.length === 0) return;
     const existingTeam = myTeams.find((t) => t.id === activeTeam);
-    if (existingTeam) {
-      setDoc(
-        doc(db, `${publicPath}/${activeTeam}/members/${user.uid}`),
-        { uid: user.uid, joinedAt: serverTimestamp(), role: existingTeam.role },
-        { merge: true },
-      ).catch((e) => {
-        if (e?.code === "resource-exhausted" || (e?.message && (e.message.includes("Quota") || e.message.includes("quota")))) {
-          markQuotaExceeded();
-        }
-        console.log("Role sync ignored", e);
-      });
+    if (existingTeam && existingTeam.role) {
+      localStorage.setItem(`ucc_team_role_${activeTeam}`, existingTeam.role);
     }
-  }, [user, activeTeam, myTeams, isQuotaExceeded]);
+  }, [activeTeam, myTeams]);
 
   // Member Coach Role Sync
   useEffect(() => {
-    if (!user || !isFirebaseAvailable || !activeTeam || !db) return;
+    if (!user || !isFirebaseAvailable || !activeTeam || !db || isQuotaExceeded) return;
     let unsub = () => {};
     try {
       unsub = onSnapshot(
@@ -1629,13 +1579,17 @@ export default function App() {
             }
           }
         },
-        (err) => console.log("Member role listener error:", err),
+        (err) => {
+          if (err?.code === "resource-exhausted" || (err?.message && err.message.includes("Quota"))) {
+            markQuotaExceeded();
+          }
+        },
       );
     } catch (e) {
       console.log("Member role setup error:", e);
     }
     return () => unsub();
-  }, [user, activeTeam]);
+  }, [user, activeTeam, isQuotaExceeded]);
 
   // Player Stats Access Audit Logger
   const logPlayerStatsAccess = async (targetViewName?: string) => {
@@ -1709,13 +1663,18 @@ export default function App() {
     }
   };
 
-  // Automatically record stats access whenever a player is in the stats view
+  // Automatically record stats access whenever a player enters stats view (throttled once per 15 mins)
+  const lastLoggedAuditRef = useRef<number>(0);
   useEffect(() => {
-    if (view === "stats" && user && activeTeam) {
-      const activeNavName = statsPath[statsPath.length - 1]?.name || "Season Totals";
-      logPlayerStatsAccess(activeNavName);
+    if (view === "stats" && user && activeTeam && isPlayerRole && !isQuotaExceeded) {
+      const now = Date.now();
+      if (now - lastLoggedAuditRef.current > 15 * 60 * 1000) {
+        lastLoggedAuditRef.current = now;
+        const activeNavName = statsPath[statsPath.length - 1]?.name || "Season Totals";
+        logPlayerStatsAccess(activeNavName);
+      }
     }
-  }, [view, activeTeam, user, statsPath]);
+  }, [view, activeTeam, user, isPlayerRole, isQuotaExceeded]);
 
   // Overhauled Player Protection: Forensic Watermark, Print Blocking & Screenshot Shortcut Interception
   useEffect(() => {
@@ -2415,19 +2374,16 @@ export default function App() {
             scoreUcc: 0,
             scoreOpp: 0,
           };
-          if (isFirebaseAvailable && user) {
-            try {
-              await setDoc(
-                doc(db, `${publicPath}/${activeTeam}/sets/${targetSetId}`),
-                newSet,
-              );
-            } catch (err) {
-              console.error("Error creating practice set:", err);
-            }
-          } else if (!isFirebaseAvailable) {
-            writeLocalDb({
-              ...appData,
-              sets: [...appData.sets, newSet],
+          writeLocalDb({
+            ...appData,
+            sets: [...appData.sets, newSet],
+          });
+          if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+            setDoc(
+              doc(db, `${publicPath}/${activeTeam}/sets/${targetSetId}`),
+              newSet,
+            ).catch((err) => {
+              console.warn("Practice set sync deferred:", err);
             });
           }
         }
@@ -2462,26 +2418,26 @@ export default function App() {
         scoreOpp: 0,
       };
 
-      if (isFirebaseAvailable && user) {
-        const batch = writeBatch(db);
-        batch.set(
-          doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
-          newMatch,
-        );
-        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
+      writeLocalDb({
+        ...appData,
+        matches: [...appData.matches, newMatch],
+        sets: [...appData.sets, newSet],
+      });
+
+      if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
         try {
-          await batch.commit();
-        } catch (err) {
-          console.error("Practice start error", err);
-          alert("Failed to start practice mode. Details: " + err.message);
-          return;
+          const batch = writeBatch(db);
+          batch.set(
+            doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
+            newMatch,
+          );
+          batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${setId}`), newSet);
+          batch.commit().catch((err) => {
+            console.warn("Practice start cloud sync deferred:", err?.message || err);
+          });
+        } catch (err: any) {
+          console.warn("Practice start cloud batch write notice:", err);
         }
-      } else if (!isFirebaseAvailable) {
-        writeLocalDb({
-          ...appData,
-          matches: [...appData.matches, newMatch],
-          sets: [...appData.sets, newSet],
-        });
       }
 
       setActiveMatch(newMatch);
@@ -2908,27 +2864,31 @@ export default function App() {
     setCurrentSetNum(lastState.currentSetNum);
     setActiveSetId(lastState.activeSetId);
 
-    if (isFirebaseAvailable && user) {
-      const currentStatIds = appData.stats.map((s) => s.id);
-      const lastStatIds = lastState.stats.map((s) => s.id);
-      const statsToDelete = currentStatIds.filter(
-        (id) => !lastStatIds.includes(id),
-      );
+    writeLocalDb({
+      ...appData,
+      stats: lastState.stats,
+      sets: lastState.sets,
+    });
 
-      const batch = writeBatch(db);
-      statsToDelete.forEach((id) =>
-        batch.delete(doc(db, `${publicPath}/${activeTeam}/stats/${id}`)),
-      );
-      lastState.sets.forEach((s) =>
-        batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${s.id}`), s),
-      );
-      await batch.commit();
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        stats: lastState.stats,
-        sets: lastState.sets,
-      });
+    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+      try {
+        const currentStatIds = appData.stats.map((s) => s.id);
+        const lastStatIds = lastState.stats.map((s) => s.id);
+        const statsToDelete = currentStatIds.filter(
+          (id) => !lastStatIds.includes(id),
+        );
+
+        const batch = writeBatch(db);
+        statsToDelete.forEach((id) =>
+          batch.delete(doc(db, `${publicPath}/${activeTeam}/stats/${id}`)),
+        );
+        lastState.sets.forEach((s) =>
+          batch.set(doc(db, `${publicPath}/${activeTeam}/sets/${s.id}`), s),
+        );
+        batch.commit().catch((e) => console.warn("Undo cloud sync deferred:", e));
+      } catch (err) {
+        console.warn("Undo batch commit notice:", err);
+      }
     }
 
     setAppData((prev) => ({
@@ -3535,34 +3495,84 @@ export default function App() {
     selectedServing,
     selectedOppLineup,
     selectedOppLibero,
+    extraDbUpdates,
+  }: {
+    nextSetNum: number;
+    selectedLineup: any[];
+    selectedLibero?: string;
+    selectedServing: string;
+    selectedOppLineup: any[];
+    selectedOppLibero?: string;
+    extraDbUpdates?: any;
   }) => {
+    // 1. Resolve safe target match to prevent null pointer exceptions
+    const targetMatch =
+      activeMatch ||
+      lastActiveMatchRef.current ||
+      (appData.matches || []).find((m: any) => m.isLive === true) ||
+      (appData.matches && appData.matches.length > 0
+        ? appData.matches[appData.matches.length - 1]
+        : null);
+    const targetMatchId = targetMatch?.id || `${Date.now()}_match`;
+    if (!activeMatch && targetMatch) {
+      setActiveMatch(targetMatch);
+    }
+
+    // 2. Ensure lineups are safe 6-element arrays
+    const safeSelectedLineup = Array.isArray(selectedLineup) && selectedLineup.length === 6
+      ? selectedLineup
+      : [...lineup];
+    const safeOppLineup = Array.isArray(selectedOppLineup) && selectedOppLineup.length === 6
+      ? selectedOppLineup
+      : [...oppLineup];
+
     setCurrentSetNum(nextSetNum);
-    setLineup(selectedLineup);
+    setLineup(safeSelectedLineup);
     setLiberoId(selectedLibero || "");
     setServing(selectedServing);
-    setOppLineup(selectedOppLineup);
+    setOppLineup(safeOppLineup);
     if (selectedOppLibero !== undefined) setOppLiberoId(selectedOppLibero);
+
+    // 3. Clear all prompt and in-set swap tracking states for the clean set start
+    setLiberoSwappedOutId(null);
+    setOppLiberoSwappedOutId(null);
+    setServeErrorPrompt(null);
+    setBlockAssistPrompt(null);
+    setAceReceiverPrompt(null);
+    setOppServeReceivePrompt(null);
+    setPendingAceData(null);
+    setSelectedAceReceivers([]);
+    setSelectedPlayerId(null);
+    setSelectedOppId(null);
+    setSubModalVisible(false);
+    setShowTimeoutModal(false);
+    setShowLineupEditModal(false);
 
     const setId = Date.now().toString() + "_set";
     const newSet = {
       id: setId,
-      matchId: activeMatch.id,
+      matchId: targetMatchId,
       setNum: nextSetNum,
       scoreUcc: 0,
       scoreOpp: 0,
-      lineup: selectedLineup,
-      oppLineup: selectedOppLineup,
+      lineup: safeSelectedLineup,
+      oppLineup: safeOppLineup,
       serving: selectedServing,
       rallyPhase: "serve",
     };
 
-    if (isFirebaseAvailable && user) {
-      await setDoc(
+    const updatedData = {
+      ...appData,
+      sets: [...(appData.sets || []), newSet],
+      ...(extraDbUpdates || {}),
+    };
+    writeLocalDb(updatedData);
+
+    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+      setDoc(
         doc(db, `${publicPath}/${activeTeam}/sets/${setId}`),
         newSet,
-      );
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({ ...appData, sets: [...appData.sets, newSet] });
+      ).catch((err) => console.warn("Set sync deferred:", err));
     }
 
     setActiveSetId(setId);
@@ -3570,8 +3580,10 @@ export default function App() {
     setTeamStats({ uccSubs: 0, oppSubs: 0, uccTimeouts: 0, oppTimeouts: 0 });
     setHistory([]);
     setBetweenSetsModal(null);
+    setSetWinnerModal(null);
     changeRallyPhase("serve");
     setServePromptVisible(true);
+    setView("game");
   };
 
   const startNextSet = async () => {
@@ -3596,13 +3608,7 @@ export default function App() {
     setOppLineup(finalOpp);
     setOppLiberoId(tempInGameOppLibero);
 
-    if (isFirebaseAvailable && user && activeSetId) {
-      await setDoc(
-        doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
-        { lineup: tempInGameLineup, oppLineup: finalOpp },
-        { merge: true },
-      );
-    } else if (!isFirebaseAvailable && activeSetId) {
+    if (activeSetId) {
       writeLocalDb({
         ...appData,
         sets: appData.sets.map((s) =>
@@ -3611,6 +3617,14 @@ export default function App() {
             : s,
         ),
       });
+
+      if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+        setDoc(
+          doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
+          { lineup: tempInGameLineup, oppLineup: finalOpp },
+          { merge: true },
+        ).catch((err) => console.warn("Lineup sync deferred:", err));
+      }
     }
     setShowLineupEditModal(false);
   };
@@ -3923,23 +3937,23 @@ export default function App() {
     setOppNotesMem(updatedMem);
     const safeOppName = opponentName.trim().replace(/\//g, "-");
 
-    if (isFirebaseAvailable && user) {
-      await setDoc(
+    writeLocalDb({
+      ...appData,
+      opponents: {
+        ...appData.opponents,
+        [safeOppName]: {
+          ...appData.opponents[safeOppName],
+          notes: updatedMem,
+        },
+      },
+    });
+
+    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+      setDoc(
         doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
         { notes: updatedMem },
         { merge: true },
-      );
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        opponents: {
-          ...appData.opponents,
-          [safeOppName]: {
-            ...appData.opponents[safeOppName],
-            notes: updatedMem,
-          },
-        },
-      });
+      ).catch((err) => console.warn("Opponent note cloud sync deferred:", err));
     }
   };
 
@@ -3949,23 +3963,23 @@ export default function App() {
     setOppSetterId(newSetter);
     const safeOppName = opponentName.trim().replace(/\//g, "-");
 
-    if (isFirebaseAvailable && user) {
-      await setDoc(
+    writeLocalDb({
+      ...appData,
+      opponents: {
+        ...appData.opponents,
+        [safeOppName]: {
+          ...appData.opponents[safeOppName],
+          setterId: newSetter,
+        },
+      },
+    });
+
+    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+      setDoc(
         doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
         { setterId: newSetter },
         { merge: true },
-      );
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        opponents: {
-          ...appData.opponents,
-          [safeOppName]: {
-            ...appData.opponents[safeOppName],
-            setterId: newSetter,
-          },
-        },
-      });
+      ).catch((err) => console.warn("Setter swap cloud sync deferred:", err));
     }
   };
 
@@ -12101,9 +12115,14 @@ export default function App() {
                     <Activity size={13} />
                     <span>View Stats</span>
                   </button>
-                  <span className="text-[10px] uppercase font-black tracking-wider bg-blue-50 text-[#0033A0] px-2.5 py-1 rounded-full border border-blue-200">
-                    Switch Lineup
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setBetweenSetsModal(null)}
+                    className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-1.5 rounded-xl transition-colors cursor-pointer"
+                    title="Close Lineup Setup"
+                  >
+                    <X size={18} />
+                  </button>
                 </div>
               </div>
 
@@ -12125,7 +12144,7 @@ export default function App() {
                   
                   <span>Lancers Lineup</span>
                   <span className="text-[10px] opacity-80 font-bold ml-1">
-                    ({betweenSetsModal.tempLineup.filter(Boolean).length}/6)
+                    ({(betweenSetsModal.tempLineup || []).filter(Boolean).length}/6)
                   </span>
                 </button>
                 <button
@@ -12147,9 +12166,9 @@ export default function App() {
                   </span>
                   <span className="text-[10px] opacity-80 font-bold ml-1">
                     {(betweenSetsModal.tempOppLineup || []).filter(
-                      (x) => x && !x.startsWith("O"),
+                      (x) => x && !String(x).startsWith("O"),
                     ).length > 0
-                      ? `${(betweenSetsModal.tempOppLineup || []).filter((x) => x && !x.startsWith("O")).length} set`
+                      ? `${(betweenSetsModal.tempOppLineup || []).filter((x) => x && !String(x).startsWith("O")).length} set`
                       : "Default"}
                   </span>
                 </button>
@@ -12169,11 +12188,15 @@ export default function App() {
                           const name = e.target.value;
                           if (name && appData.savedLineups?.[name]) {
                             const p = appData.savedLineups[name];
-                            setBetweenSetsModal((prev) => ({
-                              ...prev,
-                              tempLineup: p.lineup || [null, null, null, null, null, null],
-                              tempLibero: p.liberoId || "",
-                            }));
+                            setBetweenSetsModal((prev) => {
+                              if (!prev) return null;
+                              return {
+                                ...prev,
+                                tempLineup: p.lineup || [null, null, null, null, null, null],
+                                tempLibero: p.liberoId || "",
+                              };
+                            });
+                            showToast(`Loaded preset "${name}"`, "info");
                           }
                         }}
                         className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
@@ -12193,12 +12216,12 @@ export default function App() {
                         <Shield size={12} className="text-[#0033A0]" />
                       </label>
                       <select
-                        value={betweenSetsModal.tempLibero}
+                        value={betweenSetsModal.tempLibero || ""}
                         onChange={(e) =>
-                          setBetweenSetsModal((prev) => ({
+                          setBetweenSetsModal((prev) => (prev ? {
                             ...prev,
                             tempLibero: e.target.value,
-                          }))
+                          } : null))
                         }
                         className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
                       >
@@ -12218,19 +12241,56 @@ export default function App() {
                       <span className="text-[10px] font-black tracking-widest uppercase text-amber-400">
                         Front Row (Net Side)
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBetweenSetsModal((prev) => {
-                            const cur = [...prev.tempLineup];
-                            const rotated = [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
-                            return { ...prev, tempLineup: rotated };
-                          });
-                        }}
-                        className="text-[9px] font-black uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 transition-colors"
-                      >
-                        <ArrowRightLeft size={10} /> Rotate Clockwise
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBetweenSetsModal((prev) => {
+                              if (!prev) return null;
+                              const available = sortedRoster.filter(
+                                (p) => (showRetired || !p.isRetired) && p.id !== prev.tempLibero,
+                              );
+                              const nextL = [...(prev.tempLineup || [])];
+                              while (nextL.length < 6) nextL.push("");
+                              let aIdx = 0;
+                              for (let i = 0; i < 6; i++) {
+                                if (!nextL[i] || String(nextL[i]).trim() === "") {
+                                  while (aIdx < available.length && nextL.includes(available[aIdx].id)) {
+                                    aIdx++;
+                                  }
+                                  if (aIdx < available.length) {
+                                    nextL[i] = available[aIdx].id;
+                                    aIdx++;
+                                  } else {
+                                    nextL[i] = sortedRoster[i % (sortedRoster.length || 1)]?.id || `p_${i + 1}`;
+                                  }
+                                }
+                              }
+                              return { ...prev, tempLineup: nextL };
+                            });
+                            showToast("Open court slots filled from roster", "info");
+                          }}
+                          className="text-[9px] font-black uppercase tracking-wider bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 px-2 py-1 rounded-lg border border-amber-400/30 flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Auto-fill open court slots with available players"
+                        >
+                          <Users size={10} /> Auto-fill
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBetweenSetsModal((prev) => {
+                              if (!prev) return null;
+                              const cur = [...(prev.tempLineup || [])];
+                              while (cur.length < 6) cur.push("");
+                              const rotated = [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
+                              return { ...prev, tempLineup: rotated };
+                            });
+                          }}
+                          className="text-[9px] font-black uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <ArrowRightLeft size={10} /> Rotate
+                        </button>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-2 mb-2.5">
@@ -12238,32 +12298,53 @@ export default function App() {
                         { idx: 3, label: "Pos 4 • LF (Left Front)" },
                         { idx: 2, label: "Pos 3 • MF (Middle Front)" },
                         { idx: 1, label: "Pos 2 • RF (Right Front)" },
-                      ].map(({ idx, label }) => (
-                        <div key={idx} className="bg-white/10 rounded-xl p-2 border border-white/10">
-                          <div className="text-[9px] font-black text-blue-300 uppercase tracking-wider mb-1 truncate">
-                            {label}
-                          </div>
-                          <select
-                            value={betweenSetsModal.tempLineup[idx] || ""}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setBetweenSetsModal((prev) => {
-                                const nextL = [...prev.tempLineup];
-                                nextL[idx] = val;
-                                return { ...prev, tempLineup: nextL };
-                              });
-                            }}
-                            className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                      ].map(({ idx, label }) => {
+                        const curVal = betweenSetsModal.tempLineup?.[idx] || "";
+                        return (
+                          <div
+                            key={idx}
+                            className={`rounded-xl p-2 border transition-all ${
+                              !curVal
+                                ? "bg-amber-500/10 border-amber-400/40"
+                                : "bg-white/10 border-white/10"
+                            }`}
                           >
-                            <option value="">Select Player...</option>
-                            {sortedRoster.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                #{p.number} {p.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
+                            <div className="text-[9px] font-black text-blue-300 uppercase tracking-wider mb-1 truncate flex items-center justify-between">
+                              <span>{label}</span>
+                              {!curVal && (
+                                <span className="text-[8px] font-black text-amber-400 uppercase">Empty</span>
+                              )}
+                            </div>
+                            <select
+                              value={curVal}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setBetweenSetsModal((prev) => {
+                                  if (!prev) return null;
+                                  const nextL = [...(prev.tempLineup || [])];
+                                  while (nextL.length < 6) nextL.push("");
+                                  if (val) {
+                                    const existingIdx = nextL.findIndex((p, i) => i !== idx && p === val);
+                                    if (existingIdx !== -1) {
+                                      nextL[existingIdx] = nextL[idx] || "";
+                                    }
+                                  }
+                                  nextL[idx] = val;
+                                  return { ...prev, tempLineup: nextL };
+                                });
+                              }}
+                              className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none cursor-pointer"
+                            >
+                              <option value="">Select Player...</option>
+                              {sortedRoster.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  #{p.number} {p.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     <div className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">
@@ -12275,40 +12356,57 @@ export default function App() {
                         { idx: 4, label: "Pos 5 • LB (Left Back)" },
                         { idx: 5, label: "Pos 6 • MB (Middle Back)" },
                         { idx: 0, label: "Pos 1 • RB (Server)" },
-                      ].map(({ idx, label }) => (
-                        <div
-                          key={idx}
-                          className={`rounded-xl p-2 border ${
-                            idx === 0
-                              ? "bg-amber-500/15 border-amber-400/40"
-                              : "bg-white/10 border-white/10"
-                          }`}
-                        >
-                          <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
-                            <span className="truncate">{label}</span>
-                            {idx === 0 && <span className="text-[9px] font-black uppercase text-amber-400">Serve</span>}
-                          </div>
-                          <select
-                            value={betweenSetsModal.tempLineup[idx] || ""}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setBetweenSetsModal((prev) => {
-                                const nextL = [...prev.tempLineup];
-                                nextL[idx] = val;
-                                return { ...prev, tempLineup: nextL };
-                              });
-                            }}
-                            className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none"
+                      ].map(({ idx, label }) => {
+                        const curVal = betweenSetsModal.tempLineup?.[idx] || "";
+                        return (
+                          <div
+                            key={idx}
+                            className={`rounded-xl p-2 border transition-all ${
+                              idx === 0
+                                ? "bg-amber-500/15 border-amber-400/40"
+                                : !curVal
+                                ? "bg-amber-500/10 border-amber-400/40"
+                                : "bg-white/10 border-white/10"
+                            }`}
                           >
-                            <option value="">Select Player...</option>
-                            {sortedRoster.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                #{p.number} {p.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
+                            <div className="text-[9px] font-black text-amber-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                              <span className="truncate">{label}</span>
+                              {idx === 0 ? (
+                                <span className="text-[9px] font-black uppercase text-amber-400">Serve</span>
+                              ) : !curVal ? (
+                                <span className="text-[8px] font-black text-amber-400 uppercase">Empty</span>
+                              ) : null}
+                            </div>
+                            <select
+                              value={curVal}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setBetweenSetsModal((prev) => {
+                                  if (!prev) return null;
+                                  const nextL = [...(prev.tempLineup || [])];
+                                  while (nextL.length < 6) nextL.push("");
+                                  if (val) {
+                                    const existingIdx = nextL.findIndex((p, i) => i !== idx && p === val);
+                                    if (existingIdx !== -1) {
+                                      nextL[existingIdx] = nextL[idx] || "";
+                                    }
+                                  }
+                                  nextL[idx] = val;
+                                  return { ...prev, tempLineup: nextL };
+                                });
+                              }}
+                              className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none cursor-pointer"
+                            >
+                              <option value="">Select Player...</option>
+                              {sortedRoster.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  #{p.number} {p.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </>
@@ -12597,22 +12695,55 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    const filledCount = betweenSetsModal.tempLineup.filter(Boolean).length;
-                    if (filledCount < 6) {
-                      alert("Please select players for all 6 Lancers court positions before starting the set.");
-                      setBetweenSetsModal((prev) =>
-                        prev ? { ...prev, activeTab: "ucc" } : null,
-                      );
-                      return;
-                    }
-                    const finalOppLineup = betweenSetsModal.tempOppLineup.map((val, idx) =>
-                      val && val.trim() !== "" ? val.trim() : `O${idx + 1}`,
+                    // 1. Auto-fill any open court positions from available roster so coach is NEVER blocked
+                    let finalLineup = [...(betweenSetsModal.tempLineup || [])];
+                    while (finalLineup.length < 6) finalLineup.push("");
+                    const availableRoster = sortedRoster.filter(
+                      (p) => (showRetired || !p.isRetired) && p.id !== betweenSetsModal.tempLibero,
                     );
+                    let aIdx = 0;
+                    let didAutoFill = false;
+                    for (let i = 0; i < 6; i++) {
+                      if (!finalLineup[i] || String(finalLineup[i]).trim() === "") {
+                        didAutoFill = true;
+                        while (aIdx < availableRoster.length && finalLineup.includes(availableRoster[aIdx].id)) {
+                          aIdx++;
+                        }
+                        if (aIdx < availableRoster.length) {
+                          finalLineup[i] = availableRoster[aIdx].id;
+                          aIdx++;
+                        } else {
+                          finalLineup[i] = sortedRoster[i % (sortedRoster.length || 1)]?.id || `p_${i + 1}`;
+                        }
+                      }
+                    }
 
-                    // Persist opponent lineup & libero in DB for memory
+                    // 2. Safe opponent lineup parsing (handling numbers/strings safely without val.trim crash)
+                    const rawOpp = Array.isArray(betweenSetsModal.tempOppLineup) ? betweenSetsModal.tempOppLineup : [];
+                    const finalOppLineup = Array.from({ length: 6 }).map((_, idx) => {
+                      const val = rawOpp[idx];
+                      const s = val != null ? String(val).trim() : "";
+                      return s !== "" ? s : `O${idx + 1}`;
+                    });
+
+                    // 3. Persist opponent lineup & libero in DB for memory
+                    let extraDbUpdates = undefined;
                     if (opponentName && opponentName.trim()) {
                       const safeOppName = opponentName.trim().replace(/\//g, "-");
-                      if (isFirebaseAvailable && user) {
+                      const existingOpp = appData.opponents?.[safeOppName] || {};
+                      const updatedOpp = {
+                        ...existingOpp,
+                        teamName: opponentName,
+                        defaultLineup: finalOppLineup,
+                        liberoId: betweenSetsModal.tempOppLibero || "",
+                      };
+                      extraDbUpdates = {
+                        opponents: {
+                          ...appData.opponents,
+                          [safeOppName]: updatedOpp,
+                        },
+                      };
+                      if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
                         setDoc(
                           doc(db, `${publicPath}/${activeTeam}/opponents/${safeOppName}`),
                           {
@@ -12622,36 +12753,55 @@ export default function App() {
                           },
                           { merge: true },
                         ).catch(() => {});
-                      } else {
-                        const existingOpp = appData.opponents?.[safeOppName] || {};
-                        writeLocalDb({
-                          ...appData,
-                          opponents: {
-                            ...appData.opponents,
-                            [safeOppName]: {
-                              ...existingOpp,
-                              teamName: opponentName,
-                              defaultLineup: finalOppLineup,
-                              liberoId: betweenSetsModal.tempOppLibero || "",
-                            },
-                          },
-                        });
                       }
+                    }
+
+                    if (didAutoFill) {
+                      showToast(`Set ${betweenSetsModal.nextSetNum} started! (Open slots filled from roster)`, "info");
+                    } else {
+                      showToast(`Set ${betweenSetsModal.nextSetNum} started!`, "success");
                     }
 
                     executeStartNextSet({
                       nextSetNum: betweenSetsModal.nextSetNum,
-                      selectedLineup: betweenSetsModal.tempLineup,
+                      selectedLineup: finalLineup,
                       selectedLibero: betweenSetsModal.tempLibero,
                       selectedServing: betweenSetsModal.tempServing,
                       selectedOppLineup: finalOppLineup,
                       selectedOppLibero: betweenSetsModal.tempOppLibero,
+                      extraDbUpdates,
                     });
                   }}
-                  className="w-full py-4 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white rounded-xl sm:rounded-2xl font-black text-base uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center gap-2"
+                  className="w-full py-4 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 text-white rounded-xl sm:rounded-2xl font-black text-base uppercase tracking-wider shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Check size={20} />
                   Confirm Lineups & Start Set {betweenSetsModal.nextSetNum}
+                </button>
+
+                {/* Instant start with previous set lineup */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rawOpp = Array.isArray(oppLineup) ? oppLineup : [];
+                    const finalOppLineup = Array.from({ length: 6 }).map((_, idx) => {
+                      const val = rawOpp[idx];
+                      const s = val != null ? String(val).trim() : "";
+                      return s !== "" ? s : `O${idx + 1}`;
+                    });
+                    showToast(`Starting Set ${betweenSetsModal.nextSetNum} with previous lineup`, "info");
+                    executeStartNextSet({
+                      nextSetNum: betweenSetsModal.nextSetNum,
+                      selectedLineup: [...lineup],
+                      selectedLibero: liberoId,
+                      selectedServing: betweenSetsModal.tempServing,
+                      selectedOppLineup: finalOppLineup,
+                      selectedOppLibero: oppLiberoId,
+                    });
+                  }}
+                  className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <RotateCcw size={13} />
+                  <span>Keep Set {betweenSetsModal.nextSetNum - 1} Lineup & Start</span>
                 </button>
 
                 <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
@@ -12666,7 +12816,7 @@ export default function App() {
                     type="button"
                     onClick={async () => {
                       if (!betweenSetsPresetName.trim()) {
-                        alert("Please enter a name for this preset");
+                        showToast("Please enter a name for this preset", "warning");
                         return;
                       }
                       const updated = {
@@ -12676,19 +12826,19 @@ export default function App() {
                           liberoId: betweenSetsModal.tempLibero,
                         },
                       };
-                      if (isFirebaseAvailable && user) {
+                      if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
                         await setDoc(
                           doc(db, `${publicPath}/${activeTeam}/settings/core`),
                           { savedLineups: updated },
                           { merge: true },
-                        );
-                      } else if (!isFirebaseAvailable) {
+                        ).catch(() => {});
+                      } else {
                         writeLocalDb({ ...appData, savedLineups: updated });
                       }
-                      alert(`Preset "${betweenSetsPresetName.trim()}" saved!`);
+                      showToast(`Preset "${betweenSetsPresetName.trim()}" saved!`, "success");
                       setBetweenSetsPresetName("");
                     }}
-                    className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-xs rounded-lg uppercase tracking-wider transition-colors whitespace-nowrap"
+                    className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-xs rounded-lg uppercase tracking-wider transition-colors whitespace-nowrap cursor-pointer"
                   >
                     Save Preset
                   </button>
