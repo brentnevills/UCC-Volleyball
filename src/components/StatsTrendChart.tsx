@@ -122,6 +122,16 @@ interface RallyPoint {
   playerNumber?: string | number;
   runningKillPct: number;
   runningHittingEff: number;
+  runningAcePct: number;
+  runningServeErrorPct: number;
+  runningPassAvg: number;
+  runningSideoutPct: number;
+  runningEarnedPoints: number;
+  runningUnforcedErrors: number;
+  runningKills: number;
+  runningAttacks: number;
+  runningAces: number;
+  runningServes: number;
   isRunLead?: boolean;
   runCount?: number;
 }
@@ -179,6 +189,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
   // Hovered Rally Tooltip State
   const [hoveredPoint, setHoveredPoint] = useState<any | null>(null);
+  const [hoveredDiscretePoint, setHoveredDiscretePoint] = useState<any | null>(null);
 
   // Group Matches into League Days and Tournaments
   const tournamentGroups = useMemo<TournamentLeagueGroup[]>(() => {
@@ -307,9 +318,14 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     return map;
   }, [roster]);
 
-  // Helper: Reconstruct Rally-by-Rally Points for a Set
+  // Helper: Reconstruct Rally-by-Rally Points for a Set with Cumulative Metrics
   const buildSetRallies = (setObj: any, matchOpponentName: string): RallyPoint[] => {
-    const setStats = stats.filter((st) => st.setId === setObj.id || (st.matchId === setObj.matchId && st.setNum === setObj.setNum));
+    let setStats = stats.filter(
+      (st) => st.setId === setObj.id || (st.matchId === setObj.matchId && st.setNum === setObj.setNum)
+    );
+    if (selectedPlayerId !== "team") {
+      setStats = setStats.filter((st) => String(st.playerId) === String(selectedPlayerId));
+    }
     const targetUcc = Number(setObj.scoreUcc) || 0;
     const targetOpp = Number(setObj.scoreOpp) || 0;
 
@@ -318,16 +334,69 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       let cumulativeAttacks = 0;
       let cumulativeKills = 0;
       let cumulativeAttackErrors = 0;
+      let cumulativeServes = 0;
+      let cumulativeAces = 0;
+      let cumulativeServeErrors = 0;
+      let cumulativePassSum = 0;
+      let cumulativePassCount = 0;
+      let cumulativeStuffBlocks = 0;
+      let cumulativeDigs = 0;
+
+      const sortedSetStats = [...setStats].sort((a, b) => {
+        const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return tA - tB;
+      });
+      let statCursor = 0;
 
       return setObj.pointHistory.map((pt: any, idx: number) => {
         const u = Number(pt.scoreUcc) || 0;
         const o = Number(pt.scoreOpp) || 0;
         const scoringTeam = (pt.team === "ucc" ? "ucc" : "opp") as "ucc" | "opp";
 
-        // Try to match a stat logged near this point
         const ptTime = pt.timestamp ? new Date(pt.timestamp).getTime() : 0;
-        const nearbyStat = setStats.find((st) => {
-          if (!st.timestamp) return false;
+
+        // Absorb all stats logged up to this point's timestamp
+        while (statCursor < sortedSetStats.length) {
+          const st = sortedSetStats[statCursor];
+          const stTime = st.timestamp ? new Date(st.timestamp).getTime() : 0;
+          if (ptTime > 0 && stTime > 0 && stTime > ptTime + 2500) {
+            break;
+          }
+          statCursor++;
+
+          const cat = (st.category || "").toLowerCase();
+          const met = (st.metric || "").toLowerCase();
+          const val = Number(st.value) || 1;
+
+          if (cat === "attack") {
+            cumulativeAttacks += val;
+            if (met.includes("kill")) cumulativeKills += val;
+            else if (met.includes("error")) cumulativeAttackErrors += val;
+          } else if (cat === "serve") {
+            cumulativeServes += val;
+            if (met.includes("ace")) cumulativeAces += val;
+            else if (met.includes("error")) cumulativeServeErrors += val;
+          } else if (cat.includes("pass") || cat.includes("receive")) {
+            let sc = 2;
+            if (met === "3" || met.includes("perfect")) sc = 3;
+            else if (met === "2" || met.includes("good")) sc = 2;
+            else if (met === "1" || met.includes("poor")) sc = 1;
+            else if (met === "0" || met.includes("error")) sc = 0;
+            cumulativePassSum += sc * val;
+            cumulativePassCount += val;
+          } else if (cat === "block") {
+            if (met.includes("kill") || met.includes("solo") || met.includes("point")) {
+              cumulativeStuffBlocks += val;
+            }
+          } else if (cat === "dig") {
+            cumulativeDigs += val;
+          }
+        }
+
+        // Try to match a stat logged near this point for description
+        const nearbyStat = sortedSetStats.find((st) => {
+          if (!st.timestamp || !ptTime) return false;
           const stTime = new Date(st.timestamp).getTime();
           return Math.abs(stTime - ptTime) < 3000;
         });
@@ -347,13 +416,10 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           }
 
           if (cat === "attack") {
-            cumulativeAttacks++;
             if (met.includes("kill")) {
-              cumulativeKills++;
               eventType = "kill";
               eventDescription = `Kill by #${pNum} ${pName}`;
             } else if (met.includes("error")) {
-              cumulativeAttackErrors++;
               eventType = "error";
               eventDescription = `Attack Error by #${pNum} ${pName}`;
             }
@@ -371,6 +437,12 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
         const runKillPct = cumulativeAttacks > 0 ? cumulativeKills / cumulativeAttacks : 0;
         const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors) / cumulativeAttacks : 0;
+        const runAcePct = cumulativeServes > 0 ? cumulativeAces / cumulativeServes : 0;
+        const runServeErrorPct = cumulativeServes > 0 ? cumulativeServeErrors / cumulativeServes : 0;
+        const runPassAvg = cumulativePassCount > 0 ? cumulativePassSum / cumulativePassCount : 0;
+        const runSideoutPct = u + o > 0 ? u / (u + o) : 0;
+        const runEarnedPoints = cumulativeKills + cumulativeAces + cumulativeStuffBlocks;
+        const runUnforcedErrors = cumulativeAttackErrors + cumulativeServeErrors;
 
         return {
           rallyNum: idx + 1,
@@ -387,6 +459,16 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           playerNumber: pNum,
           runningKillPct: runKillPct,
           runningHittingEff: runEff,
+          runningAcePct: runAcePct,
+          runningServeErrorPct: runServeErrorPct,
+          runningPassAvg: runPassAvg,
+          runningSideoutPct: runSideoutPct,
+          runningEarnedPoints: runEarnedPoints,
+          runningUnforcedErrors: runUnforcedErrors,
+          runningKills: cumulativeKills,
+          runningAttacks: cumulativeAttacks,
+          runningAces: cumulativeAces,
+          runningServes: cumulativeServes,
         };
       });
     }
@@ -404,11 +486,19 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     let cumulativeAttacks = 0;
     let cumulativeKills = 0;
     let cumulativeAttackErrors = 0;
+    let cumulativeServes = 0;
+    let cumulativeAces = 0;
+    let cumulativeServeErrors = 0;
+    let cumulativePassSum = 0;
+    let cumulativePassCount = 0;
+    let cumulativeStuffBlocks = 0;
+    let cumulativeDigs = 0;
 
     // First, process stats that trigger points
     sortedStats.forEach((st) => {
       const cat = (st.category || "").toLowerCase();
       const met = (st.metric || "").toLowerCase();
+      const val = Number(st.value) || 1;
       const pInfo = playerMap.get(String(st.playerId));
       const pName = pInfo?.name || "";
       const pNum = pInfo?.number || "";
@@ -418,34 +508,48 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       let desc = "";
 
       if (cat === "attack") {
-        cumulativeAttacks++;
+        cumulativeAttacks += val;
         if (met.includes("kill")) {
-          cumulativeKills++;
+          cumulativeKills += val;
           pointAwardedTo = "ucc";
           eventType = "kill";
           desc = `Kill by #${pNum} ${pName}`;
         } else if (met.includes("error")) {
-          cumulativeAttackErrors++;
+          cumulativeAttackErrors += val;
           pointAwardedTo = "opp";
           eventType = "error";
           desc = `Attack Error by #${pNum} ${pName}`;
         }
       } else if (cat === "serve") {
+        cumulativeServes += val;
         if (met.includes("ace")) {
+          cumulativeAces += val;
           pointAwardedTo = "ucc";
           eventType = "ace";
           desc = `Service Ace by #${pNum} ${pName}`;
         } else if (met.includes("error")) {
+          cumulativeServeErrors += val;
           pointAwardedTo = "opp";
           eventType = "error";
           desc = `Service Error by #${pNum} ${pName}`;
         }
       } else if (cat === "block") {
         if (met.includes("kill") || met.includes("solo") || met.includes("point")) {
+          cumulativeStuffBlocks += val;
           pointAwardedTo = "ucc";
           eventType = "block";
           desc = `Block Kill by #${pNum} ${pName}`;
         }
+      } else if (cat.includes("pass") || cat.includes("receive")) {
+        let sc = 2;
+        if (met === "3" || met.includes("perfect")) sc = 3;
+        else if (met === "2" || met.includes("good")) sc = 2;
+        else if (met === "1" || met.includes("poor")) sc = 1;
+        else if (met === "0" || met.includes("error")) sc = 0;
+        cumulativePassSum += sc * val;
+        cumulativePassCount += val;
+      } else if (cat === "dig") {
+        cumulativeDigs += val;
       }
 
       if (pointAwardedTo) {
@@ -455,6 +559,12 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
         const runKillPct = cumulativeAttacks > 0 ? cumulativeKills / cumulativeAttacks : 0;
         const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors) / cumulativeAttacks : 0;
+        const runAcePct = cumulativeServes > 0 ? cumulativeAces / cumulativeServes : 0;
+        const runServeErrorPct = cumulativeServes > 0 ? cumulativeServeErrors / cumulativeServes : 0;
+        const runPassAvg = cumulativePassCount > 0 ? cumulativePassSum / cumulativePassCount : 0;
+        const runSideoutPct = curUcc + curOpp > 0 ? curUcc / (curUcc + curOpp) : 0;
+        const runEarnedPoints = cumulativeKills + cumulativeAces + cumulativeStuffBlocks;
+        const runUnforcedErrors = cumulativeAttackErrors + cumulativeServeErrors;
 
         rallyList.push({
           rallyNum: rallyList.length + 1,
@@ -471,6 +581,16 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           playerNumber: pNum,
           runningKillPct: runKillPct,
           runningHittingEff: runEff,
+          runningAcePct: runAcePct,
+          runningServeErrorPct: runServeErrorPct,
+          runningPassAvg: runPassAvg,
+          runningSideoutPct: runSideoutPct,
+          runningEarnedPoints: runEarnedPoints,
+          runningUnforcedErrors: runUnforcedErrors,
+          runningKills: cumulativeKills,
+          runningAttacks: cumulativeAttacks,
+          runningAces: cumulativeAces,
+          runningServes: cumulativeServes,
         });
       }
     });
@@ -492,6 +612,15 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       const scoringTeam = giveUcc ? "ucc" : "opp";
       const desc = giveUcc ? `${teamName} Point (Rally)` : `${matchOpponentName} Point (Rally)`;
 
+      const runKillPct = cumulativeAttacks > 0 ? cumulativeKills / cumulativeAttacks : 0.35;
+      const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors) / cumulativeAttacks : 0.22;
+      const runAcePct = cumulativeServes > 0 ? cumulativeAces / cumulativeServes : 0.08;
+      const runServeErrorPct = cumulativeServes > 0 ? cumulativeServeErrors / cumulativeServes : 0.06;
+      const runPassAvg = cumulativePassCount > 0 ? cumulativePassSum / cumulativePassCount : 2.15;
+      const runSideoutPct = curUcc + curOpp > 0 ? curUcc / (curUcc + curOpp) : 0.55;
+      const runEarnedPoints = cumulativeKills + cumulativeAces + cumulativeStuffBlocks;
+      const runUnforcedErrors = cumulativeAttackErrors + cumulativeServeErrors;
+
       rallyList.push({
         rallyNum: rallyList.length + 1,
         setNum: setObj.setNum || 1,
@@ -503,8 +632,18 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         pointDiff: curUcc - curOpp,
         eventDescription: desc,
         eventType: "point",
-        runningKillPct: cumulativeAttacks > 0 ? cumulativeKills / cumulativeAttacks : 0.35,
-        runningHittingEff: cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors) / cumulativeAttacks : 0.22,
+        runningKillPct: runKillPct,
+        runningHittingEff: runEff,
+        runningAcePct: runAcePct,
+        runningServeErrorPct: runServeErrorPct,
+        runningPassAvg: runPassAvg,
+        runningSideoutPct: runSideoutPct,
+        runningEarnedPoints: runEarnedPoints,
+        runningUnforcedErrors: runUnforcedErrors,
+        runningKills: cumulativeKills,
+        runningAttacks: cumulativeAttacks,
+        runningAces: cumulativeAces,
+        runningServes: cumulativeServes,
       });
     }
 
@@ -673,12 +812,56 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       });
     }
 
+    if (granularity === "by_rally") {
+      return rallyProgressionData.map((r, idx) => ({
+        id: `rally-${r.matchId}-${r.setNum}-${r.rallyNum}-${idx}`,
+        label: `P${r.rallyNum}`,
+        subLabel: `${r.scoreUcc}-${r.scoreOpp}`,
+        stats: [],
+        scoreUcc: r.scoreUcc,
+        scoreOpp: r.scoreOpp,
+        diff: r.pointDiff,
+        eventDescription: r.eventDescription,
+        precomputedMetrics: {
+          killPct: r.runningKillPct,
+          hittingEff: r.runningHittingEff,
+          acePct: r.runningAcePct,
+          serveErrorPct: r.runningServeErrorPct,
+          passAvg: r.runningPassAvg,
+          sideoutPct: r.runningSideoutPct,
+        },
+        counts: {
+          kills: r.runningKills,
+          attacks: r.runningAttacks,
+          aces: r.runningAces,
+          serves: r.runningServes,
+          pointsScored: r.scoreUcc,
+          pointsAllowed: r.scoreOpp,
+        },
+      }));
+    }
+
     return [];
-  }, [granularity, scope, matches, sets, stats, activeGroup, targetMatchSets, selectedPlayerId]);
+  }, [granularity, scope, matches, sets, stats, activeGroup, targetMatchSets, selectedPlayerId, rallyProgressionData]);
 
   // Compute Metrics for Discrete Series
   const discreteSeriesData = useMemo(() => {
-    return discretePoints.map((pt) => {
+    return discretePoints.map((pt: any) => {
+      if (pt.precomputedMetrics) {
+        return {
+          ...pt,
+          values: pt.precomputedMetrics,
+          counts: pt.counts || {
+            kills: 0,
+            attacks: 0,
+            aces: 0,
+            serves: 0,
+            pointsScored: pt.scoreUcc,
+            pointsAllowed: pt.scoreOpp,
+          },
+        };
+      }
+
       let kills = 0;
       let attackErrors = 0;
       let totalAttacks = 0;
@@ -1329,7 +1512,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
                 {/* Hover Tooltip Popup */}
                 {hoveredPoint && (
-                  <div className="absolute top-2 right-4 bg-slate-900/95 text-white p-3 rounded-xl shadow-xl text-xs backdrop-blur-sm border border-slate-700 pointer-events-none z-20 min-w-[200px]">
+                  <div className="absolute top-2 right-4 bg-slate-900/95 text-white p-3 rounded-xl shadow-xl text-xs backdrop-blur-sm border border-slate-700 pointer-events-none z-20 min-w-[220px]">
                     <div className="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
                       <span className="font-black text-amber-400">Point #{hoveredPoint.rallyNum}</span>
                       <span className="text-[10px] text-slate-300">Set {hoveredPoint.setNum}</span>
@@ -1342,8 +1525,55 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                     <div className="text-[11px] font-bold text-slate-200 mb-1">
                       {hoveredPoint.scoringTeam === "ucc" ? `Point to ${teamName}` : `Point to ${hoveredPoint.matchOpponent}`}
                     </div>
-                    <div className="text-[10px] text-slate-300">
-                      {hoveredPoint.eventDescription}
+                    {hoveredPoint.eventDescription && (
+                      <div className="text-[10px] text-amber-300/90 font-mono mb-2 bg-slate-800/80 px-2 py-1 rounded">
+                        {hoveredPoint.eventDescription}
+                      </div>
+                    )}
+
+                    {/* Point-by-Point Key Stat Metrics Log */}
+                    <div className="border-t border-slate-800 pt-1.5 mt-1 space-y-1 text-[10px]">
+                      <div className="text-[9px] font-black uppercase text-amber-400/90 tracking-wider">
+                        Evolved Metrics at Pt #{hoveredPoint.rallyNum}:
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Kill %:</span>
+                          <span className="font-mono font-bold text-emerald-400">
+                            {(hoveredPoint.runningKillPct * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Hitting Eff:</span>
+                          <span className="font-mono font-bold text-blue-400">
+                            {hoveredPoint.runningHittingEff.toFixed(3)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Passing:</span>
+                          <span className="font-mono font-bold text-purple-400">
+                            {hoveredPoint.runningPassAvg > 0 ? `${hoveredPoint.runningPassAvg.toFixed(2)}/3` : "—"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Ace %:</span>
+                          <span className="font-mono font-bold text-amber-400">
+                            {(hoveredPoint.runningAcePct * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Srv Err%:</span>
+                          <span className="font-mono font-bold text-rose-400">
+                            {(hoveredPoint.runningServeErrorPct * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Sideout%:</span>
+                          <span className="font-mono font-bold text-indigo-400">
+                            {(hoveredPoint.runningSideoutPct * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1571,28 +1801,69 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
                 {/* Hover Tooltip Popup */}
                 {hoveredPoint && (
-                  <div className="absolute top-2 right-4 bg-slate-900/95 text-white p-3 rounded-xl shadow-xl text-xs backdrop-blur-sm border border-slate-700 pointer-events-none z-20 min-w-[200px]">
+                  <div className="absolute top-2 right-4 bg-slate-900/95 text-white p-3 rounded-xl shadow-xl text-xs backdrop-blur-sm border border-slate-700 pointer-events-none z-20 min-w-[220px]">
                     <div className="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
                       <span className="font-black text-amber-400">Rally #{hoveredPoint.rallyNum}</span>
                       <span className="text-[10px] text-slate-300">Set {hoveredPoint.setNum}</span>
                     </div>
                     <div className="flex items-center justify-between text-sm font-black mb-1">
-                      <span>{teamName}: {hoveredPoint.scoreUcc}</span>
+                      <span className="text-emerald-400">{teamName}: {hoveredPoint.scoreUcc}</span>
                       <span className="text-slate-400">vs</span>
-                      <span>{hoveredPoint.matchOpponent}: {hoveredPoint.scoreOpp}</span>
+                      <span className="text-rose-400">{hoveredPoint.matchOpponent}: {hoveredPoint.scoreOpp}</span>
                     </div>
-                    <div className="text-[11px] font-bold text-emerald-400 mb-1">
+                    <div className="text-[11px] font-bold text-slate-200 mb-1">
                       {hoveredPoint.scoringTeam === "ucc" ? `Point ${teamName}` : `Point ${hoveredPoint.matchOpponent}`}
                     </div>
-                    <div className="text-[10px] text-slate-300">
-                      {hoveredPoint.eventDescription}
-                    </div>
-                    {hoveredPoint.runningKillPct > 0 && (
-                      <div className="mt-1.5 pt-1.5 border-t border-slate-800 text-[9px] text-slate-400 flex items-center justify-between">
-                        <span>Running Kill%: {(hoveredPoint.runningKillPct * 100).toFixed(1)}%</span>
-                        <span>Eff: {hoveredPoint.runningHittingEff.toFixed(3)}</span>
+                    {hoveredPoint.eventDescription && (
+                      <div className="text-[10px] text-amber-300/90 font-mono mb-2 bg-slate-800/80 px-2 py-1 rounded">
+                        {hoveredPoint.eventDescription}
                       </div>
                     )}
+
+                    {/* Point-by-Point Key Stat Metrics Log */}
+                    <div className="border-t border-slate-800 pt-1.5 mt-1 space-y-1 text-[10px]">
+                      <div className="text-[9px] font-black uppercase text-amber-400/90 tracking-wider">
+                        Evolved Metrics at Rally #{hoveredPoint.rallyNum}:
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Kill %:</span>
+                          <span className="font-mono font-bold text-emerald-400">
+                            {(hoveredPoint.runningKillPct * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Hitting Eff:</span>
+                          <span className="font-mono font-bold text-blue-400">
+                            {hoveredPoint.runningHittingEff.toFixed(3)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Passing:</span>
+                          <span className="font-mono font-bold text-purple-400">
+                            {hoveredPoint.runningPassAvg > 0 ? `${hoveredPoint.runningPassAvg.toFixed(2)}/3` : "—"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Ace %:</span>
+                          <span className="font-mono font-bold text-amber-400">
+                            {(hoveredPoint.runningAcePct * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Srv Err%:</span>
+                          <span className="font-mono font-bold text-rose-400">
+                            {(hoveredPoint.runningServeErrorPct * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Sideout%:</span>
+                          <span className="font-mono font-bold text-indigo-400">
+                            {(hoveredPoint.runningSideoutPct * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1673,39 +1944,69 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                           strokeLinecap="round"
                           strokeLinejoin="round"
                         />
-                        {points.map((p, pIdx) => (
-                          <g key={pIdx}>
-                            <circle
-                              cx={p.x}
-                              cy={p.y}
-                              r="5"
-                              fill="#ffffff"
-                              stroke={metricConf.stroke}
-                              strokeWidth="2.5"
-                              className="hover:scale-125 transition-transform"
-                            />
-                            <text
-                              x={p.x}
-                              y={p.y - 10}
-                              fill="#1e293b"
-                              fontSize="10"
-                              fontWeight="bold"
-                              textAnchor="middle"
+                        {points.map((p, pIdx) => {
+                          const isHovered =
+                            hoveredDiscretePoint?.pointId === dataItems[pIdx]?.id &&
+                            hoveredDiscretePoint?.metricKey === metricKey;
+                          const showText = dataItems.length <= 14 || isHovered;
+                          return (
+                            <g
+                              key={pIdx}
+                              onMouseEnter={() =>
+                                setHoveredDiscretePoint({
+                                  pointId: dataItems[pIdx]?.id,
+                                  label: dataItems[pIdx]?.label,
+                                  subLabel: dataItems[pIdx]?.subLabel,
+                                  metricKey,
+                                  metricLabel: metricConf.label,
+                                  formatVal: metricConf.format(p.rawVal),
+                                  rawVal: p.rawVal,
+                                  eventDescription: dataItems[pIdx]?.eventDescription,
+                                  allValues: dataItems[pIdx]?.values,
+                                  counts: dataItems[pIdx]?.counts,
+                                })
+                              }
+                              onMouseLeave={() => setHoveredDiscretePoint(null)}
+                              className="cursor-pointer"
                             >
-                              {metricConf.format(p.rawVal)}
-                            </text>
-                          </g>
-                        ))}
+                              <circle
+                                cx={p.x}
+                                cy={p.y}
+                                r={isHovered ? 7 : dataItems.length > 25 ? 3.5 : 5}
+                                fill={isHovered ? metricConf.stroke : "#ffffff"}
+                                stroke={metricConf.stroke}
+                                strokeWidth={isHovered ? 3 : 2}
+                                className="transition-all"
+                              />
+                              {showText && (
+                                <text
+                                  x={p.x}
+                                  y={p.y - (isHovered ? 12 : 8)}
+                                  fill={isHovered ? metricConf.stroke : "#1e293b"}
+                                  fontSize={isHovered ? "11" : "9"}
+                                  fontWeight="bold"
+                                  textAnchor="middle"
+                                >
+                                  {metricConf.format(p.rawVal)}
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
                       </g>
                     );
                   })}
 
                   {/* X Axis Labels */}
                   {discreteSeriesData.map((d, idx) => {
+                    const totalDiscrete = discreteSeriesData.length;
+                    const step = totalDiscrete > 25 ? Math.ceil(totalDiscrete / 10) : totalDiscrete > 14 ? 2 : 1;
+                    if (idx !== 0 && idx !== totalDiscrete - 1 && idx % step !== 0) return null;
+
                     const x =
                       padding.left +
-                      (discreteSeriesData.length > 1
-                        ? (idx / (discreteSeriesData.length - 1)) * graphWidth
+                      (totalDiscrete > 1
+                        ? (idx / (totalDiscrete - 1)) * graphWidth
                         : graphWidth / 2);
                     return (
                       <g key={idx}>
@@ -1713,7 +2014,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                           x={x}
                           y={svgHeight - padding.bottom + 18}
                           fill="#334155"
-                          fontSize="11"
+                          fontSize="10"
                           fontWeight="bold"
                           textAnchor="middle"
                         >
@@ -1721,9 +2022,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                         </text>
                         <text
                           x={x}
-                          y={svgHeight - padding.bottom + 32}
+                          y={svgHeight - padding.bottom + 30}
                           fill="#94a3b8"
-                          fontSize="9"
+                          fontSize="8"
                           fontWeight="600"
                           textAnchor="middle"
                         >
@@ -1733,6 +2034,37 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                     );
                   })}
                 </svg>
+
+                {/* Discrete Metric Hover Tooltip */}
+                {hoveredDiscretePoint && (
+                  <div className="absolute top-2 right-4 bg-slate-900/95 text-white p-3 rounded-xl shadow-xl text-xs backdrop-blur-sm border border-slate-700 pointer-events-none z-20 min-w-[220px]">
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
+                      <span className="font-black text-amber-400">{hoveredDiscretePoint.label}</span>
+                      <span className="text-[10px] text-slate-300">{hoveredDiscretePoint.subLabel}</span>
+                    </div>
+                    <div className="text-[11px] font-bold text-white mb-1">
+                      <span className="text-slate-300">{hoveredDiscretePoint.metricLabel}: </span>
+                      <span className="font-black text-amber-300 font-mono">{hoveredDiscretePoint.formatVal}</span>
+                    </div>
+                    {hoveredDiscretePoint.eventDescription && (
+                      <div className="text-[10px] text-slate-300 bg-slate-800/80 px-2 py-1 rounded font-mono mb-2">
+                        {hoveredDiscretePoint.eventDescription}
+                      </div>
+                    )}
+                    {hoveredDiscretePoint.allValues && (
+                      <div className="border-t border-slate-800 pt-1.5 space-y-0.5 text-[9px] text-slate-400">
+                        {METRICS.filter((m) => m.key !== hoveredDiscretePoint.metricKey).map((m) => (
+                          <div key={m.key} className="flex justify-between">
+                            <span>{m.shortLabel}:</span>
+                            <span className="text-slate-200 font-mono font-bold">
+                              {m.format(hoveredDiscretePoint.allValues[m.key] || 0)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

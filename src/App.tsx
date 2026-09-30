@@ -9078,6 +9078,21 @@ export default function App() {
                     <span className="text-[8px] sm:text-[9px] font-black text-amber-300 bg-amber-400/20 px-1.5 py-0.2 rounded border border-amber-400/30 whitespace-nowrap" title="Official team substitutions (Libero swaps excluded)">
                       Subs: {teamStats.uccSubs}
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowTimeoutModal(true)}
+                      className={`text-[8px] sm:text-[9px] font-black px-1.5 py-0.2 rounded border whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1 ${
+                        teamStats.uccTimeouts >= 2
+                          ? "bg-rose-500/25 text-rose-300 border-rose-500/50"
+                          : teamStats.uccTimeouts === 1
+                          ? "bg-amber-400/25 text-amber-300 border-amber-400/50"
+                          : "bg-white/10 text-slate-300 border-white/20 hover:bg-white/20"
+                      }`}
+                      title={`${effectiveTeamName} Timeouts: ${teamStats.uccTimeouts}/2. Click to open Timeout Stats.`}
+                    >
+                      <Clock size={9} />
+                      <span>TO: {teamStats.uccTimeouts}/2</span>
+                    </button>
                   </div>
                   <div className="flex items-center space-x-1 sm:space-x-2">
                     <button
@@ -9160,7 +9175,7 @@ export default function App() {
                   title="Timeout Key Stats & 60s Huddle Mode"
                 >
                   <Clock size={10} className="text-amber-300 shrink-0" />
-                  <span>TO</span>
+                  <span>TO ({teamStats.uccTimeouts}-{teamStats.oppTimeouts})</span>
                 </button>
               </div>
               {score.ucc === 0 && score.opp === 0 && (
@@ -9195,6 +9210,21 @@ export default function App() {
                 )}
                 <div className="flex flex-col items-end">
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowTimeoutModal(true)}
+                      className={`text-[8px] sm:text-[9px] font-black px-1.5 py-0.2 rounded border whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1 ${
+                        teamStats.oppTimeouts >= 2
+                          ? "bg-rose-500/25 text-rose-300 border-rose-500/50"
+                          : teamStats.oppTimeouts === 1
+                          ? "bg-amber-400/25 text-amber-300 border-amber-400/50"
+                          : "bg-white/10 text-slate-300 border-white/20 hover:bg-white/20"
+                      }`}
+                      title={`${opponentName || "Opponent"} Timeouts: ${teamStats.oppTimeouts}/2. Click to open Timeout Stats.`}
+                    >
+                      <Clock size={9} />
+                      <span>TO: {teamStats.oppTimeouts}/2</span>
+                    </button>
                     <span className="text-[8px] sm:text-[9px] font-black text-slate-300 bg-white/10 px-1.5 py-0.2 rounded border border-white/20 whitespace-nowrap" title="Opponent team substitutions">
                       Subs: {teamStats.oppSubs}
                     </span>
@@ -9286,7 +9316,7 @@ export default function App() {
                 <span className="hidden sm:inline">TO Stats</span>
                 <span className="sm:hidden">TO</span>
                 <span className="bg-amber-400 text-slate-950 text-[9px] px-1.5 py-0.2 rounded font-black hidden xs:inline">
-                  {teamStats.uccTimeouts}/2
+                  TO: {teamStats.uccTimeouts}/2 • {teamStats.oppTimeouts}/2
                 </span>
               </button>
               <div
