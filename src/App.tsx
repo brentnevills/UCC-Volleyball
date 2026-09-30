@@ -1249,6 +1249,9 @@ export default function App() {
   const [trackOppReceives, setTrackOppReceives] = useState(
     () => localStorage.getItem("ucc_track_opp_receives") !== "false",
   );
+  const [autoScoreTracking, setAutoScoreTracking] = useState<boolean>(
+    () => localStorage.getItem("ucc_auto_score_tracking") !== "false",
+  );
   const [trackedCategories, setTrackedCategories] = useState(() => {
     const saved = localStorage.getItem("ucc_tracked_categories");
     const defaults = { Pass: true, Serve: true, Attack: true, Block: true, Dig: true };
@@ -1260,6 +1263,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("ucc_track_opp_receives", trackOppReceives.toString());
   }, [trackOppReceives]);
+
+  useEffect(() => {
+    localStorage.setItem("ucc_auto_score_tracking", autoScoreTracking.toString());
+  }, [autoScoreTracking]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -3245,13 +3252,63 @@ export default function App() {
       setSelectedPlayerId(null);
     }
 
-    // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
-    if (
-      rallyPhase === "receive" ||
-      rallyPhase === "opp_receive" ||
-      category === "Pass"
-    ) {
-      changeRallyPhase("play");
+    // Determine if this stat automatically scores a point
+    let pointAwardedTo: "ucc" | "opp" | null = null;
+    let pointReason = "";
+
+    if (autoScoreTracking) {
+      if (category === "Attack") {
+        if (metric === "Kill") {
+          pointAwardedTo = "ucc";
+          pointReason = "Kill";
+        } else if (["Out", "Net", "Stuffed", "Error"].includes(metric)) {
+          pointAwardedTo = "opp";
+          pointReason = `Attack ${metric}`;
+        }
+      } else if (category === "Block") {
+        if (metric === "Stuff") {
+          pointAwardedTo = "ucc";
+          pointReason = "Stuff Block";
+        } else if (metric === "Net Viol") {
+          pointAwardedTo = "opp";
+          pointReason = "Net Violation";
+        }
+      } else if (category === "Serve") {
+        if (metric === "Ace") {
+          pointAwardedTo = "ucc";
+          pointReason = "Ace";
+        } else if (metric?.includes("Miss") || metric === "Error") {
+          pointAwardedTo = "opp";
+          pointReason = "Serve Error";
+        }
+      } else if (category === "Pass") {
+        if (metric === "Error") {
+          pointAwardedTo = "opp";
+          pointReason = "Reception Error";
+        }
+      } else if (category === "Setting" || category === "Set") {
+        if (["Error", "Double", "Lift"].includes(metric)) {
+          pointAwardedTo = "opp";
+          pointReason = "Ball Handling Error";
+        }
+      }
+    }
+
+    if (pointAwardedTo) {
+      setSelectedPlayerId(null);
+      setStatPrompt(null);
+      handlePoint(pointAwardedTo, true);
+      const teamName = pointAwardedTo === "ucc" ? effectiveTeamName : (opponentName.trim() || "Opponent");
+      showToast(`${pointReason} -> Point ${teamName}!`, "success");
+    } else {
+      // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
+      if (
+        rallyPhase === "receive" ||
+        rallyPhase === "opp_receive" ||
+        category === "Pass"
+      ) {
+        changeRallyPhase("play");
+      }
     }
   };
 
@@ -3269,13 +3326,66 @@ export default function App() {
       setSelectedOppId(null);
     }
 
-    // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
-    if (
-      rallyPhase === "receive" ||
-      rallyPhase === "opp_receive" ||
-      category === "Pass"
-    ) {
-      changeRallyPhase("play");
+    // Determine if this opponent stat automatically scores a point
+    let pointAwardedTo: "ucc" | "opp" | null = null;
+    let pointReason = "";
+
+    if (autoScoreTracking) {
+      if (category === "Attack") {
+        if (metric === "Kill") {
+          pointAwardedTo = "opp";
+          pointReason = "Opponent Kill";
+        } else if (["Out", "Net", "Stuffed", "Error"].includes(metric)) {
+          pointAwardedTo = "ucc";
+          pointReason = `Opponent Attack ${metric}`;
+        }
+      } else if (category === "Block") {
+        if (metric === "Stuff") {
+          pointAwardedTo = "opp";
+          pointReason = "Opponent Stuff Block";
+        } else if (metric === "Net Viol") {
+          pointAwardedTo = "ucc";
+          pointReason = "Opponent Net Violation";
+        }
+      } else if (category === "Serve") {
+        if (metric === "Ace") {
+          pointAwardedTo = "opp";
+          pointReason = "Opponent Ace";
+        } else if (metric?.includes("Miss") || metric === "Error") {
+          pointAwardedTo = "ucc";
+          pointReason = "Opponent Serve Error";
+        }
+      } else if (category === "Pass") {
+        if (metric === "Error") {
+          pointAwardedTo = "ucc";
+          pointReason = "Opponent Reception Error";
+        } else if (metric === "Rating" && value === 0) {
+          pointAwardedTo = "ucc";
+          pointReason = "Opponent Shank (0-Pass)";
+        }
+      } else if (category === "Setting" || category === "Set") {
+        if (["Error", "Double", "Lift"].includes(metric)) {
+          pointAwardedTo = "ucc";
+          pointReason = "Opponent Ball Handling Error";
+        }
+      }
+    }
+
+    if (pointAwardedTo) {
+      setSelectedOppId(null);
+      setStatPrompt(null);
+      handlePoint(pointAwardedTo, true);
+      const teamName = pointAwardedTo === "ucc" ? effectiveTeamName : (opponentName.trim() || "Opponent");
+      showToast(`${pointReason} -> Point ${teamName}!`, "success");
+    } else {
+      // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
+      if (
+        rallyPhase === "receive" ||
+        rallyPhase === "opp_receive" ||
+        category === "Pass"
+      ) {
+        changeRallyPhase("play");
+      }
     }
   };
 
@@ -3298,6 +3408,13 @@ export default function App() {
     setEndRallyVisible(false);
     setSelectedOppId(null);
     setSelectedPlayerId(null);
+    setStatPrompt(null);
+    setBlockAssistPrompt(null);
+    setServePromptVisible(false);
+    setOppServeReceivePrompt(null);
+    setServeErrorPrompt(null);
+    setAceReceiverPrompt(null);
+    setPendingAceData(null);
 
     let newUcc = score.ucc;
     let newOpp = score.opp;
@@ -3329,39 +3446,17 @@ export default function App() {
     };
     const updatedPointHistory = [...existingPoints, pointEntry];
 
-    if (isFirebaseAvailable && user) {
-      updateSetState({
-        scoreUcc: newUcc,
-        scoreOpp: newOpp,
-        pointHistory: updatedPointHistory,
-        serving:
-          serving === "opp" && team === "ucc"
-            ? "ucc"
-            : serving === "ucc" && team !== "ucc"
-              ? "opp"
-              : serving,
-      });
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        sets: appData.sets.map((s) =>
-          s.id === activeSetId
-            ? {
-                ...s,
-                scoreUcc: newUcc,
-                scoreOpp: newOpp,
-                pointHistory: updatedPointHistory,
-                serving:
-                  serving === "opp" && team === "ucc"
-                    ? "ucc"
-                    : serving === "ucc" && team !== "ucc"
-                      ? "opp"
-                      : serving,
-              }
-            : s,
-        ),
-      });
-    }
+    updateSetState({
+      scoreUcc: newUcc,
+      scoreOpp: newOpp,
+      pointHistory: updatedPointHistory,
+      serving:
+        serving === "opp" && team === "ucc"
+          ? "ucc"
+          : serving === "ucc" && team !== "ucc"
+            ? "opp"
+            : serving,
+    });
 
     const winner = checkSetWin(newUcc, newOpp);
     if (winner) {
@@ -8492,20 +8587,42 @@ export default function App() {
                   </select>
                 </div>
                 {matchType !== "Practice" && (
-                  <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
-                    <label className="text-[10px] sm:text-[12px] font-black text-slate-700 uppercase tracking-widest ml-2">
-                      Track Opp. Serve Receive
-                    </label>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="sr-only peer"
-                        checked={trackOppReceives}
-                        onChange={(e) => setTrackOppReceives(e.target.checked)}
-                      />
-                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0033A0]"></div>
-                    </label>
-                  </div>
+                  <>
+                    <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
+                      <label className="text-[10px] sm:text-[12px] font-black text-slate-700 uppercase tracking-widest ml-2">
+                        Track Opp. Serve Receive
+                      </label>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={trackOppReceives}
+                          onChange={(e) => setTrackOppReceives(e.target.checked)}
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0033A0]"></div>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
+                      <div className="flex flex-col ml-2">
+                        <label className="text-[10px] sm:text-[12px] font-black text-slate-700 uppercase tracking-widest">
+                          Auto Score Tracking
+                        </label>
+                        <span className="text-[9px] text-slate-400 font-medium">
+                          Auto-awards points & rotates on Kills, Aces, Stuff Blocks, and Errors
+                        </span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={autoScoreTracking}
+                          onChange={(e) => setAutoScoreTracking(e.target.checked)}
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                      </label>
+                    </div>
+                  </>
                 )}
                 <div>
                   <label className="block text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2 mb-1">
@@ -9407,6 +9524,40 @@ export default function App() {
                 <span className="sm:hidden">TO</span>
                 <span className="bg-amber-400 text-slate-950 text-[9px] px-1.5 py-0.2 rounded font-black hidden xs:inline">
                   TO: {teamStats.uccTimeouts}/2 • {teamStats.oppTimeouts}/2
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !autoScoreTracking;
+                  setAutoScoreTracking(nextVal);
+                  showToast(
+                    `Auto Score Tracking: ${nextVal ? "ON" : "OFF"}`,
+                    "info",
+                  );
+                }}
+                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 border transition-all cursor-pointer ${
+                  autoScoreTracking
+                    ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs hover:bg-emerald-100"
+                    : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
+                }`}
+                title={
+                  autoScoreTracking
+                    ? "Auto-awards points & rotates on Kills, Aces, Stuff Blocks, and Errors"
+                    : "Auto-scoring is disabled (manual rally scoring)"
+                }
+              >
+                <Check size={13} className={autoScoreTracking ? "text-emerald-600" : "text-slate-400"} />
+                <span className="hidden sm:inline">Auto Score</span>
+                <span className="sm:hidden">Auto</span>
+                <span
+                  className={`text-[8px] font-black px-1 py-0.2 rounded ${
+                    autoScoreTracking
+                      ? "bg-emerald-200 text-emerald-900"
+                      : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {autoScoreTracking ? "ON" : "OFF"}
                 </span>
               </button>
               <div
