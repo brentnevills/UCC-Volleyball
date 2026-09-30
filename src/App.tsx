@@ -1284,6 +1284,7 @@ export default function App() {
   const isProcessingPointRef = useRef(false);
   const lastActiveViewRef = useRef<"game" | "open_practice" | null>(null);
   const lastActiveMatchRef = useRef<any>(null);
+  const lastLoadedSetIdRef = useRef<string | null>(null);
   const [debugNotice, setDebugNotice] = useState<string | null>(null);
 
   // Track active game view and session for reliable return navigation
@@ -1908,7 +1909,17 @@ export default function App() {
         const arr: any[] = [];
         snap.forEach((d) => arr.push(d.data()));
         setAppData((prev) => {
-          const next = { ...prev, sets: arr };
+          // If we have an active live set currently in session, ensure its live local values aren't overwritten with stale remote values
+          const mergedSets = arr.map((remoteSet: any) => {
+            if (activeSetId && remoteSet.id === activeSetId) {
+              const localSet = (prev.sets || []).find((s: any) => s.id === activeSetId);
+              const localTotal = (localSet?.scoreUcc || 0) + (localSet?.scoreOpp || 0);
+              const remoteTotal = (remoteSet?.scoreUcc || 0) + (remoteSet?.scoreOpp || 0);
+              return localTotal >= remoteTotal && localSet ? { ...remoteSet, ...localSet } : remoteSet;
+            }
+            return remoteSet;
+          });
+          const next = { ...prev, sets: mergedSets };
           try {
             localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
           } catch {}
@@ -1980,33 +1991,42 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeSetId && appData.sets.length > 0) {
+    if (!activeSetId) {
+      lastLoadedSetIdRef.current = null;
+      return;
+    }
+    // Only load set data into working component state when switching to a different set or on initial load!
+    if (lastLoadedSetIdRef.current !== activeSetId && (appData.sets || []).length > 0) {
       const currentSet = appData.sets.find((s) => s.id === activeSetId);
       if (currentSet) {
-        if (
-          score.ucc !== currentSet.scoreUcc ||
-          score.opp !== currentSet.scoreOpp
-        ) {
-          setScore({
-            ucc: currentSet.scoreUcc || 0,
-            opp: currentSet.scoreOpp || 0,
-          });
-        }
+        lastLoadedSetIdRef.current = activeSetId;
+        setScore({
+          ucc: currentSet.scoreUcc || 0,
+          opp: currentSet.scoreOpp || 0,
+        });
         if (
           currentSet.lineup &&
-          JSON.stringify(lineup) !== JSON.stringify(currentSet.lineup)
+          Array.isArray(currentSet.lineup) &&
+          currentSet.lineup.length === 6
         ) {
           setLineup(currentSet.lineup);
         }
-        if (currentSet.serving && serving !== currentSet.serving) {
+        if (
+          currentSet.oppLineup &&
+          Array.isArray(currentSet.oppLineup) &&
+          currentSet.oppLineup.length === 6
+        ) {
+          setOppLineup(currentSet.oppLineup);
+        }
+        if (currentSet.serving) {
           setServing(currentSet.serving);
         }
-        if (currentSet.rallyPhase && rallyPhase !== currentSet.rallyPhase) {
+        if (currentSet.rallyPhase) {
           setRallyPhase(currentSet.rallyPhase);
         }
       }
     }
-  }, [appData.sets, activeSetId, lineup, score, serving, rallyPhase]);
+  }, [activeSetId, appData.sets]);
 
   useEffect(() => {
     if (setWinnerModal) {
@@ -2067,19 +2087,29 @@ export default function App() {
   }, [appData.roster, sortPlayersByNumberThenAlpha]);
 
   const updateSetState = async (updates: any) => {
-    if (activeSetId) {
-      writeLocalDb({
-        ...appData,
-        sets: (appData.sets || []).map((s) =>
-          s.id === activeSetId ? { ...s, ...updates } : s,
-        ),
-      });
-    }
+    const targetSetId = activeSetId;
+    if (!targetSetId) return;
 
-    if (isFirebaseAvailable && user && activeTeam && activeSetId && db && !isQuotaExceeded) {
+    setAppData((prev: any) => {
+      const existingSets = Array.isArray(prev.sets) ? prev.sets : [];
+      const setExists = existingSets.some((s: any) => s.id === targetSetId);
+      const nextSets = setExists
+        ? existingSets.map((s: any) =>
+            s.id === targetSetId ? { ...s, ...updates } : s,
+          )
+        : [...existingSets, { id: targetSetId, ...updates }];
+      const nextData = { ...prev, sets: nextSets };
+      const targetTeamKey = activeTeam || "ucc_main";
+      ruggedSaveTeamData(targetTeamKey, nextData).catch((err) => {
+        console.warn("RuggedSave background notice:", err);
+      });
+      return nextData;
+    });
+
+    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
       try {
         await setDoc(
-          doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
+          doc(db, `${publicPath}/${activeTeam}/sets/${targetSetId}`),
           updates,
           { merge: true },
         );
@@ -3403,7 +3433,7 @@ export default function App() {
     return null;
   };
 
-  const handlePoint = async (team, skipHistory = false) => {
+  const handlePoint = async (team: "ucc" | "opp", skipHistory = false) => {
     if (!skipHistory) pushToHistory();
     setEndRallyVisible(false);
     setSelectedOppId(null);
@@ -3416,32 +3446,46 @@ export default function App() {
     setAceReceiverPrompt(null);
     setPendingAceData(null);
 
-    let newUcc = score.ucc;
-    let newOpp = score.opp;
+    const currentUcc = typeof score?.ucc === "number" && !isNaN(score.ucc) ? score.ucc : 0;
+    const currentOpp = typeof score?.opp === "number" && !isNaN(score.opp) ? score.opp : 0;
+    const newUcc = team === "ucc" ? currentUcc + 1 : currentUcc;
+    const newOpp = team === "opp" ? currentOpp + 1 : currentOpp;
+
+    setScore({ ucc: newUcc, opp: newOpp });
+
+    let nextServing = serving;
     if (team === "ucc") {
-      newUcc += 1;
-      setScore((s) => ({ ...s, ucc: newUcc }));
       if (serving === "opp") {
+        nextServing = "ucc";
         setServing("ucc");
         rotateUCC();
       }
     } else {
-      newOpp += 1;
-      setScore((s) => ({ ...s, opp: newOpp }));
       if (serving === "ucc") {
+        nextServing = "opp";
         setServing("opp");
         rotateOpp();
       }
     }
 
-    const currentSet = appData.sets.find((s) => s.id === activeSetId);
+    const targetSetId =
+      activeSetId ||
+      (appData.sets && appData.sets.length > 0
+        ? appData.sets[appData.sets.length - 1]?.id
+        : null) ||
+      `set_${Date.now()}`;
+    if (!activeSetId) {
+      setActiveSetId(targetSetId);
+    }
+
+    const currentSet = (appData.sets || []).find((s) => s.id === targetSetId);
     const existingPoints = currentSet?.pointHistory || [];
     const pointEntry = {
       pointNum: newUcc + newOpp,
       team,
       scoreUcc: newUcc,
       scoreOpp: newOpp,
-      server: serving || "ucc",
+      server: nextServing || "ucc",
       timestamp: new Date().toISOString(),
     };
     const updatedPointHistory = [...existingPoints, pointEntry];
@@ -3450,18 +3494,14 @@ export default function App() {
       scoreUcc: newUcc,
       scoreOpp: newOpp,
       pointHistory: updatedPointHistory,
-      serving:
-        serving === "opp" && team === "ucc"
-          ? "ucc"
-          : serving === "ucc" && team !== "ucc"
-            ? "opp"
-            : serving,
+      serving: nextServing,
+      rallyPhase: "serve",
     });
 
     const winner = checkSetWin(newUcc, newOpp);
     if (winner) {
       setSetWinnerModal(winner);
-      setNextSetServing(serving === "ucc" ? "opp" : "ucc");
+      setNextSetServing(nextServing === "ucc" ? "opp" : "ucc");
     } else {
       changeRallyPhase("serve");
     }
@@ -3966,29 +4006,21 @@ export default function App() {
     handlePoint(team === "ucc" ? "opp" : "ucc", true);
   };
 
-  const manualScoreAdjust = async (team, delta) => {
+  const manualScoreAdjust = async (team: "ucc" | "opp", delta: number) => {
     pushToHistory();
-    const newScore = { ...score };
-    newScore[team] = Math.max(0, newScore[team] + delta);
+    const currentUcc = typeof score?.ucc === "number" && !isNaN(score.ucc) ? score.ucc : 0;
+    const currentOpp = typeof score?.opp === "number" && !isNaN(score.opp) ? score.opp : 0;
+    const newScore = {
+      ucc: team === "ucc" ? Math.max(0, currentUcc + delta) : currentUcc,
+      opp: team === "opp" ? Math.max(0, currentOpp + delta) : currentOpp,
+    };
     setScore(newScore);
 
-    if (isFirebaseAvailable && user) {
-      const currentSet = appData.sets.find((s) => s.id === activeSetId);
-      if (currentSet)
-        await setDoc(
-          doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
-          { ...currentSet, scoreUcc: newScore.ucc, scoreOpp: newScore.opp },
-        );
-    } else if (!isFirebaseAvailable) {
-      writeLocalDb({
-        ...appData,
-        sets: appData.sets.map((s) =>
-          s.id === activeSetId
-            ? { ...s, scoreUcc: newScore.ucc, scoreOpp: newScore.opp }
-            : s,
-        ),
-      });
-    }
+    updateSetState({
+      scoreUcc: newScore.ucc,
+      scoreOpp: newScore.opp,
+    });
+
     const winner = checkSetWin(newScore.ucc, newScore.opp);
     if (winner) {
       setSetWinnerModal(winner);
