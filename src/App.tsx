@@ -1311,14 +1311,12 @@ export default function App() {
 
   // Track active game view and session for reliable return navigation
   useEffect(() => {
-    if (view === "game" || view === "open_practice") {
+    if ((view === "game" || view === "open_practice") && activeMatch && (activeMatch as any).isLive !== false) {
       lastActiveViewRef.current = view;
-      if (activeMatch) {
-        lastActiveMatchRef.current = activeMatch;
-        try {
-          sessionStorage.setItem("ucc_last_active_match_id", activeMatch.id);
-        } catch (e) {}
-      }
+      lastActiveMatchRef.current = activeMatch;
+      try {
+        sessionStorage.setItem("ucc_last_active_match_id", activeMatch.id);
+      } catch (e) {}
     }
   }, [view, activeMatch]);
 
@@ -1334,8 +1332,8 @@ export default function App() {
       setsWon,
     });
 
-    // 1. If activeMatch is present in component state
-    if (activeMatch) {
+    // 1. If activeMatch is present in component state and is live
+    if (activeMatch && (activeMatch as any).isLive !== false) {
       if (
         activeMatch.type === "Practice" &&
         activeMatch.format === "Open Drill (Grid)"
@@ -1347,7 +1345,7 @@ export default function App() {
       return;
     }
 
-    // 2. If activeMatch is null, check for live match in appData.matches
+    // 2. Check for active live match in appData.matches
     const liveMatches = (appData.matches || []).filter((m: any) => m.isLive === true);
     if (liveMatches.length > 0) {
       const latestMatch = liveMatches[liveMatches.length - 1];
@@ -1377,8 +1375,8 @@ export default function App() {
       return;
     }
 
-    // 3. Fallback to lastActiveMatchRef if remembered
-    if (lastActiveMatchRef.current) {
+    // 3. Fallback to lastActiveMatchRef ONLY if it is still live
+    if (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false) {
       setActiveMatch(lastActiveMatchRef.current);
       if (lastActiveViewRef.current === "open_practice") {
         setView("open_practice");
@@ -1388,10 +1386,19 @@ export default function App() {
       return;
     }
 
-    // 4. If no game is running, go to menu
+    // 4. If no game is running, notify user and go to menu
     console.warn("[VBALL DEBUG] No active or live match session found. Returning to menu.");
+    showToast("No active live match in session.", "info");
+    lastActiveMatchRef.current = null;
+    lastActiveViewRef.current = null;
+    try {
+      sessionStorage.removeItem("ucc_last_active_match_id");
+      localStorage.removeItem("ucc_last_active_match_id");
+    } catch (e) {}
+    setActiveMatch(null);
+    setActiveSetId(null);
     setView("menu");
-  }, [activeMatch, appData.matches, appData.sets, appData.opponents, view, activeSetId, score, setsWon]);
+  }, [activeMatch, appData.matches, appData.sets, appData.opponents, view, activeSetId, score, setsWon, showToast]);
 
   // Comprehensive System Diagnostics Tool
   const runDebugDiagnostics = useCallback(() => {
@@ -2575,18 +2582,24 @@ export default function App() {
 
     const matchId = matchToEnd?.id;
     let targetMatchForStats = matchToEnd;
+    const completionTimestamp = new Date().toISOString();
 
     if (matchId) {
       const updatedMatch = {
         ...matchToEnd,
         isLive: false,
-        completedAt: new Date().toISOString(),
+        completedAt: completionTimestamp,
         finalSetsWon: { ...setsWon },
       };
       targetMatchForStats = updatedMatch;
 
+      // Close all live matches completely so no ghost active session remains accessible
       const newMatches = (appData.matches || []).map((m: any) =>
-        m.id === matchId ? updatedMatch : m,
+        m.id === matchId
+          ? updatedMatch
+          : m.isLive
+          ? { ...m, isLive: false, completedAt: m.completedAt || completionTimestamp }
+          : m,
       );
       if (!newMatches.some((m: any) => m.id === matchId)) {
         newMatches.push(updatedMatch);
@@ -2609,16 +2622,17 @@ export default function App() {
       }
     } else {
       const newMatches = (appData.matches || []).map((m: any) =>
-        m.isLive ? { ...m, isLive: false, completedAt: new Date().toISOString() } : m,
+        m.isLive ? { ...m, isLive: false, completedAt: completionTimestamp } : m,
       );
       writeLocalDb({ ...appData, matches: newMatches });
     }
 
-    // Clear active session tracking so "Return to Game" banner doesn't linger
+    // Clear active session tracking completely so "Return to Game" banner doesn't linger
     lastActiveMatchRef.current = null;
     lastActiveViewRef.current = null;
     try {
       sessionStorage.removeItem("ucc_last_active_match_id");
+      localStorage.removeItem("ucc_last_active_match_id");
     } catch (e) {}
 
     setActiveMatch(null);
@@ -3427,16 +3441,23 @@ export default function App() {
     if (matchOver) {
       setCurrentSetNum(nextSetNum);
       setSetWinnerModal(null);
-      if (activeMatch) {
-        const matchId = activeMatch.id;
+      const matchToEnd = activeMatch;
+      const matchId = matchToEnd?.id;
+      const completionTimestamp = new Date().toISOString();
+
+      if (matchId && matchToEnd) {
         const updatedMatch = {
-          ...activeMatch,
+          ...matchToEnd,
           isLive: false,
-          completedAt: new Date().toISOString(),
+          completedAt: completionTimestamp,
           finalSetsWon: newSetsWon,
         };
-        const newMatches = (appData.matches || []).map((m) =>
-          m.id === matchId ? updatedMatch : m,
+        const newMatches = (appData.matches || []).map((m: any) =>
+          m.id === matchId
+            ? updatedMatch
+            : m.isLive
+            ? { ...m, isLive: false, completedAt: m.completedAt || completionTimestamp }
+            : m,
         );
         writeLocalDb({ ...appData, matches: newMatches });
         if (isFirebaseAvailable && user && activeTeam && db) {
@@ -3447,9 +3468,36 @@ export default function App() {
           ).catch((e) => console.warn("Match complete sync deferred:", e));
         }
       }
-      viewStatsWithCurrentMatch();
+
+      // Fully clear active session tracking so no live game banner remains accessible
+      lastActiveMatchRef.current = null;
+      lastActiveViewRef.current = null;
+      try {
+        sessionStorage.removeItem("ucc_last_active_match_id");
+        localStorage.removeItem("ucc_last_active_match_id");
+      } catch (e) {}
+
+      if (matchToEnd) {
+        const eventDetails = getEventDetails(matchToEnd);
+        if (matchToEnd.type === "Practice") {
+          setStatsPath([
+            { level: "season", id: "practice", name: "Season Totals (Practice Only)" },
+            { level: "event", id: eventDetails.id, name: eventDetails.name },
+          ]);
+        } else {
+          setStatsPath([
+            { level: "season", id: "games", name: "Season Totals (Games Only)" },
+            { level: "event", id: eventDetails.id, name: eventDetails.name },
+            { level: "match", id: matchToEnd.id, name: `vs ${matchToEnd.opponent || "Opponent"}` },
+          ]);
+        }
+      } else {
+        viewStatsFromMenu();
+      }
+
       setActiveMatch(null);
       setActiveSetId(null);
+      setView("stats");
       return;
     }
 
@@ -4035,11 +4083,20 @@ export default function App() {
 
   const viewStatsWithCurrentMatch = () => {
     if (!activeMatch) return viewStatsFromMenu();
-    lastActiveMatchRef.current = activeMatch;
-    lastActiveViewRef.current =
-      activeMatch.type === "Practice" && activeMatch.format === "Open Drill (Grid)"
-        ? "open_practice"
-        : "game";
+    if ((activeMatch as any).isLive !== false) {
+      lastActiveMatchRef.current = activeMatch;
+      lastActiveViewRef.current =
+        activeMatch.type === "Practice" && activeMatch.format === "Open Drill (Grid)"
+          ? "open_practice"
+          : "game";
+    } else {
+      lastActiveMatchRef.current = null;
+      lastActiveViewRef.current = null;
+      try {
+        sessionStorage.removeItem("ucc_last_active_match_id");
+        localStorage.removeItem("ucc_last_active_match_id");
+      } catch (e) {}
+    }
     const eventDetails = getEventDetails(activeMatch);
     if (activeMatch.type === "Practice") {
       setStatsPath([
@@ -5881,11 +5938,15 @@ export default function App() {
         matches: newMatches,
       });
 
-      if (matchIds.includes(activeMatch?.id)) {
+      if (matchIds.includes(activeMatch?.id) || (lastActiveMatchRef.current?.id && matchIds.includes(lastActiveMatchRef.current.id))) {
         setActiveMatch(null);
         setActiveSetId(null);
         lastActiveMatchRef.current = null;
-        try { sessionStorage.removeItem("ucc_last_active_match_id"); } catch (e) {}
+        lastActiveViewRef.current = null;
+        try {
+          sessionStorage.removeItem("ucc_last_active_match_id");
+          localStorage.removeItem("ucc_last_active_match_id");
+        } catch (e) {}
         setView("menu");
       }
 
@@ -5950,11 +6011,15 @@ export default function App() {
       });
 
       // If we were in this game, reset view
-      if (activeMatch?.id === matchId) {
+      if (activeMatch?.id === matchId || lastActiveMatchRef.current?.id === matchId) {
         setActiveMatch(null);
         setActiveSetId(null);
         lastActiveMatchRef.current = null;
-        try { sessionStorage.removeItem("ucc_last_active_match_id"); } catch (e) {}
+        lastActiveViewRef.current = null;
+        try {
+          sessionStorage.removeItem("ucc_last_active_match_id");
+          localStorage.removeItem("ucc_last_active_match_id");
+        } catch (e) {}
         setView("menu");
       }
 
@@ -6782,14 +6847,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setShowEndGameModal(false);
-                  setActiveMatch(null);
-                  setActiveSetId(null);
-                  lastActiveMatchRef.current = null;
-                  try { sessionStorage.removeItem("ucc_last_active_match_id"); } catch (e) {}
-                  setView("menu");
-                }}
+                onClick={() => confirmEndGameLive("menu")}
                 className="w-full py-1.5 text-red-500 hover:text-red-700 transition-colors uppercase tracking-wider text-[11px] font-bold cursor-pointer"
               >
                 Force Exit to Menu
@@ -9008,6 +9066,24 @@ export default function App() {
   }
 
   if (view === "game") {
+    if (!activeMatch || (activeMatch as any).isLive === false) {
+      setTimeout(() => setView("menu"), 0);
+      return (
+        <div className="fixed inset-0 bg-slate-900 flex items-center justify-center p-6 text-white font-sans z-50">
+          <div className="text-center space-y-4 max-w-sm bg-white/10 backdrop-blur-md p-8 rounded-3xl border border-white/20 shadow-2xl">
+            <h2 className="text-xl font-black uppercase tracking-wider text-slate-100">Match Concluded</h2>
+            <p className="text-sm text-slate-300">This game has ended and all statistics have been safely saved.</p>
+            <button
+              onClick={() => setView("menu")}
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold uppercase tracking-wider text-xs shadow-md transition-all active:scale-95 cursor-pointer text-white"
+            >
+              Return to Menu
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     const handleGameStat = (playerId, category, metric, value = 1) => {
       if (statPrompt?.isOpp) {
         // use recordOppStatAndCheckPoint for opponents
@@ -9996,6 +10072,12 @@ export default function App() {
                 onClick={() => {
                   setActiveMatch(null);
                   setActiveSetId(null);
+                  lastActiveMatchRef.current = null;
+                  lastActiveViewRef.current = null;
+                  try {
+                    sessionStorage.removeItem("ucc_last_active_match_id");
+                    localStorage.removeItem("ucc_last_active_match_id");
+                  } catch (e) {}
                   setView("menu");
                 }}
                 className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-slate-600 to-slate-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-slate-500 hover:to-slate-700 shadow-md border-t border-slate-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap"
@@ -13288,6 +13370,24 @@ export default function App() {
   }
 
   if (view === "open_practice") {
+    if (!activeMatch || (activeMatch as any).isLive === false) {
+      setTimeout(() => setView("menu"), 0);
+      return (
+        <div className="fixed inset-0 bg-slate-900 flex items-center justify-center p-6 text-white font-sans z-50">
+          <div className="text-center space-y-4 max-w-sm bg-white/10 backdrop-blur-md p-8 rounded-3xl border border-white/20 shadow-2xl">
+            <h2 className="text-xl font-black uppercase tracking-wider text-slate-100">Practice Concluded</h2>
+            <p className="text-sm text-slate-300">This practice session has ended and all statistics have been safely saved.</p>
+            <button
+              onClick={() => setView("menu")}
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold uppercase tracking-wider text-xs shadow-md transition-all active:scale-95 cursor-pointer text-white"
+            >
+              Return to Menu
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     const handlePracticeStat = (pId, category, metric, value = 1) => {
       pushToHistory();
       logStat(pId, category, metric, value, false);
@@ -14656,7 +14756,7 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                  {activeMatch && (
+                  {activeMatch && (activeMatch as any).isLive !== false && (
                     <div className="text-[11px] font-semibold text-blue-200 flex items-center gap-1.5 mt-0.5">
                       <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                       <span>
@@ -14670,7 +14770,7 @@ export default function App() {
               {/* ACTION TOOLBAR & NAVIGATION */}
               <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-start lg:justify-end">
                 {/* 1. PRIMARY GAME & MENU BUTTONS - ALWAYS PROMINENT AND VISIBLE */}
-                {(activeMatch || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || lastActiveMatchRef.current) && (
+                {((activeMatch && (activeMatch as any).isLive !== false) || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false)) && (
                   <button
                     type="button"
                     onClick={returnToActiveGame}
@@ -14679,7 +14779,7 @@ export default function App() {
                   >
                     <Play className="mr-1.5 fill-current shrink-0" size={15} />
                     <span>
-                      {activeMatch?.type === "Practice" || lastActiveMatchRef.current?.type === "Practice"
+                      {(activeMatch && (activeMatch as any).isLive !== false ? activeMatch?.type : null) === "Practice" || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false ? lastActiveMatchRef.current?.type : null) === "Practice"
                         ? "Return to Practice"
                         : "Return to Game"}
                     </span>
@@ -17861,7 +17961,7 @@ export default function App() {
         {renderInstallModal()}
 
         {/* Floating Persistent Return-to-Game Action Bar for Stats */}
-        {(activeMatch || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || lastActiveMatchRef.current) && (
+        {((activeMatch && (activeMatch as any).isLive !== false) || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false)) && (
           <aside
             aria-label="Active Match Return Bar"
             className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-lg w-[calc(100%-1.5rem)] bg-slate-950/95 text-white px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.65)] border border-emerald-500/50 backdrop-blur-lg flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 duration-300 ring-1 ring-emerald-400/30"
@@ -17873,12 +17973,12 @@ export default function App() {
               </span>
               <div className="min-w-0">
                 <div className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">
-                  {activeMatch?.type === "Practice" || lastActiveMatchRef.current?.type === "Practice"
+                  {(activeMatch && (activeMatch as any).isLive !== false ? activeMatch?.type : null) === "Practice" || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false ? lastActiveMatchRef.current?.type : null) === "Practice"
                     ? "Practice Session Active"
                     : "Live Game In Progress"}
                 </div>
                 <div className="text-xs font-bold text-slate-100 truncate">
-                  {activeMatch
+                  {activeMatch && (activeMatch as any).isLive !== false
                     ? `${activeMatch.opponent ? `vs ${activeMatch.opponent}` : activeMatch.title || "Match"} • Set ${currentSetNum} (${score.ucc}-${score.opp})`
                     : "Active match ready to resume"}
                 </div>
