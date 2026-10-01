@@ -2123,6 +2123,7 @@ export default function App() {
   };
 
   const rotateUCC = () => {
+    let nextL: string[] = [];
     setLineup((prev) => {
       let newLineup = [...prev.slice(1), prev[0]];
       // If libero rotates to the front row (indices 1, 2, 3 correspond to positions 2, 3, 4)
@@ -2140,16 +2141,23 @@ export default function App() {
           }
         }
       }
-      updateSetState({ lineup: newLineup });
+      nextL = newLineup;
       return newLineup;
     });
+    if (nextL.length > 0) {
+      updateSetState({ lineup: nextL });
+    }
   };
   const rotateOpp = () => {
+    let nextL: string[] = [];
     setOppLineup((prev) => {
       const newLineup = [...prev.slice(1), prev[0]];
-      updateSetState({ oppLineup: newLineup });
+      nextL = newLineup;
       return newLineup;
     });
+    if (nextL.length > 0) {
+      updateSetState({ oppLineup: nextL });
+    }
   };
 
   const changeRallyPhase = (newPhase) => {
@@ -3735,20 +3743,24 @@ export default function App() {
   };
 
   const saveInGameLineupEdit = async () => {
-    setLineup(tempInGameLineup);
-    setLiberoId(tempInGameLibero);
-    const finalOpp = tempInGameOppLineup.map((val, idx) =>
-      val && val.trim() !== "" ? val.trim() : `O${idx + 1}`,
-    );
+    const safeLineup = Array.isArray(tempInGameLineup) && tempInGameLineup.length === 6
+      ? tempInGameLineup
+      : [...lineup];
+    setLineup(safeLineup);
+    setLiberoId(tempInGameLibero || "");
+    const finalOpp = (tempInGameOppLineup || []).map((val, idx) => {
+      const s = val != null ? String(val).trim() : "";
+      return s !== "" ? s : `O${idx + 1}`;
+    });
     setOppLineup(finalOpp);
-    setOppLiberoId(tempInGameOppLibero);
+    setOppLiberoId(tempInGameOppLibero || "");
 
     if (activeSetId) {
       writeLocalDb({
         ...appData,
         sets: appData.sets.map((s) =>
           s.id === activeSetId
-            ? { ...s, lineup: tempInGameLineup, oppLineup: finalOpp }
+            ? { ...s, lineup: safeLineup, oppLineup: finalOpp }
             : s,
         ),
       });
@@ -3756,12 +3768,13 @@ export default function App() {
       if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
         setDoc(
           doc(db, `${publicPath}/${activeTeam}/sets/${activeSetId}`),
-          { lineup: tempInGameLineup, oppLineup: finalOpp },
+          { lineup: safeLineup, oppLineup: finalOpp },
           { merge: true },
         ).catch((err) => console.warn("Lineup sync deferred:", err));
       }
     }
     setShowLineupEditModal(false);
+    showToast("Court lineup adjustments saved!", "success");
   };
 
   const handleServeStat = (metric, team) => {
@@ -3978,21 +3991,44 @@ export default function App() {
   };
 
   const handleBlockAssistChoice = (assistPlayerId) => {
-    const { playerId, isOpp, metric } = blockAssistPrompt;
+    if (!blockAssistPrompt) return;
+    const { playerId, isOpp, metric, latePressed } = blockAssistPrompt;
 
-    const dbMetric = metric === "Stuff" ? "Stuff" : "Block";
+    if (latePressed) {
+      logStat(playerId, "Block", "Late", 1, isOpp);
+    }
+
+    const dbMetric = metric === "Stuff" ? "Stuff" : "Play On";
 
     // Log the main stuff (1 if solo, 0.5 if assist)
-    recordStatAndCheckPoint(
-      playerId,
-      "Block",
-      dbMetric,
-      assistPlayerId ? 0.5 : 1,
-    );
+    if (isOpp) {
+      recordOppStatAndCheckPoint(
+        playerId,
+        "Block",
+        dbMetric,
+        assistPlayerId ? 0.5 : 1,
+      );
+      if (assistPlayerId) {
+        logStat(assistPlayerId, "Block", dbMetric, 0.5, true);
+      }
+    } else {
+      recordStatAndCheckPoint(
+        playerId,
+        "Block",
+        dbMetric,
+        assistPlayerId ? 0.5 : 1,
+      );
+      if (assistPlayerId) {
+        logStat(assistPlayerId, "Block", dbMetric, 0.5, false);
+      }
+    }
 
-    // If an assist was selected, log for them too, but don't check point again (already done)
     if (assistPlayerId) {
-      logStat(assistPlayerId, "Block", dbMetric, 0.5, isOpp);
+      const p1 = appData.roster.find((p) => p.id === playerId);
+      const p2 = appData.roster.find((p) => p.id === assistPlayerId);
+      const name1 = p1 ? `#${p1.number} ${p1.name}` : playerId;
+      const name2 = p2 ? `#${p2.number} ${p2.name}` : assistPlayerId;
+      showToast(`Half Block recorded: ${name1} & ${name2} (0.5 each)`, "success");
     }
 
     setBlockAssistPrompt(null);
@@ -10733,23 +10769,22 @@ export default function App() {
                       </button>
                       <button
                         onClick={() => {
-                          if (statPrompt.latePressed)
-                            handleGameStat(
-                              statPrompt.playerId,
-                              statPrompt.type,
-                              "Late",
-                            );
-                          handleGameStat(
-                            statPrompt.playerId,
-                            statPrompt.type,
-                            statPrompt.step,
-                            0.5,
-                          );
+                          const metricToLog = statPrompt.step === "Stuff" ? "Stuff" : "Play On";
+                          setBlockAssistPrompt({
+                            playerId: statPrompt.playerId,
+                            isOpp: !!statPrompt.isOpp,
+                            step: "assist",
+                            metric: metricToLog,
+                            latePressed: !!statPrompt.latePressed,
+                          });
                           setStatPrompt(null);
                         }}
-                        className="bg-gradient-to-b from-teal-500 to-teal-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20"
+                        className="bg-gradient-to-b from-teal-500 to-teal-600 text-white p-3 sm:p-4 rounded-xl font-black text-sm sm:text-lg shadow-sm active:scale-95 border-t border-white/20 flex flex-col items-center justify-center cursor-pointer"
                       >
-                        HALF
+                        <span>HALF BLOCK</span>
+                        <span className="text-[10px] font-bold text-teal-100 uppercase tracking-wider">
+                          Select 2nd Blocker
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -11466,61 +11501,97 @@ export default function App() {
           </div>
         )}
 
-        {blockAssistPrompt && !setWinnerModal && (
-          <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl">
-            <Shield
-              size={60}
-              className="text-green-500 mb-4 sm:mb-6 drop-shadow-[0_0_30px_rgba(34,197,94,0.5)] sm:w-20 sm:h-20"
-            />
-            <h2 className="text-2xl sm:text-4xl font-black mb-8 sm:mb-10 text-center tracking-widest uppercase">
-              Who Assisted?
-            </h2>
-            <div className="flex flex-col w-full max-w-sm gap-3 sm:gap-4">
-              <div className="flex gap-2 w-full">
-                <button
-                  onClick={() => handleBlockAssistChoice(null)}
-                  className="flex-1 bg-gradient-to-b from-green-500 to-green-700 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-lg sm:text-xl shadow-xl active:scale-95 border-t border-green-400/30"
-                >
-                  SOLO BLOCK
-                </button>
-              </div>
-              <p className="text-center font-bold text-slate-400 mt-2 mb-1 text-xs sm:text-sm uppercase tracking-widest border-b border-white/10 pb-2">
-                Or select assist:
+        {blockAssistPrompt && !setWinnerModal && (() => {
+          const isOpp = !!blockAssistPrompt.isOpp;
+          const activeLineup = isOpp ? oppLineup : lineup;
+          const primaryPlayer = !isOpp
+            ? appData.roster.find((p) => p.id === blockAssistPrompt.playerId)
+            : null;
+          const primaryName = primaryPlayer
+            ? `#${primaryPlayer.number} ${primaryPlayer.name}`
+            : blockAssistPrompt.playerId;
+
+          // Standard volleyball front row positions are indices 1, 2, 3 (Positions 2, 3, 4: RF, MF, LF)
+          let frontRowOptions = activeLineup
+            .map((id, idx) => ({ id, idx }))
+            .filter(({ id, idx }) => [1, 2, 3].includes(idx) && id && id !== blockAssistPrompt.playerId);
+
+          // If front row has fewer than 2 due to lineup gaps, fallback to other available court players
+          if (frontRowOptions.length === 0) {
+            frontRowOptions = activeLineup
+              .map((id, idx) => ({ id, idx }))
+              .filter(({ id }) => id && id !== blockAssistPrompt.playerId);
+          }
+
+          return (
+            <div className="fixed inset-0 bg-slate-900/95 z-[120] flex flex-col items-center justify-center p-4 sm:p-6 text-white backdrop-blur-xl animate-in fade-in duration-150">
+              <Shield
+                size={56}
+                className="text-green-500 mb-3 drop-shadow-[0_0_30px_rgba(34,197,94,0.5)]"
+              />
+              <h2 className="text-2xl sm:text-3xl font-black mb-1 text-center tracking-widest uppercase text-white">
+                Who Got The Other Half?
+              </h2>
+              <p className="text-slate-300 text-xs sm:text-sm font-bold mb-6 text-center max-w-sm">
+                Half block recorded for <span className="text-amber-400 font-black">{primaryName}</span> ({blockAssistPrompt.metric === "Stuff" ? "Stuff Point" : "Touch / Play On"}). Select the other front row blocker:
               </p>
-              <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                {lineup
-                  .filter(
-                    (id, i) =>
-                      [1, 2, 3].includes(i) &&
-                      id !== blockAssistPrompt.playerId,
-                  )
-                  .map((id) => {
-                    const pInfo = appData.roster.find((p) => p.id === id);
-                    if (!pInfo) return null;
+
+              <div className="flex flex-col w-full max-w-sm gap-3">
+                {/* 2 Other Front Row Players */}
+                <div className="grid grid-cols-2 gap-3">
+                  {frontRowOptions.map(({ id, idx }) => {
+                    const pInfo = !isOpp
+                      ? appData.roster.find((p) => p.id === id)
+                      : null;
+                    const posLabel = idx === 1 ? "RF (Pos 2)" : idx === 2 ? "MF (Pos 3)" : idx === 3 ? "LF (Pos 4)" : `Pos ${idx + 1}`;
+                    const numDisplay = pInfo ? `#${pInfo.number}` : id;
+                    const nameDisplay = pInfo ? pInfo.name : id;
+
                     return (
                       <button
                         key={id}
+                        type="button"
                         onClick={() => handleBlockAssistChoice(id)}
-                        className="bg-slate-800 hover:bg-slate-700 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base border border-slate-700 shadow-sm flex flex-col items-center active:scale-95"
+                        className="bg-gradient-to-b from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-white p-4 rounded-2xl font-black border-2 border-slate-700 hover:border-amber-400 shadow-lg flex flex-col items-center justify-center active:scale-95 transition-all cursor-pointer group"
                       >
-                        <span className="opacity-60 text-[10px] sm:text-xs">
-                          #{pInfo.number}
+                        <span className="text-amber-400 text-xl font-mono group-hover:scale-110 transition-transform">
+                          {numDisplay}
                         </span>
-                        <span>{pInfo.name.substring(0, 6)}</span>
+                        <span className="text-sm font-bold truncate max-w-[120px] mt-0.5">
+                          {nameDisplay}
+                        </span>
+                        <span className="text-[10px] text-blue-300 font-bold uppercase tracking-wider mt-1">
+                          {posLabel}
+                        </span>
+                        <span className="text-[9px] bg-green-500/20 text-green-300 font-bold px-2 py-0.5 rounded-full mt-1.5 uppercase">
+                          +0.5 Block
+                        </span>
                       </button>
                     );
                   })}
-              </div>
-            </div>
+                </div>
 
-            <button
-              onClick={() => setBlockAssistPrompt(null)}
-              className="mt-6 sm:mt-8 text-slate-400 font-bold text-sm sm:text-lg hover:text-white px-6 py-2 sm:py-3 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleBlockAssistChoice(null)}
+                    className="flex-1 bg-gradient-to-b from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 text-white py-3 px-3 rounded-xl font-black text-xs sm:text-sm uppercase tracking-wider shadow-md active:scale-95 border-t border-green-400/30 transition-all cursor-pointer"
+                  >
+                    SOLO BLOCK (Award Full 1.0)
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setBlockAssistPrompt(null)}
+                className="mt-6 text-slate-400 font-bold text-xs sm:text-sm hover:text-white px-5 py-2 rounded-full hover:bg-white/10 uppercase tracking-widest transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          );
+        })()}
 
         {aceReceiverPrompt && !setWinnerModal && (
           <div className="fixed inset-0 bg-slate-900/95 z-50 flex flex-col items-center justify-center p-3 sm:p-6 text-white backdrop-blur-xl animate-in fade-in zoom-in-95 overflow-y-auto">
@@ -12625,12 +12696,16 @@ export default function App() {
                           onClick={() => {
                             setBetweenSetsModal((prev) => {
                               if (!prev) return null;
-                              const cur = [...prev.tempOppLineup];
+                              const cur = Array.isArray(prev.tempOppLineup)
+                                ? [...prev.tempOppLineup]
+                                : ["O1", "O2", "O3", "O4", "O5", "O6"];
+                              while (cur.length < 6) cur.push(`O${cur.length + 1}`);
                               const rotated = [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
                               return { ...prev, tempOppLineup: rotated };
                             });
+                            showToast("Opponent rotation shifted 1 position CW", "info");
                           }}
-                          className="flex-1 py-1.5 px-2 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center justify-center gap-1 transition-all active:scale-95"
+                          className="flex-1 py-1.5 px-2 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer"
                           title="Rotate opponent rotation 1 step clockwise"
                         >
                           <ArrowRightLeft size={11} /> Rotate CW
