@@ -7040,6 +7040,20 @@ export default function App() {
           >
             Retry
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsQuotaBannerDismissed(true);
+              try {
+                sessionStorage.setItem("ucc_quota_banner_dismissed", "true");
+              } catch {}
+            }}
+            className="p-1 rounded-lg text-slate-950/80 hover:text-black hover:bg-black/10 active:scale-95 transition-all cursor-pointer ml-1"
+            title="Dismiss offline reminder"
+            aria-label="Dismiss offline reminder"
+          >
+            <X size={17} className="stroke-[2.5]" />
+          </button>
         </div>
       </div>
     );
