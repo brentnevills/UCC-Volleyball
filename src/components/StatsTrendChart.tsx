@@ -53,7 +53,7 @@ const METRICS: MetricConfig[] = [
     stroke: "#10b981",
     format: (v) => `${(v * 100).toFixed(1)}%`,
     unit: "%",
-    description: "Percentage of attack attempts resulting in immediate kills.",
+    description: "Kills divided by Total Swings (Kill % = Kills / Swings).",
   },
   {
     key: "hittingEff",
@@ -61,9 +61,9 @@ const METRICS: MetricConfig[] = [
     shortLabel: "Swing Eff",
     color: "bg-blue-500",
     stroke: "#3b82f6",
-    format: (v) => v.toFixed(3),
+    format: (v) => `${v >= 0 ? "+" : ""}${v.toFixed(3)}`,
     unit: "eff",
-    description: "(Kills - Attack Errors) / Total Swings (efficiency rating).",
+    description: "Swing Efficiency = (Kills - Attack Errors) / Total Swings.",
   },
   {
     key: "acePct",
@@ -120,9 +120,11 @@ export const isAttackErrorMetric = (met: string): boolean => {
     m.includes("out") ||
     m.includes("net") ||
     m.includes("stuff") ||
+    m.includes("stuffed") ||
     m.includes("antenna") ||
     m.includes("fault") ||
-    m.includes("miss")
+    m.includes("miss") ||
+    m.includes("blocked")
   );
 };
 
@@ -149,6 +151,7 @@ interface RallyPoint {
   runningUnforcedErrors: number;
   runningKills: number;
   runningAttacks: number;
+  runningAttackErrors: number;
   runningAces: number;
   runningServes: number;
   isRunLead?: boolean;
@@ -378,12 +381,17 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
         const ptTime = pt.timestamp ? new Date(pt.timestamp).getTime() : 0;
 
-        // Absorb all stats logged up to this point's timestamp
+        // Absorb all stats logged up to this point's timestamp (or all remaining on final point)
+        const isLastPoint = idx === setObj.pointHistory.length - 1;
         while (statCursor < sortedSetStats.length) {
           const st = sortedSetStats[statCursor];
           const stTime = st.timestamp ? new Date(st.timestamp).getTime() : 0;
-          if (ptTime > 0 && stTime > 0 && stTime > ptTime + 2500) {
+          if (!isLastPoint && ptTime > 0 && stTime > 0 && stTime > ptTime + 3000) {
             break;
+          }
+          if (ptTime === 0 && !isLastPoint) {
+            const targetCursor = Math.round(((idx + 1) / setObj.pointHistory.length) * sortedSetStats.length);
+            if (statCursor >= targetCursor) break;
           }
           statCursor++;
 
@@ -391,7 +399,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           const met = (st.metric || "").toLowerCase();
           const val = Number(st.value) || 1;
 
-          if (cat === "attack" || cat.includes("att")) {
+          if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
             cumulativeAttacks += val;
             if (isAttackKillMetric(met)) {
               cumulativeKills += val;
@@ -411,7 +419,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
             cumulativePassSum += sc * val;
             cumulativePassCount += val;
           } else if (cat === "block") {
-            if (met.includes("kill") || met.includes("solo") || met.includes("point")) {
+            if (met.includes("kill") || met.includes("solo") || met.includes("point") || met.includes("stuff") || met === "block") {
               cumulativeStuffBlocks += val;
             }
           } else if (cat === "dig") {
@@ -533,7 +541,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       let eventType: "kill" | "ace" | "block" | "error" | "point" | "neutral" = "neutral";
       let desc = "";
 
-      if (cat === "attack" || cat.includes("att")) {
+      if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
         cumulativeAttacks += val;
         if (isAttackKillMetric(met)) {
           cumulativeKills += val;
@@ -560,7 +568,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           desc = `Service Error by #${pNum} ${pName}`;
         }
       } else if (cat === "block") {
-        if (met.includes("kill") || met.includes("solo") || met.includes("point")) {
+        if (met.includes("kill") || met.includes("solo") || met.includes("point") || met.includes("stuff") || met === "block") {
           cumulativeStuffBlocks += val;
           pointAwardedTo = "ucc";
           eventType = "block";
@@ -794,6 +802,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         let filteredStats = mStats;
         if (selectedPlayerId !== "team") {
           filteredStats = filteredStats.filter((st) => String(st.playerId) === String(selectedPlayerId));
+        } else {
+          filteredStats = filteredStats.filter((st) => !st.isOpponent);
         }
 
         return {
@@ -872,6 +882,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         },
         counts: {
           kills: r.runningKills,
+          attackErrors: r.runningAttackErrors || 0,
           attacks: r.runningAttacks,
           aces: r.runningAces,
           serves: r.runningServes,
@@ -893,13 +904,14 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           values: pt.precomputedMetrics,
           raw: pt.raw || {
             kills: pt.counts?.kills || 0,
-            attackErrors: 0,
+            attackErrors: pt.counts?.attackErrors || 0,
             totalAttacks: pt.counts?.attacks || 0,
             aces: pt.counts?.aces || 0,
             totalServes: pt.counts?.serves || 0,
           },
           counts: pt.counts || {
             kills: 0,
+            attackErrors: 0,
             attacks: 0,
             aces: 0,
             serves: 0,
@@ -924,7 +936,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         const met = (st.metric || "").toLowerCase();
         const val = Number(st.value) || 1;
 
-        if (cat === "attack" || cat.includes("att")) {
+        if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
           totalAttacks += val;
           if (isAttackKillMetric(met)) {
             kills += val;
@@ -2132,8 +2144,51 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       {/* METRIC SUMMARY CARDS */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-6 pt-5 border-t border-slate-100">
         {METRICS.map((m) => {
-          const values = discreteSeriesData.map((d) => d.values[m.key] || 0);
-          const avg = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+          let summaryVal = 0;
+          if (granularity === "by_rally" && discreteSeriesData.length > 0) {
+            const lastPt = discreteSeriesData[discreteSeriesData.length - 1];
+            if (m.key === "killPct") {
+              const att = lastPt.raw?.totalAttacks ?? lastPt.counts?.attacks ?? 0;
+              const k = lastPt.raw?.kills ?? lastPt.counts?.kills ?? 0;
+              summaryVal = att > 0 ? k / att : 0;
+            } else if (m.key === "hittingEff") {
+              const att = lastPt.raw?.totalAttacks ?? lastPt.counts?.attacks ?? 0;
+              const k = lastPt.raw?.kills ?? lastPt.counts?.kills ?? 0;
+              const err = lastPt.raw?.attackErrors ?? lastPt.counts?.attackErrors ?? 0;
+              summaryVal = att > 0 ? (k - err) / att : 0;
+            } else if (m.key === "acePct") {
+              const srv = lastPt.raw?.totalServes ?? lastPt.counts?.serves ?? 0;
+              const aces = lastPt.raw?.aces ?? lastPt.counts?.aces ?? 0;
+              summaryVal = srv > 0 ? aces / srv : 0;
+            } else {
+              summaryVal = lastPt.values?.[m.key] || 0;
+            }
+          } else if (discreteSeriesData.length > 0) {
+            if (m.key === "killPct" || m.key === "hittingEff") {
+              let totK = 0;
+              let totE = 0;
+              let totA = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totK += d.counts?.kills || d.raw?.kills || 0;
+                totE += d.counts?.attackErrors || d.raw?.attackErrors || 0;
+                totA += d.counts?.attacks || d.raw?.totalAttacks || 0;
+              });
+              if (m.key === "killPct") summaryVal = totA > 0 ? totK / totA : 0;
+              else summaryVal = totA > 0 ? (totK - totE) / totA : 0;
+            } else if (m.key === "acePct") {
+              let totAce = 0;
+              let totSrv = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totAce += d.counts?.aces || d.raw?.aces || 0;
+                totSrv += d.counts?.serves || d.raw?.totalServes || 0;
+              });
+              summaryVal = totSrv > 0 ? totAce / totSrv : 0;
+            } else {
+              const values = discreteSeriesData.map((d) => d.values[m.key] || 0);
+              summaryVal = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+            }
+          }
+
           const isSelected = activeMetricKeys.includes(m.key);
 
           return (
@@ -2150,7 +2205,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                 <span className="truncate">{m.label}</span>
                 <span className={`w-2 h-2 rounded-full ${m.color}`}></span>
               </div>
-              <div className="text-lg font-black text-slate-900 tabular-nums">{m.format(avg)}</div>
+              <div className="text-lg font-black text-slate-900 tabular-nums">{m.format(summaryVal)}</div>
               <div className="text-[10px] text-slate-400 mt-0.5 truncate">{m.description}</div>
             </div>
           );

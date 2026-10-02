@@ -263,7 +263,15 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
         if (met.includes("kill")) {
           kills += val;
           pAtt.kills += val;
-        } else if (met.includes("error")) {
+        } else if (
+          met.includes("error") ||
+          met.includes("err") ||
+          met.includes("out") ||
+          met.includes("net") ||
+          met.includes("stuff") ||
+          met.includes("stuffed") ||
+          met.includes("blocked")
+        ) {
           attackErrors += val;
           pAtt.errors += val;
         }
@@ -337,7 +345,15 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
           if (cat === "attack") {
             pAttacks += val;
             if (met.includes("kill")) pKills += val;
-            if (met.includes("error")) pErrors += val;
+            if (
+              met.includes("error") ||
+              met.includes("err") ||
+              met.includes("out") ||
+              met.includes("net") ||
+              met.includes("stuff") ||
+              met.includes("stuffed") ||
+              met.includes("blocked")
+            ) pErrors += val;
           } else if (cat === "serve") {
             if (met.includes("ace")) pAces += val;
             if (met.includes("error")) pServeErrors += val;

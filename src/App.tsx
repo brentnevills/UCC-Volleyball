@@ -59,6 +59,7 @@ import {
   HardDrive,
   Upload,
   TrendingUp,
+  RotateCcw,
 } from "lucide-react";
 
 import {
@@ -292,8 +293,32 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
             } else if (s.category === "Dig") {
               if (s.metric === "Dig") pTeam.digCount += 1;
               if (s.metric === "Error") pTeam.digErr += 1;
-            } else if (s.category === "Attack") {
-              if (
+            } else if (
+              s.category === "Attack" ||
+              (s.category === "Error" &&
+                (s.metric?.toLowerCase().includes("att") ||
+                  s.metric?.toLowerCase().includes("hit") ||
+                  ["out", "net", "stuff", "stuffed", "blocked", "err"].some((k) =>
+                    s.metric?.toLowerCase().includes(k),
+                  )))
+            ) {
+              const m = (s.metric || "").toLowerCase();
+              const isKill = m.includes("kill");
+              const isErr =
+                m.includes("out") ||
+                m.includes("net") ||
+                m.includes("stuff") ||
+                m.includes("err") ||
+                m.includes("blocked") ||
+                m.includes("fault") ||
+                m.includes("miss") ||
+                m.includes("antenna");
+              const isSwing =
+                m.includes("swing") ||
+                m.includes("play") ||
+                m.includes("covered") ||
+                isKill ||
+                isErr ||
                 [
                   "Swing",
                   "Swing Front",
@@ -304,19 +329,14 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
                   "Net",
                   "Out/Net",
                   "Kill",
-                ].includes(s.metric)
-              ) {
+                ].includes(s.metric);
+
+              if (isSwing) {
                 pTeam.attCount += 1;
               }
-              if (s.metric === "Kill") pTeam.attKill += 1;
-              if (
-                s.metric === "Out" ||
-                s.metric === "Net" ||
-                s.metric === "Out/Net" ||
-                s.metric === "Stuffed"
-              )
-                pTeam.attErr += 1;
-              if (s.metric === "Blocked" || s.metric === "Stuffed")
+              if (isKill) pTeam.attKill += 1;
+              if (isErr) pTeam.attErr += 1;
+              if (m.includes("blocked") || m.includes("stuff"))
                 pTeam.attBlk = (pTeam.attBlk || 0) + 1;
             } else if (s.category === "Block") {
               if (s.metric === "Play On" || s.metric === "Touch")
@@ -846,6 +866,14 @@ export default function App() {
       return true;
     } catch {
       return true;
+    }
+  });
+
+  const [isQuotaBannerDismissed, setIsQuotaBannerDismissed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem("ucc_quota_banner_dismissed") === "true";
+    } catch {
+      return false;
     }
   });
 
@@ -5075,36 +5103,58 @@ export default function App() {
         } else if (s.category === "Dig") {
           if (s.metric === "Dig") p.digCount += 1;
           if (s.metric === "Error") p.digErr += 1;
-        } else if (s.category === "Attack") {
-          if (
-            s.metric === "Swing" ||
-            s.metric === "Swing Front" ||
-            s.metric === "Swing Back" ||
-            s.metric === "Blocked" ||
-            s.metric === "Stuffed" ||
-            s.metric === "Out" ||
-            s.metric === "Net" ||
-            s.metric === "Out/Net" ||
-            s.metric === "Kill"
-          ) {
+        } else if (
+          s.category === "Attack" ||
+          (s.category === "Error" &&
+            (s.metric?.toLowerCase().includes("att") ||
+              s.metric?.toLowerCase().includes("hit") ||
+              ["out", "net", "stuff", "stuffed", "blocked", "err"].some((k) =>
+                s.metric?.toLowerCase().includes(k),
+              )))
+        ) {
+          const m = (s.metric || "").toLowerCase();
+          const isKill = m.includes("kill");
+          const isErr =
+            m.includes("out") ||
+            m.includes("net") ||
+            m.includes("stuff") ||
+            m.includes("err") ||
+            m.includes("blocked") ||
+            m.includes("fault") ||
+            m.includes("miss") ||
+            m.includes("antenna");
+          const isSwing =
+            m.includes("swing") ||
+            m.includes("play") ||
+            m.includes("covered") ||
+            isKill ||
+            isErr ||
+            [
+              "Swing",
+              "Swing Front",
+              "Swing Back",
+              "Blocked",
+              "Stuffed",
+              "Out",
+              "Net",
+              "Out/Net",
+              "Kill",
+            ].includes(s.metric);
+
+          if (isSwing) {
             p.attCount += 1;
             if (s.row === "Front" || s.metric === "Swing Front") p.attCountFront += 1;
             else if (s.row === "Back" || s.metric === "Swing Back") p.attCountBack += 1;
             else p.attCountFront += 1;
           }
-          if (s.metric === "Kill") p.attKill += 1;
-          if (
-            s.metric === "Out" ||
-            s.metric === "Net" ||
-            s.metric === "Out/Net" ||
-            s.metric === "Stuffed"
-          ) {
+          if (isKill) p.attKill += 1;
+          if (isErr) {
             p.attErr += 1;
-            if (s.metric === "Net") p.attErrNet += 1;
-            else if (s.metric === "Stuffed") p.attErrStuffed += 1;
+            if (m.includes("net")) p.attErrNet += 1;
+            else if (m.includes("stuff")) p.attErrStuffed += 1;
             else p.attErrOut += 1;
           }
-          if (s.metric === "Blocked" || s.metric === "Stuffed") p.attBlk += 1;
+          if (m.includes("blocked") || m.includes("stuff")) p.attBlk += 1;
         } else if (s.category === "Block") {
           if (s.metric === "Play On" || s.metric === "Touch")
             p.blkCount += s.value || 1;
@@ -6898,7 +6948,7 @@ export default function App() {
   };
 
   const renderQuotaBanner = () => {
-    if (!isQuotaExceeded) return null;
+    if (!isQuotaExceeded || isQuotaBannerDismissed) return null;
     return (
       <div className="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 px-3 sm:px-6 py-2.5 text-xs font-bold shadow-md flex items-center justify-between gap-3 relative z-[99999] border-b border-amber-600/30 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -6930,16 +6980,32 @@ export default function App() {
               try {
                 sessionStorage.removeItem("ucc_firestore_quota_exceeded");
                 localStorage.removeItem("ucc_firestore_quota_exceeded");
+                sessionStorage.removeItem("ucc_quota_banner_dismissed");
                 if (db) {
                   enableNetwork(db).catch(() => {});
                 }
               } catch {}
               setIsQuotaExceeded(false);
+              setIsQuotaBannerDismissed(false);
               showToast("Retrying cloud sync...", "info");
             }}
             className="text-slate-900 hover:text-black uppercase tracking-wider text-[10px] font-black underline ml-1 cursor-pointer"
           >
             Retry
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsQuotaBannerDismissed(true);
+              try {
+                sessionStorage.setItem("ucc_quota_banner_dismissed", "true");
+              } catch {}
+            }}
+            className="p-1 hover:bg-black/10 rounded-lg text-slate-950 transition-colors ml-1 cursor-pointer flex items-center justify-center"
+            title="Dismiss notice"
+            aria-label="Dismiss notice"
+          >
+            <X size={16} />
           </button>
         </div>
       </div>
@@ -13198,24 +13264,49 @@ export default function App() {
 
               {inGameLineupTab === "ucc" ? (
                 <>
-                  {/* Libero selector */}
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 mb-4">
-                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
-                      <span>Designated Libero</span>
-                      <Shield size={12} className="text-[#0033A0]" />
-                    </label>
-                    <select
-                      value={tempInGameLibero}
-                      onChange={(e) => setTempInGameLibero(e.target.value)}
-                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
-                    >
-                      <option value="">No Libero</option>
-                      {sortedRoster.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          #{p.number} {p.name} {p.position ? `(${p.position})` : ""}
-                        </option>
-                      ))}
-                    </select>
+                  {/* Libero selector & Rotation Actions */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1 flex items-center justify-between">
+                        <span>Designated Libero</span>
+                        <Shield size={12} className="text-[#0033A0]" />
+                      </label>
+                      <select
+                        value={tempInGameLibero}
+                        onChange={(e) => setTempInGameLibero(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-700 outline-none"
+                      >
+                        <option value="">No Libero</option>
+                        {sortedRoster.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            #{p.number} {p.name} {p.position ? `(${p.position})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col justify-between">
+                      <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                        Rotation Actions
+                      </label>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTempInGameLineup((prev) => {
+                              const cur = [...prev];
+                              while (cur.length < 6) cur.push("");
+                              return [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
+                            });
+                            showToast("Lancers rotation shifted 1 position CW", "info");
+                          }}
+                          className="flex-1 py-1.5 px-2 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer"
+                          title="Rotate Lancers rotation 1 step clockwise"
+                        >
+                          <ArrowRightLeft size={11} /> Rotate CW
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Court positions */}
@@ -16186,6 +16277,10 @@ export default function App() {
                   ? ((teamTot.attKill / teamTot.attCount) * 100).toFixed(1) +
                     "%"
                   : "0.0%";
+              const teamHittingEff =
+                teamTot.attCount > 0
+                  ? ((teamTot.attKill - teamTot.attErr) / teamTot.attCount).toFixed(3)
+                  : ".000";
               const teamSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
 
               // Shown Players Totals & Averages (Visible Subset)
@@ -16272,6 +16367,10 @@ export default function App() {
                   ? ((shownTot.attKill / shownTot.attCount) * 100).toFixed(1) +
                     "%"
                   : "0.0%";
+              const shownHittingEff =
+                shownTot.attCount > 0
+                  ? ((shownTot.attKill - shownTot.attErr) / shownTot.attCount).toFixed(3)
+                  : ".000";
               const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
               const isTeamTotConcealed = false;
@@ -16683,7 +16782,7 @@ export default function App() {
                             className="p-2 sm:p-3 font-black text-center border-l border-slate-200 text-green-600 cursor-pointer hover:bg-green-50 transition-colors"
                             title="Click to view Team Attack Breakdown"
                           >
-                            KILL % ▾
+                            KILL % / EFF ▾
                           </th>
                           <th
                             onClick={() =>
@@ -16858,7 +16957,10 @@ export default function App() {
                             className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
-                            {teamKillPct}
+                            <div>{teamKillPct}</div>
+                            <div className="text-[10px] text-blue-300 font-mono font-bold mt-0.5">
+                              {teamHittingEff} Eff
+                            </div>
                           </td>
                           {/* BLOCKS */}
                           <td
@@ -17067,7 +17169,10 @@ export default function App() {
                               className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
-                              {shownKillPct}
+                              <div>{shownKillPct}</div>
+                              <div className="text-[10px] text-indigo-300 font-mono font-bold mt-0.5">
+                                {shownHittingEff} Eff
+                              </div>
                             </td>
                             {/* BLOCKS */}
                             <td
@@ -17315,7 +17420,10 @@ export default function App() {
                                   className={`p-2 sm:p-3 font-black text-center border-l border-slate-100 text-green-600 bg-green-50/30 cursor-pointer hover:bg-green-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
                                   title={`Click to view ${p.name}'s Attack breakdown`}
                                 >
-                                  {killPct}
+                                  <div>{killPct}</div>
+                                  <div className="text-[9px] text-blue-600 font-mono font-bold mt-0.5">
+                                    {p.attCount > 0 ? ((p.attKill - p.attErr) / p.attCount).toFixed(3) : ".000"} Eff
+                                  </div>
                                 </td>
                                 {/* BLOCKS */}
                                 <td
@@ -17549,7 +17657,10 @@ export default function App() {
                               className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
                               title="Click to view Shown Players Attack breakdown"
                             >
-                              {shownKillPct}
+                              <div>{shownKillPct}</div>
+                              <div className="text-[10px] text-indigo-300 font-mono font-bold mt-0.5">
+                                {shownHittingEff} Eff
+                              </div>
                             </td>
                             {/* BLOCKS */}
                             <td
@@ -17748,7 +17859,10 @@ export default function App() {
                             className={`p-2 sm:p-3 font-black text-center border-l border-white/10 text-emerald-300 bg-emerald-950/40 text-xs sm:text-sm cursor-pointer hover:bg-emerald-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
                             title="Click to view Team Attack breakdown"
                           >
-                            {teamKillPct}
+                            <div>{teamKillPct}</div>
+                            <div className="text-[10px] text-blue-300 font-mono font-bold mt-0.5">
+                              {teamHittingEff} Eff
+                            </div>
                           </td>
                           {/* BLOCKS */}
                           <td
