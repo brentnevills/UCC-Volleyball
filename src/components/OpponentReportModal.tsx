@@ -712,9 +712,9 @@ export const OpponentReportModal: React.FC<OpponentReportModalProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {dossier.rosterList
                           .filter((p) => Boolean(p.note.trim()))
-                          .map((p) => (
+                          .map((p, idx) => (
                             <div
-                              key={p.number}
+                              key={`${p.number}-${idx}`}
                               className="bg-slate-900/90 border border-slate-700/80 p-3 rounded-xl"
                             >
                               <div className="flex items-center justify-between mb-1.5">
@@ -847,11 +847,11 @@ export const OpponentReportModal: React.FC<OpponentReportModalProps> = ({
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {dossier.rosterList.map((p) => {
+                    {dossier.rosterList.map((p, idx) => {
                       const isEditing = editingNotePlayerId === p.number;
                       return (
                         <div
-                          key={p.number}
+                          key={`${p.number}-${idx}`}
                           className="bg-slate-850 border border-slate-700/80 rounded-2xl p-4 flex flex-col justify-between"
                         >
                           <div>
