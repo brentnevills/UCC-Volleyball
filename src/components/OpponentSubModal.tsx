@@ -184,9 +184,9 @@ export const OpponentSubModal: React.FC<OpponentSubModalProps> = ({
                   Known Opponent Players:
                 </span>
                 <div className="flex flex-wrap gap-1.5">
-                  {availableKnownNumbers.map((num) => (
+                  {availableKnownNumbers.map((num, idx) => (
                     <button
-                      key={num}
+                      key={`known-opp-${num}-${idx}`}
                       type="button"
                       onClick={() => {
                         setNewPlayerNumber(num);

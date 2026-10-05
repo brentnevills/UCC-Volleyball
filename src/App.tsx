@@ -60,6 +60,7 @@ import {
   Upload,
   TrendingUp,
   RotateCcw,
+  History,
 } from "lucide-react";
 
 import {
@@ -68,6 +69,9 @@ import {
   exportFullOfflineBackup,
   importFullOfflineBackup,
   runStorageHealthCheck,
+  capturePreResyncSnapshot,
+  createManualSnapshot,
+  restoreRollingSnapshot,
 } from "./ruggedStorage";
 
 import { PracticeStatsModal } from "./components/PracticeStatsModal";
@@ -81,6 +85,7 @@ import { OpponentSubModal } from "./components/OpponentSubModal";
 import { PlayerAccessLogModal } from "./components/PlayerAccessLogModal";
 import { StatsTrendChart } from "./components/StatsTrendChart";
 import { TimeoutStatsModal } from "./components/TimeoutStatsModal";
+import { RollingSnapshotsModal } from "./components/RollingSnapshotsModal";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -904,6 +909,7 @@ export default function App() {
   }, []);
 
   const [showRuggedStorageModal, setShowRuggedStorageModal] = useState(false);
+  const [showRollingSnapshotsModal, setShowRollingSnapshotsModal] = useState(false);
   const [storageHealth, setStorageHealth] = useState<{
     healthy: boolean;
     localStorageActive: boolean;
@@ -1926,7 +1932,21 @@ export default function App() {
         const arr: any[] = [];
         snap.forEach((d) => arr.push(d.data()));
         setAppData((prev) => {
-          const next = { ...prev, matches: arr };
+          const remoteMap = new Map(arr.map((m: any) => [m.id, m]));
+          const localMatches = Array.isArray(prev.matches) ? prev.matches : [];
+          // Preserve all local matches, merging remote fields without losing local offline completion
+          const mergedLocal = localMatches.map((localM: any) => {
+            const remoteM = remoteMap.get(localM.id);
+            if (!remoteM) return localM;
+            remoteMap.delete(localM.id);
+            // If local match was completed offline or has more sets/scores, preserve local state
+            if (localM.completedAt && !remoteM.completedAt) {
+              return { ...remoteM, ...localM };
+            }
+            return { ...remoteM, ...localM };
+          });
+          const allMatches = [...mergedLocal, ...Array.from(remoteMap.values())];
+          const next = { ...prev, matches: allMatches };
           try {
             localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
           } catch {}
@@ -1942,17 +1962,18 @@ export default function App() {
         const arr: any[] = [];
         snap.forEach((d) => arr.push(d.data()));
         setAppData((prev) => {
-          // If we have an active live set currently in session, ensure its live local values aren't overwritten with stale remote values
-          const mergedSets = arr.map((remoteSet: any) => {
-            if (activeSetId && remoteSet.id === activeSetId) {
-              const localSet = (prev.sets || []).find((s: any) => s.id === activeSetId);
-              const localTotal = (localSet?.scoreUcc || 0) + (localSet?.scoreOpp || 0);
-              const remoteTotal = (remoteSet?.scoreUcc || 0) + (remoteSet?.scoreOpp || 0);
-              return localTotal >= remoteTotal && localSet ? { ...remoteSet, ...localSet } : remoteSet;
-            }
-            return remoteSet;
+          const remoteMap = new Map(arr.map((s: any) => [s.id, s]));
+          const localSets = Array.isArray(prev.sets) ? prev.sets : [];
+          const mergedSets = localSets.map((localS: any) => {
+            const remoteS = remoteMap.get(localS.id);
+            if (!remoteS) return localS;
+            remoteMap.delete(localS.id);
+            const localTotal = (localS?.scoreUcc || 0) + (localS?.scoreOpp || 0);
+            const remoteTotal = (remoteS?.scoreUcc || 0) + (remoteS?.scoreOpp || 0);
+            return localTotal >= remoteTotal ? { ...remoteS, ...localS } : { ...localS, ...remoteS };
           });
-          const next = { ...prev, sets: mergedSets };
+          const allSets = [...mergedSets, ...Array.from(remoteMap.values())];
+          const next = { ...prev, sets: allSets };
           try {
             localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
           } catch {}
@@ -1968,7 +1989,9 @@ export default function App() {
         const arr: any[] = [];
         snap.forEach((d) => arr.push(d.data()));
         setAppData((prev) => {
-          const next = { ...prev, stats: arr };
+          const remoteStatIds = new Set(arr.map((s: any) => s.id));
+          const localOnlyStats = (prev.stats || []).filter((s: any) => !remoteStatIds.has(s.id));
+          const next = { ...prev, stats: [...arr, ...localOnlyStats] };
           try {
             localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
           } catch {}
@@ -2014,12 +2037,19 @@ export default function App() {
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     window.addEventListener("appinstalled", handleAppInstalled);
 
+    const handleOnline = () => {
+      showToast("Online connection restored! Checking offline games to sync...", "info");
+      syncLocalGamesToCloud(false);
+    };
+    window.addEventListener("online", handleOnline);
+
     return () => {
       window.removeEventListener(
         "beforeinstallprompt",
         handleBeforeInstallPrompt,
       );
       window.removeEventListener("appinstalled", handleAppInstalled);
+      window.removeEventListener("online", handleOnline);
     };
   }, []);
 
@@ -2080,6 +2110,240 @@ export default function App() {
     });
   };
 
+  const [isSyncingWithCloud, setIsSyncingWithCloud] = useState(false);
+
+  const syncLocalGamesToCloud = async (isManualTrigger = false) => {
+    if (!db || !user || !activeTeam || isSyncingWithCloud) return;
+
+    setIsSyncingWithCloud(true);
+    const currentTeamKey = activeTeam;
+
+    try {
+      // 1. Safeguard: Capture automated pre-resync snapshot before touching cloud
+      try {
+        await capturePreResyncSnapshot(currentTeamKey, appData);
+      } catch (e) {
+        console.warn("Pre-resync snapshot notice:", e);
+      }
+
+      // 2. Re-enable network
+      try {
+        await enableNetwork(db);
+      } catch {}
+
+      // 3. Reset quota flags
+      try {
+        sessionStorage.removeItem("ucc_firestore_quota_exceeded");
+        localStorage.removeItem("ucc_firestore_quota_exceeded");
+        sessionStorage.removeItem("ucc_quota_banner_dismissed");
+      } catch {}
+      setIsQuotaExceeded(false);
+
+      // 4. Gather comprehensive local dataset across React state & LocalStorage tiers
+      const allLocalMatchesMap = new Map<string, any>();
+      (appData.matches || []).forEach((m: any) => {
+        if (m && m.id) allLocalMatchesMap.set(String(m.id), m);
+      });
+
+      const allLocalSetsMap = new Map<string, any>();
+      (appData.sets || []).forEach((s: any) => {
+        if (s && s.id) allLocalSetsMap.set(String(s.id), s);
+      });
+
+      const allLocalStatsMap = new Map<string, any>();
+      (appData.stats || []).forEach((st: any) => {
+        if (st && st.id) allLocalStatsMap.set(String(st.id), st);
+      });
+
+      try {
+        const rawPrimary = localStorage.getItem(`ucc_vball_db_${currentTeamKey}`);
+        if (rawPrimary) {
+          const parsed = JSON.parse(rawPrimary);
+          (parsed?.matches || []).forEach((m: any) => {
+            if (m && m.id) {
+              const existing = allLocalMatchesMap.get(String(m.id));
+              if (!existing || (m.completedAt && !existing.completedAt)) {
+                allLocalMatchesMap.set(String(m.id), m);
+              }
+            }
+          });
+          (parsed?.sets || []).forEach((s: any) => {
+            if (s && s.id && !allLocalSetsMap.has(String(s.id))) {
+              allLocalSetsMap.set(String(s.id), s);
+            }
+          });
+          (parsed?.stats || []).forEach((st: any) => {
+            if (st && st.id && !allLocalStatsMap.has(String(st.id))) {
+              allLocalStatsMap.set(String(st.id), st);
+            }
+          });
+        }
+
+        const rawBackup = localStorage.getItem(`ucc_backup_${currentTeamKey}`);
+        if (rawBackup) {
+          const parsedB = JSON.parse(rawBackup);
+          (parsedB?.matches || []).forEach((m: any) => {
+            if (m && m.id && !allLocalMatchesMap.has(String(m.id))) {
+              allLocalMatchesMap.set(String(m.id), m);
+            }
+          });
+          (parsedB?.sets || []).forEach((s: any) => {
+            if (s && s.id && !allLocalSetsMap.has(String(s.id))) {
+              allLocalSetsMap.set(String(s.id), s);
+            }
+          });
+          (parsedB?.stats || []).forEach((st: any) => {
+            if (st && st.id && !allLocalStatsMap.has(String(st.id))) {
+              allLocalStatsMap.set(String(st.id), st);
+            }
+          });
+        }
+      } catch (readErr) {
+        console.warn("Storage consolidation notice:", readErr);
+      }
+
+      let uploadedGamesCount = 0;
+      let uploadedSetsCount = 0;
+      let uploadedStatsCount = 0;
+
+      let currentBatch = writeBatch(db);
+      let opCount = 0;
+
+      const commitBatchIfNeeded = async (force = false) => {
+        if (opCount > 0 && (force || opCount >= 300)) {
+          await currentBatch.commit();
+          currentBatch = writeBatch(db);
+          opCount = 0;
+        }
+      };
+
+      // 5. UPLOAD ALL LOCAL MATCHES (Ensuring offline games get uploaded completely)
+      for (const m of allLocalMatchesMap.values()) {
+        if (!m || !m.id) continue;
+        const validMatch = {
+          ...m,
+          id: String(m.id),
+          date: m.date || new Date().toISOString(),
+          type: m.type || "League",
+          opponent: m.opponent || "Opponent",
+          format: m.format || "Best of 5",
+        };
+        const matchRef = doc(db, `${publicPath}/${currentTeamKey}/matches/${validMatch.id}`);
+        currentBatch.set(matchRef, validMatch, { merge: true });
+        opCount++;
+        uploadedGamesCount++;
+        await commitBatchIfNeeded();
+      }
+
+      // 6. UPLOAD ALL LOCAL SETS
+      for (const s of allLocalSetsMap.values()) {
+        if (!s || !s.id) continue;
+        const validSet = {
+          ...s,
+          id: String(s.id),
+          matchId: String(s.matchId || ""),
+          setNum: Number(s.setNum) || 1,
+          scoreUcc: Number(s.scoreUcc) || 0,
+          scoreOpp: Number(s.scoreOpp) || 0,
+        };
+        const setRef = doc(db, `${publicPath}/${currentTeamKey}/sets/${validSet.id}`);
+        currentBatch.set(setRef, validSet, { merge: true });
+        opCount++;
+        uploadedSetsCount++;
+        await commitBatchIfNeeded();
+      }
+
+      // 7. UPLOAD ALL LOCAL STATS
+      for (const st of allLocalStatsMap.values()) {
+        if (!st || !st.id) continue;
+        const validStat = {
+          ...st,
+          id: String(st.id),
+          matchId: String(st.matchId || ""),
+          setId: String(st.setId || ""),
+          playerId: String(st.playerId || ""),
+          category: String(st.category || ""),
+          metric: String(st.metric || ""),
+          timestamp: String(st.timestamp || new Date().toISOString()),
+        };
+        const statRef = doc(db, `${publicPath}/${currentTeamKey}/stats/${validStat.id}`);
+        currentBatch.set(statRef, validStat, { merge: true });
+        opCount++;
+        uploadedStatsCount++;
+        await commitBatchIfNeeded();
+      }
+
+      // 8. UPLOAD OPPONENTS
+      if (appData.opponents && typeof appData.opponents === "object") {
+        for (const [oppName, oppData] of Object.entries(appData.opponents)) {
+          if (!oppName || !oppData) continue;
+          const cleanName = oppName.trim().replace(/\//g, "-");
+          const oppRef = doc(db, `${publicPath}/${currentTeamKey}/opponents/${cleanName}`);
+          currentBatch.set(oppRef, oppData as any, { merge: true });
+          opCount++;
+          await commitBatchIfNeeded();
+        }
+      }
+
+      // 9. UPLOAD SETTINGS & ROSTER
+      if (appData.roster && Array.isArray(appData.roster) && appData.roster.length > 0) {
+        const settingsRef = doc(db, `${publicPath}/${currentTeamKey}/settings/core`);
+        currentBatch.set(
+          settingsRef,
+          {
+            roster: appData.roster,
+            ...(appData.savedRosters ? { savedRosters: appData.savedRosters } : {}),
+            ...(appData.savedLineups ? { savedLineups: appData.savedLineups } : {}),
+            ...(effectiveTeamName ? { teamName: effectiveTeamName } : {}),
+          },
+          { merge: true },
+        );
+        opCount++;
+      }
+
+      // Final commit
+      await commitBatchIfNeeded(true);
+
+      // 10. Update local state with the consolidated dataset
+      const consolidatedMatches = Array.from(allLocalMatchesMap.values());
+      const consolidatedSets = Array.from(allLocalSetsMap.values());
+      const consolidatedStats = Array.from(allLocalStatsMap.values());
+
+      setAppData((prev: any) => {
+        const next = {
+          ...prev,
+          matches: consolidatedMatches,
+          sets: consolidatedSets,
+          stats: consolidatedStats,
+        };
+        try {
+          localStorage.setItem(`ucc_vball_db_${currentTeamKey}`, JSON.stringify(next));
+          localStorage.setItem(`ucc_backup_${currentTeamKey}`, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+
+      if (isManualTrigger || uploadedGamesCount > 0 || uploadedStatsCount > 0) {
+        showToast(
+          uploadedGamesCount > 0 || uploadedSetsCount > 0 || uploadedStatsCount > 0
+            ? `Firebase resync complete! ${uploadedGamesCount} game(s), ${uploadedSetsCount} set(s), and ${uploadedStatsCount} stat(s) verified & uploaded.`
+            : "Firebase is in sync! All games and stats are safely backed up in the cloud.",
+          "success",
+        );
+      }
+    } catch (err: any) {
+      console.error("Resync with Firebase notice:", err);
+      if (err?.code === "resource-exhausted" || err?.message?.includes("Quota")) {
+        markQuotaExceeded();
+        showToast("Firebase daily write quota reached. Games safely kept offline.", "info");
+      } else if (isManualTrigger) {
+        showToast(`Sync notice: ${err?.message || "Could not upload to cloud"}`, "error");
+      }
+    } finally {
+      setIsSyncingWithCloud(false);
+    }
+  };
+
   const sortPlayersByNumberThenAlpha = useCallback(
     (
       a: { number?: string | number; name?: string; id?: string } | null | undefined,
@@ -2116,7 +2380,15 @@ export default function App() {
   );
 
   const sortedRoster = useMemo(() => {
-    return [...(appData.roster || [])].sort(sortPlayersByNumberThenAlpha);
+    const rawRoster = appData.roster || [];
+    const seenIds = new Set<string>();
+    const uniqueRoster = rawRoster.filter((p, idx) => {
+      const id = String(p.id ?? `p_${idx}`);
+      if (seenIds.has(id)) return false;
+      seenIds.add(id);
+      return true;
+    });
+    return [...uniqueRoster].sort(sortPlayersByNumberThenAlpha);
   }, [appData.roster, sortPlayersByNumberThenAlpha]);
 
   const updateSetState = async (updates: any) => {
@@ -6944,19 +7216,53 @@ export default function App() {
                   <span className="h-2 w-2 rounded-full bg-emerald-500"></span> ACTIVE
                 </span>
               </div>
-              <div className="flex items-center justify-between py-1">
+              <div className="flex items-center justify-between py-1.5">
                 <span className="font-bold text-slate-700 flex items-center gap-2">
-                  <Check size={14} className="text-amber-600" />
+                  <History size={14} className="text-amber-600" />
                   Rolling Snapshot History
                 </span>
-                <span className="font-bold text-emerald-600 flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500"></span> SECURED
-                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRuggedStorageModal(false);
+                    setShowRollingSnapshotsModal(true);
+                  }}
+                  className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-black px-2.5 py-1 rounded-lg text-[10px] uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                  title="View and restore rolling snapshots"
+                >
+                  <Eye size={12} />
+                  <span>View Snapshots</span>
+                </button>
               </div>
             </div>
 
             {/* Manual Export & Import Tools */}
-            <div className="space-y-3 pt-1">
+            <div className="space-y-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRuggedStorageModal(false);
+                  setShowRollingSnapshotsModal(true);
+                }}
+                className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-black py-3 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <History size={16} />
+                <span>View & Restore Rolling Snapshots</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRuggedStorageModal(false);
+                  syncLocalGamesToCloud(true);
+                }}
+                disabled={isSyncingWithCloud}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-3 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <Upload size={16} />
+                <span>{isSyncingWithCloud ? "Syncing..." : "Resync & Upload Local Games to Firebase"}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleDownloadOfflineBackup}
@@ -6997,29 +7303,48 @@ export default function App() {
   const renderQuotaBanner = () => {
     if (!isQuotaExceeded || isQuotaBannerDismissed) return null;
     return (
-      <div className="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 px-3 sm:px-6 py-2.5 text-xs font-bold shadow-md flex items-center justify-between gap-3 relative z-[99999] border-b border-amber-600/30 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 px-3 sm:px-6 py-2 sm:py-2.5 text-xs font-bold shadow-md flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 sm:gap-3 relative z-[99999] border-b border-amber-600/30 shrink-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <AlertTriangle size={16} className="shrink-0 text-slate-950" />
-          <span className="truncate">
+          <span className="text-[11px] sm:text-xs">
             <span className="font-black uppercase tracking-wider mr-1.5">Offline Storage Active:</span>
-            Firebase daily free quota reached. All stats, rosters, and matches remain 100% functional and safely saved locally. Cloud sync resumes tomorrow.
+            Firebase quota reached or network offline. All games, stats, and rosters are safely saved locally on this device.
           </span>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => syncLocalGamesToCloud(true)}
+            disabled={isSyncingWithCloud}
+            className="bg-emerald-700 hover:bg-emerald-600 text-white px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors cursor-pointer flex items-center gap-1 shadow-xs disabled:opacity-50"
+            title="Resync with Firebase and upload any offline games and stats"
+          >
+            <Upload size={12} />
+            <span>{isSyncingWithCloud ? "Uploading..." : "Resync Games"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowRollingSnapshotsModal(true)}
+            className="bg-slate-900 hover:bg-slate-800 text-amber-300 px-2 sm:px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors cursor-pointer flex items-center gap-1 border border-amber-400/40"
+            title="View rolling snapshot history and recover data"
+          >
+            <History size={11} />
+            <span>Snapshots</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowRuggedStorageModal(true)}
-            className="bg-white/90 hover:bg-white text-slate-900 px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors cursor-pointer"
+            className="bg-white/90 hover:bg-white text-slate-900 px-2 sm:px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors cursor-pointer"
           >
-            Backup / Details
+            Backup
           </button>
           <a
             href="https://console.firebase.google.com/project/gen-lang-client-0889717047/firestore/databases/ai-studio-e1c4ddbe-c5d5-47e5-b23f-40fc7cdc9405/data?openUpgradeDialog=true"
             target="_blank"
             rel="noreferrer"
-            className="bg-slate-950 hover:bg-slate-800 text-white px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors"
+            className="bg-slate-950 hover:bg-slate-800 text-white px-2 sm:px-2.5 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors hidden md:inline-block"
           >
-            Upgrade Quota
+            Upgrade
           </a>
           <button
             type="button"
@@ -7034,9 +7359,9 @@ export default function App() {
               } catch {}
               setIsQuotaExceeded(false);
               setIsQuotaBannerDismissed(false);
-              showToast("Retrying cloud sync...", "info");
+              syncLocalGamesToCloud(true);
             }}
-            className="text-slate-900 hover:text-black uppercase tracking-wider text-[10px] font-black underline ml-1 cursor-pointer"
+            className="text-slate-900 hover:text-black uppercase tracking-wider text-[10px] font-black underline px-1 cursor-pointer"
           >
             Retry
           </button>
@@ -7048,11 +7373,11 @@ export default function App() {
                 sessionStorage.setItem("ucc_quota_banner_dismissed", "true");
               } catch {}
             }}
-            className="p-1 rounded-lg text-slate-950/80 hover:text-black hover:bg-black/10 active:scale-95 transition-all cursor-pointer ml-1"
-            title="Dismiss offline reminder"
+            className="p-1 sm:p-1.5 rounded-lg bg-black/15 hover:bg-black/30 text-slate-950 hover:text-black active:scale-95 transition-all cursor-pointer shrink-0 ml-0.5 flex items-center justify-center border border-black/20 shadow-2xs"
+            title="Dismiss offline reminder (X)"
             aria-label="Dismiss offline reminder"
           >
-            <X size={17} className="stroke-[2.5]" />
+            <X size={18} className="stroke-[2.5]" />
           </button>
         </div>
       </div>
@@ -7208,6 +7533,20 @@ export default function App() {
     return (
       <>
         {renderRuggedStorageModal()}
+        <RollingSnapshotsModal
+          isOpen={showRollingSnapshotsModal}
+          onClose={() => setShowRollingSnapshotsModal(false)}
+          activeTeam={activeTeam}
+          currentAppData={appData}
+          showToast={showToast}
+          syncLocalGamesToCloud={syncLocalGamesToCloud}
+          onRestoreSuccess={async (restoredData: any, uploadToCloud: boolean) => {
+            writeLocalDb(restoredData);
+            if (uploadToCloud) {
+              await syncLocalGamesToCloud(true);
+            }
+          }}
+        />
         {renderCoachLoginModal()}
         {renderEndGameModal()}
         {renderDeleteConfirmationModal()}
@@ -7723,7 +8062,16 @@ export default function App() {
               </p>
             </>
           ) : (
-            <div className="bg-slate-800 p-8 rounded-3xl border border-white/10 shadow-2xl animate-in fade-in zoom-in duration-500">
+            <div className="bg-slate-800 p-8 rounded-3xl border border-white/10 shadow-2xl animate-in fade-in zoom-in duration-500 relative">
+              <button
+                type="button"
+                onClick={() => setLoadingAuth(false)}
+                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-full hover:bg-white/10 transition-colors cursor-pointer"
+                title="Dismiss offline reminder"
+                aria-label="Dismiss offline reminder"
+              >
+                <X size={20} />
+              </button>
               <Shield className="text-amber-400 mb-4 mx-auto" size={48} />
               <h3 className="text-xl font-black text-white mb-2 uppercase tracking-tight">
                 Syncing taking a while?
@@ -8151,6 +8499,19 @@ export default function App() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => setShowRollingSnapshotsModal(true)}
+                      className="w-full mt-1.5 px-4 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 rounded-full text-amber-300 font-bold text-xs uppercase tracking-wider flex items-center justify-between transition-all cursor-pointer shadow-sm group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <History size={15} className="text-amber-400 group-hover:scale-110 transition-transform" />
+                        <span>Rolling Snapshots & Recovery</span>
+                      </div>
+                      <span className="text-[10px] bg-amber-500/30 text-amber-200 px-2.5 py-0.5 rounded-full font-black">
+                        View & Restore
+                      </span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={togglePlayerAccess}
                       className={`w-full mt-1.5 px-4 py-2.5 ${
                         isPlayerAccessAllowed
@@ -8266,13 +8627,22 @@ export default function App() {
               <Shield className="mr-2 sm:mr-3 text-blue-400" size={24} />{" "}
               VIEW OPPONENTS
             </button>
-            <button
-              onClick={() => setShowRuggedStorageModal(true)}
-              className="w-full bg-slate-800/90 hover:bg-slate-700/90 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-base sm:text-lg tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] border border-slate-700 hover:border-slate-500 cursor-pointer"
-            >
-              <HardDrive className="mr-2 sm:mr-3 text-emerald-400" size={24} />
-              <span>OFFLINE STORAGE & BACKUPS</span>
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+              <button
+                onClick={() => setShowRuggedStorageModal(true)}
+                className="w-full bg-slate-800/90 hover:bg-slate-700/90 text-white p-4 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-slate-700 hover:border-slate-500 cursor-pointer"
+              >
+                <HardDrive className="mr-2 text-emerald-400" size={22} />
+                <span>OFFLINE STORAGE</span>
+              </button>
+              <button
+                onClick={() => setShowRollingSnapshotsModal(true)}
+                className="w-full bg-slate-800/90 hover:bg-slate-700/90 text-amber-300 p-4 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-amber-500/40 hover:border-amber-400 cursor-pointer"
+              >
+                <History className="mr-2 text-amber-400" size={22} />
+                <span>ROLLING SNAPSHOTS</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -10538,7 +10908,7 @@ export default function App() {
                   <div className="grid grid-cols-4 gap-2">
                     {[3, 2, 1, 0].map((val) => (
                       <button
-                        key={val}
+                        key={`pass-rate-${val}`}
                         onClick={() => {
                           handleGameStat(
                             statPrompt.playerId,
@@ -11276,7 +11646,7 @@ export default function App() {
                     <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
                       {[3, 2, 1, 0].map((val) => (
                         <button
-                          key={val}
+                          key={`opp-rec-rate-${val}`}
                           onClick={() => {
                             recordOppStatAndCheckPoint(
                               selectedOppId,
@@ -11400,7 +11770,7 @@ export default function App() {
                       <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
                         {[3, 2, 1, 0].map((val) => (
                           <button
-                            key={val}
+                            key={`opp-pass-rate-${val}`}
                             onClick={() => {
                               recordOppStatAndCheckPoint(
                                 selectedOppId,
@@ -12508,7 +12878,7 @@ export default function App() {
                       { val: 0, label: "Aced (0)", desc: "Aced / Err", color: "from-red-500 to-red-600" },
                     ].map(({ val, label, desc, color }) => (
                       <button
-                        key={val}
+                        key={`opp-srv-rec-val-${val}`}
                         type="button"
                         onClick={() => {
                           if (val === 0) {
@@ -12850,7 +13220,7 @@ export default function App() {
                       { val: 0, label: "Aced (0)", desc: "0-Pass / Shank", color: "from-red-500 to-red-600" },
                     ].map(({ val, label, desc, color }) => (
                       <button
-                        key={val}
+                        key={`opp-pass-val-${val}`}
                         type="button"
                         onClick={() => {
                           if (val === 0) {
@@ -13424,27 +13794,26 @@ export default function App() {
 
                     {/* Quick Known Opponent Numbers Chips */}
                     {(() => {
-                      const knownNums = Array.from(
-                        new Set([
-                          ...(betweenSetsModal.tempOppLineup || []),
-                          ...(oppLineup || []),
-                          ...((opponentName &&
-                            appData.opponents?.[opponentName]?.defaultLineup) ||
-                            []),
-                          ...Object.keys(oppNotesMem || {}),
-                        ]),
-                      )
+                      const rawNums = [
+                        ...(betweenSetsModal.tempOppLineup || []),
+                        ...(oppLineup || []),
+                        ...((opponentName &&
+                          appData.opponents?.[opponentName]?.defaultLineup) ||
+                          []),
+                        ...Object.keys(oppNotesMem || {}),
+                      ]
                         .map((n) => String(n).trim())
                         .filter((n) => n && n !== "" && !n.startsWith("O"));
+                      const knownNums = Array.from(new Set(rawNums));
                       if (knownNums.length === 0) return null;
                       return (
                         <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-wrap items-center gap-1.5">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mr-1">
                             Known Numbers:
                           </span>
-                          {knownNums.map((num) => (
+                          {knownNums.map((num, idx) => (
                             <button
-                              key={num}
+                              key={`opp-known-${num}-${idx}`}
                               type="button"
                               onClick={() => {
                                 setBetweenSetsModal((prev) => {
@@ -14757,7 +15126,7 @@ export default function App() {
                   <div className="grid grid-cols-4 gap-2">
                     {[3, 2, 1, 0].map((val) => (
                       <button
-                        key={val}
+                        key={`prac-pass-val-${val}`}
                         onClick={() => {
                           handlePracticeStat(
                             practiceStatPrompt.playerId,
@@ -16912,9 +17281,9 @@ export default function App() {
                         </span>
                         {allUccPlayers
                           .filter((p) => isPlayerHidden(p))
-                          .map((p) => (
+                          .map((p, idx) => (
                             <button
-                              key={p.id}
+                              key={`hidden-p-${p.id}-${idx}`}
                               type="button"
                               onClick={() => toggleHidePlayer(p)}
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-amber-300 text-amber-900 text-xs hover:bg-amber-100 hover:border-amber-400 transition-colors font-semibold shadow-2xs group cursor-pointer"
@@ -18778,11 +19147,11 @@ export default function App() {
               <div className="p-4 overflow-y-auto flex-1 divide-y divide-slate-100">
                 {appData.roster
                   .filter((p) => showRetired || !p.isRetired)
-                  .map((player) => {
+                  .map((player, idx) => {
                     const isHidden = isPlayerHidden(player);
                     return (
                       <div
-                        key={player.id}
+                        key={`vis-player-${player.id}-${idx}`}
                         onClick={() => toggleHidePlayer(player)}
                         className="py-2.5 px-2 flex items-center justify-between hover:bg-slate-50 rounded-xl cursor-pointer transition-colors"
                       >

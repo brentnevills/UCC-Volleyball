@@ -553,7 +553,7 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                     {[3, 2, 1, 0].map((val) => (
                       <button
                         type="button"
-                        key={val}
+                        key={`stat-corr-rate-${val}`}
                         onClick={() => {
                           setNewMetric("Rating");
                           setNewValue(val);
@@ -855,7 +855,7 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                             {[3, 2, 1, 0].map((v) => (
                               <button
                                 type="button"
-                                key={v}
+                                key={`edit-rate-${v}`}
                                 onClick={() => setEditValue(v)}
                                 className={`flex-1 py-1 rounded text-xs font-bold ${
                                   editValue === v ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700"

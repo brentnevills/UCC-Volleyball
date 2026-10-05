@@ -185,14 +185,14 @@ export async function ruggedSaveTeamData(teamId: string, data: any): Promise<boo
         createdAt: Date.now(),
       });
 
-      // Keep only the latest 8 snapshots in IndexedDB to manage space
+      // Keep only the latest 30 snapshots in IndexedDB to manage space while retaining deep history
       try {
         const index = snapshotStore.index("by_team");
         const request = index.getAllKeys(targetKey);
         request.onsuccess = () => {
           const keys = request.result;
-          if (keys && keys.length > 8) {
-            const keysToDelete = keys.slice(0, keys.length - 8);
+          if (keys && keys.length > 30) {
+            const keysToDelete = keys.slice(0, keys.length - 30);
             for (const key of keysToDelete) {
               snapshotStore.delete(key);
             }
@@ -315,6 +315,328 @@ export async function ruggedLoadTeamData(teamId: string): Promise<any | null> {
   }
 
   return null;
+}
+
+export interface RollingSnapshotInfo {
+  id: string;
+  teamId: string;
+  createdAt: number;
+  dateFormatted: string;
+  source: string;
+  note?: string;
+  matchesCount: number;
+  setsCount: number;
+  statsCount: number;
+  rosterCount: number;
+  matchTitles: string[];
+  data: any;
+}
+
+/**
+ * Retrieve all rolling snapshots across IndexedDB, LocalStorage backups, and memory cache
+ */
+export async function getRollingSnapshots(teamId?: string): Promise<RollingSnapshotInfo[]> {
+  const snapshots: RollingSnapshotInfo[] = [];
+  const activeKey = (typeof localStorage !== "undefined" ? localStorage.getItem("ucc_vball_active_team") : "") || "ucc_main";
+  const targetKey = (teamId || activeKey).trim();
+  const seenIds = new Set<string>();
+
+  // 1. Check IndexedDB snapshot store
+  try {
+    const db = await getIndexedDB();
+    if (db) {
+      await new Promise<void>((resolve) => {
+        try {
+          const tx = db.transaction([STORE_SNAPSHOTS, STORE_TEAMS], "readonly");
+          const snapStore = tx.objectStore(STORE_SNAPSHOTS);
+          const req = snapStore.getAll();
+          req.onsuccess = () => {
+            const list = req.result;
+            if (Array.isArray(list)) {
+              for (const item of list) {
+                if (!item || !item.data) continue;
+                const matches = Array.isArray(item.data.matches) ? item.data.matches : [];
+                const sets = Array.isArray(item.data.sets) ? item.data.sets : [];
+                const stats = Array.isArray(item.data.stats) ? item.data.stats : [];
+                const roster = Array.isArray(item.data.roster) ? item.data.roster : [];
+                const matchTitles = matches.map((m: any) =>
+                  m.opponent ? `vs ${m.opponent}` : m.type || "Match",
+                );
+                const created =
+                  item.createdAt ||
+                  (item.id && !isNaN(Number(item.id.split("_").pop()))
+                    ? Number(item.id.split("_").pop())
+                    : Date.now());
+
+                const uniqueKey = `idb_snap_${item.teamId || targetKey}_${item.id || created}_${matches.length}_${stats.length}`;
+                if (seenIds.has(uniqueKey)) continue;
+                seenIds.add(uniqueKey);
+
+                snapshots.push({
+                  id: item.id || `snap_${created}`,
+                  teamId: item.teamId || targetKey,
+                  createdAt: created,
+                  dateFormatted: new Date(created).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  }),
+                  source: item.id?.startsWith("manual_")
+                    ? "Manual Snapshot"
+                    : item.id?.includes("pre_resync") || item.note?.toLowerCase().includes("resync")
+                    ? "Pre-Resync Snapshot"
+                    : "IndexedDB Rolling Snapshot",
+                  note: item.note || (item.id?.includes("pre_resync") ? "Automated Pre-Resync Safeguard" : undefined),
+                  matchesCount: matches.length,
+                  setsCount: sets.length,
+                  statsCount: stats.length,
+                  rosterCount: roster.length,
+                  matchTitles,
+                  data: item.data,
+                });
+              }
+            }
+
+            // Also check STORE_TEAMS mirror
+            try {
+              const teamStore = tx.objectStore(STORE_TEAMS);
+              const teamReq = teamStore.getAll();
+              teamReq.onsuccess = () => {
+                const teamList = teamReq.result;
+                if (Array.isArray(teamList)) {
+                  for (const tItem of teamList) {
+                    if (!tItem || !tItem.data) continue;
+                    const matches = Array.isArray(tItem.data.matches) ? tItem.data.matches : [];
+                    const sets = Array.isArray(tItem.data.sets) ? tItem.data.sets : [];
+                    const stats = Array.isArray(tItem.data.stats) ? tItem.data.stats : [];
+                    const roster = Array.isArray(tItem.data.roster) ? tItem.data.roster : [];
+                    const matchTitles = matches.map((m: any) =>
+                      m.opponent ? `vs ${m.opponent}` : m.type || "Match",
+                    );
+                    const created = tItem.updatedAt || Date.now();
+                    const uniqueKey = `idb_team_${tItem.teamId}_${created}_${matches.length}_${stats.length}`;
+                    if (!seenIds.has(uniqueKey)) {
+                      seenIds.add(uniqueKey);
+                      snapshots.push({
+                        id: `idb_team_${tItem.teamId}_${created}`,
+                        teamId: tItem.teamId,
+                        createdAt: created,
+                        dateFormatted: new Date(created).toLocaleString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        }),
+                        source: "IndexedDB Team Mirror",
+                        note: "Continuous Dual-Engine Database Mirror",
+                        matchesCount: matches.length,
+                        setsCount: sets.length,
+                        statsCount: stats.length,
+                        rosterCount: roster.length,
+                        matchTitles,
+                        data: tItem.data,
+                      });
+                    }
+                  }
+                }
+                resolve();
+              };
+              teamReq.onerror = () => resolve();
+            } catch {
+              resolve();
+            }
+          };
+          req.onerror = () => resolve();
+        } catch {
+          resolve();
+        }
+      });
+    }
+  } catch (err) {
+    console.warn("Could not query IndexedDB snapshots:", err);
+  }
+
+  // 2. Check LocalStorage backup keys
+  if (typeof localStorage !== "undefined") {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        if (key.startsWith("ucc_backup_") || key.startsWith("ucc_vball_db_")) {
+          const isBackupKey = key.startsWith("ucc_backup_");
+          const tId = key.replace(isBackupKey ? "ucc_backup_" : "ucc_vball_db_", "");
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            try {
+              const d = JSON.parse(raw);
+              if (d && typeof d === "object") {
+                const matches = Array.isArray(d.matches) ? d.matches : [];
+                const sets = Array.isArray(d.sets) ? d.sets : [];
+                const stats = Array.isArray(d.stats) ? d.stats : [];
+                const roster = Array.isArray(d.roster) ? d.roster : [];
+                const matchTitles = matches.map((m: any) =>
+                  m.opponent ? `vs ${m.opponent}` : m.type || "Match",
+                );
+                const lastSave = localStorage.getItem(`ucc_last_save_${tId}`);
+                const created = lastSave ? new Date(lastSave).getTime() : Date.now();
+
+                const uniqueKey = `ls_${tId}_${isBackupKey ? "bk" : "db"}_${matches.length}_${stats.length}`;
+                if (!seenIds.has(uniqueKey)) {
+                  seenIds.add(uniqueKey);
+                  snapshots.push({
+                    id: key,
+                    teamId: tId,
+                    createdAt: created,
+                    dateFormatted: new Date(created).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    }),
+                    source: isBackupKey ? "LocalStorage Double-Buffer Backup" : "LocalStorage Team Cache",
+                    note: isBackupKey ? "Synchronous Safety Buffer" : "Active Local Cache",
+                    matchesCount: matches.length,
+                    setsCount: sets.length,
+                    statsCount: stats.length,
+                    rosterCount: roster.length,
+                    matchTitles,
+                    data: d,
+                  });
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Could not check LocalStorage backups:", e);
+    }
+  }
+
+  // Filter by team if requested and teamId !== "all"
+  const filtered = (teamId && teamId !== "all")
+    ? snapshots.filter((s) => s.teamId === teamId)
+    : snapshots;
+
+  // Sort newest first
+  filtered.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  return filtered;
+}
+
+/**
+ * Manually capture a designated snapshot point
+ */
+export async function createManualSnapshot(teamId: string, data: any, note?: string): Promise<string> {
+  const targetKey = teamId.trim();
+  const timestamp = Date.now();
+  const snapshotId = `manual_${targetKey}_${timestamp}`;
+
+  try {
+    const db = await getIndexedDB();
+    if (db) {
+      const tx = db.transaction([STORE_SNAPSHOTS], "readwrite");
+      const store = tx.objectStore(STORE_SNAPSHOTS);
+      store.put({
+        id: snapshotId,
+        teamId: targetKey,
+        data: data,
+        createdAt: timestamp,
+        note: note || "Manual User Snapshot",
+      });
+    }
+  } catch (err) {
+    console.warn("Manual snapshot creation error:", err);
+  }
+
+  return snapshotId;
+}
+
+/**
+ * Capture an automated pre-resync snapshot before cloud syncing
+ */
+export async function capturePreResyncSnapshot(teamId: string, data: any): Promise<string> {
+  const targetKey = (teamId || "ucc_main").trim();
+  const timestamp = Date.now();
+  const snapshotId = `pre_resync_${targetKey}_${timestamp}`;
+
+  try {
+    const db = await getIndexedDB();
+    if (db) {
+      const tx = db.transaction([STORE_SNAPSHOTS], "readwrite");
+      const store = tx.objectStore(STORE_SNAPSHOTS);
+      store.put({
+        id: snapshotId,
+        teamId: targetKey,
+        data: data,
+        createdAt: timestamp,
+        note: "Automated Pre-Resync Safeguard Snapshot",
+      });
+    }
+    // Also save in LocalStorage backup as extra safety net
+    try {
+      localStorage.setItem(`ucc_backup_pre_resync_${targetKey}`, JSON.stringify(data));
+      localStorage.setItem(`ucc_last_save_pre_resync_${targetKey}`, new Date(timestamp).toISOString());
+    } catch {}
+  } catch (err) {
+    console.warn("Pre-resync snapshot notice:", err);
+  }
+
+  return snapshotId;
+}
+
+/**
+ * Atomically restore a snapshot across LocalStorage, Memory Cache, and IndexedDB
+ */
+export async function restoreRollingSnapshot(teamId: string, snapshotData: any): Promise<boolean> {
+  if (!snapshotData || typeof snapshotData !== "object") return false;
+  const targetKey = (teamId || "ucc_main").trim();
+
+  try {
+    // 1. Save to all rugged storage tiers
+    await ruggedSaveTeamData(targetKey, snapshotData);
+
+    // 2. Also log a restore snapshot marker
+    await createManualSnapshot(
+      targetKey,
+      snapshotData,
+      `Restored on ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+    );
+
+    return true;
+  } catch (err) {
+    console.error("Failed to restore rolling snapshot:", err);
+    return false;
+  }
+}
+
+/**
+ * Delete a specific rolling snapshot from IndexedDB
+ */
+export async function deleteRollingSnapshot(snapshotId: string): Promise<boolean> {
+  try {
+    if (snapshotId.startsWith("ucc_backup_") || snapshotId.startsWith("ucc_vball_db_")) {
+      localStorage.removeItem(snapshotId);
+      return true;
+    }
+    const db = await getIndexedDB();
+    if (db) {
+      const tx = db.transaction([STORE_SNAPSHOTS], "readwrite");
+      const store = tx.objectStore(STORE_SNAPSHOTS);
+      store.delete(snapshotId);
+      return true;
+    }
+  } catch (err) {
+    console.warn("Delete snapshot warning:", err);
+  }
+  return false;
 }
 
 /**
