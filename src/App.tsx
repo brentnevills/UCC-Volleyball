@@ -4141,7 +4141,7 @@ export default function App() {
     logStat(serverId, "Serve", "Ace", 1, isOpp);
 
     selectedAceReceivers.forEach((receiverId) => {
-      logStat(receiverId, "Pass", "Rating", 0, !isOpp);
+      logStat(receiverId, "Pass", "Aced", 0, !isOpp);
     });
 
     setAceReceiverPrompt(null);
@@ -5330,6 +5330,7 @@ export default function App() {
         pass2: 0,
         pass1: 0,
         pass0: 0,
+        passAced: 0,
         attCount: 0,
         attCountFront: 0,
         attCountBack: 0,
@@ -5377,6 +5378,7 @@ export default function App() {
             srvErr: 0,
             passSum: 0,
             passCount: 0,
+            passAced: 0,
           };
 
         const p = oppData[teamName][s.playerId];
@@ -5407,18 +5409,24 @@ export default function App() {
           if (s.metric?.includes("Miss") || s.metric === "Error") p.srvErr += 1;
         } else if (s.category === "Pass") {
           p.passCount += 1;
-          p.passSum += s.value;
+          p.passSum += (s.value || 0);
+          if (s.metric === "Aced" || s.isAced || (s.metric && s.metric.toLowerCase().includes("aced"))) {
+            p.passAced = (p.passAced || 0) + 1;
+          }
         }
       } else {
         const p = uccData[s.playerId];
         if (!p) return;
         if (s.category === "Pass") {
           p.passCount += 1;
-          p.passSum += s.value;
+          p.passSum += (s.value || 0);
           if (s.value === 3) p.pass3 += 1;
           else if (s.value === 2) p.pass2 += 1;
           else if (s.value === 1) p.pass1 += 1;
           else if (s.value === 0) p.pass0 += 1;
+          if (s.metric === "Aced" || s.isAced || (s.metric && s.metric.toLowerCase().includes("aced"))) {
+            p.passAced = (p.passAced || 0) + 1;
+          }
         } else if (s.category === "Dig") {
           if (s.metric === "Dig") p.digCount += 1;
           if (s.metric === "Error") p.digErr += 1;
@@ -5513,7 +5521,7 @@ export default function App() {
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
-    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Digs,Dig Touches,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Times Aced,Digs,Dig Touches,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
     const allPlayers = Object.values(uccStats).filter((p) => {
       if (!showRetired && p.isRetired) return false;
@@ -5603,6 +5611,7 @@ export default function App() {
 
       shownTot.passCount += p.passCount || 0;
       shownTot.passSum += p.passSum || 0;
+      shownTot.passAced = (shownTot.passAced || 0) + (p.passAced || 0);
       shownTot.digCount += p.digCount || 0;
       shownTot.digErr += p.digErr || 0;
       shownTot.attCount += p.attCount || 0;
@@ -5620,7 +5629,11 @@ export default function App() {
       shownTot.srvAce += p.srvAce || 0;
       shownTot.srvErr += p.srvErr || 0;
 
-      csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+      teamTot.passCount += p.passCount || 0;
+      teamTot.passSum += p.passSum || 0;
+      teamTot.passAced = (teamTot.passAced || 0) + (p.passAced || 0);
+
+      csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.passAced || 0},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
     });
 
     if (hasHiddenPlayers) {
@@ -5634,7 +5647,7 @@ export default function App() {
           : "0.0%";
       const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
-      csv += `"","SHOWN PLAYERS (AVG & TOT)",${shownPassAvg},${shownTot.passCount},${shownTot.digCount},${shownTot.digErr},${shownTot.attCount},${shownTot.attCountFront},${shownTot.attCountBack},${shownTot.attKill},${shownKillPct},${shownTot.attErr},${shownTot.attBlk},${shownBlkTot},${shownTot.blkStuff},${shownTot.blkLate},${shownTot.blkNet},${shownTot.blkUsed},${shownSrvTot},${shownTot.srvAce},${shownTot.srvErr},${shownSrvPlusMinus}\n`;
+      csv += `"","SHOWN PLAYERS (AVG & TOT)",${shownPassAvg},${shownTot.passCount},${shownTot.passAced || 0},${shownTot.digCount},${shownTot.digErr},${shownTot.attCount},${shownTot.attCountFront},${shownTot.attCountBack},${shownTot.attKill},${shownKillPct},${shownTot.attErr},${shownTot.attBlk},${shownBlkTot},${shownTot.blkStuff},${shownTot.blkLate},${shownTot.blkNet},${shownTot.blkUsed},${shownSrvTot},${shownTot.srvAce},${shownTot.srvErr},${shownSrvPlusMinus}\n`;
     }
 
     const totPassAvg =
@@ -5647,7 +5660,7 @@ export default function App() {
         : "0.0%";
     const totSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
 
-    csv += `"","TEAM TOTALS (WHOLE TEAM)",${totPassAvg},${teamTot.passCount},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},${teamTot.attBlk},${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus}\n`;
+    csv += `"","TEAM TOTALS (WHOLE TEAM)",${totPassAvg},${teamTot.passCount},${teamTot.passAced || 0},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},${teamTot.attBlk},${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus}\n`;
 
     csv +=
       "\nOPPONENT STATS\nID,Aces,Serve Errors,Serve +/-,Swings,Kills,Kill %,Pass Avg,Passes\n";
@@ -5716,6 +5729,7 @@ export default function App() {
         "Name",
         "Pass Avg",
         "Passes",
+        "Aced",
         "Digs",
         "Dig Touches",
         "Swings",
@@ -5847,6 +5861,7 @@ export default function App() {
         p.name,
         passAvg,
         p.passCount,
+        p.passAced || 0,
         p.digCount,
         p.digErr,
         p.attCount,
@@ -5896,6 +5911,7 @@ export default function App() {
         "PLAYERS (AVG)",
         shownPassAvg,
         shownTot.passCount,
+        shownTot.passAced || 0,
         shownTot.digCount,
         shownTot.digErr,
         shownTot.attCount,
@@ -5922,6 +5938,7 @@ export default function App() {
       "TOTALS (ALL)",
       totPassAvg,
       teamTot.passCount,
+      teamTot.passAced || 0,
       teamTot.digCount,
       teamTot.digErr,
       teamTot.attCount,
@@ -12872,18 +12889,17 @@ export default function App() {
 
                   <div className="grid grid-cols-4 gap-2">
                     {[
-                      { val: 3, label: "Perfect (3)", desc: "All options", color: "from-green-500 to-green-600" },
-                      { val: 2, label: "Good (2)", desc: "Medium", color: "from-teal-500 to-teal-600" },
-                      { val: 1, label: "Poor (1)", desc: "Out of sys", color: "from-amber-500 to-amber-600" },
-                      { val: 0, label: "Aced (0)", desc: "Aced / Err", color: "from-red-500 to-red-600" },
+                      { val: 3, label: "Perfect (3)", desc: "In-System", color: "from-green-500 to-green-600" },
+                      { val: 2, label: "Good (2)", desc: "In-System", color: "from-teal-500 to-teal-600" },
+                      { val: 1, label: "Poor (1)", desc: "Out of System", color: "from-amber-500 to-amber-600" },
+                      { val: 0, label: "Overbump (0)", desc: "Out of System", color: "from-orange-500 to-orange-600" },
                     ].map(({ val, label, desc, color }) => (
                       <button
                         key={`opp-srv-rec-val-${val}`}
                         type="button"
                         onClick={() => {
                           if (val === 0) {
-                            // Recording rating 0 also logs that this receiver got aced and awards point to opponent
-                            const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                            // 0-Pass is an overbump - play continues, do NOT award ace or point to opponent!
                             logStat(
                               oppServeReceivePrompt.passerId,
                               "Pass",
@@ -12891,9 +12907,9 @@ export default function App() {
                               0,
                               false,
                             );
-                            logStat(sId, "Serve", "Ace", 1, true);
-                            handlePoint("opp", true);
+                            changeRallyPhase("play");
                             setOppServeReceivePrompt(null);
+                            showToast("0-Pass (Overbump) recorded • Play continues", "info");
                           } else {
                             recordStatAndCheckPoint(
                               oppServeReceivePrompt.passerId,
@@ -12913,6 +12929,30 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+
+                  {/* Dedicated Receiver Aced Option */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
+                      logStat(
+                        oppServeReceivePrompt.passerId,
+                        "Pass",
+                        "Aced",
+                        0,
+                        false,
+                      );
+                      logStat(sId, "Serve", "Ace", 1, true);
+                      handlePoint("opp", true);
+                      setOppServeReceivePrompt(null);
+                      showToast("Receiver Aced -> Point Opponent", "info");
+                    }}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer mt-1"
+                    title="Receiver got aced (reception error) -> Point for Opponent"
+                  >
+                    <XCircle size={15} />
+                    <span>Aced / Reception Error (+Pt Opp)</span>
+                  </button>
 
                   <div className="pt-2 flex gap-2">
                     <button
@@ -13214,30 +13254,26 @@ export default function App() {
 
                   <div className="grid grid-cols-4 gap-2">
                     {[
-                      { val: 3, label: "Perfect (3)", desc: "All options", color: "from-green-500 to-green-600" },
-                      { val: 2, label: "Good (2)", desc: "Medium", color: "from-teal-500 to-teal-600" },
-                      { val: 1, label: "Poor (1)", desc: "Out of sys", color: "from-amber-500 to-amber-600" },
-                      { val: 0, label: "Aced (0)", desc: "0-Pass / Shank", color: "from-red-500 to-red-600" },
+                      { val: 3, label: "Perfect (3)", desc: "In-System", color: "from-green-500 to-green-600" },
+                      { val: 2, label: "Good (2)", desc: "In-System", color: "from-teal-500 to-teal-600" },
+                      { val: 1, label: "Poor (1)", desc: "Out of System", color: "from-amber-500 to-amber-600" },
+                      { val: 0, label: "Overbump (0)", desc: "Out of System", color: "from-orange-500 to-orange-600" },
                     ].map(({ val, label, desc, color }) => (
                       <button
                         key={`opp-pass-val-${val}`}
                         type="button"
                         onClick={() => {
                           if (val === 0) {
-                            // Recording rating 0 logs that this opponent receiver got aced and awards point to Lancers
-                            const sId = oppPassingPrompt.serverId || lineup[0] || "UCC";
-                            pushToHistory();
-                            logStat(
+                            // 0-Pass is an overbump - play continues, do NOT award ace or point to UCC!
+                            recordOppStatAndCheckPoint(
                               oppPassingPrompt.passerId,
                               "Pass",
                               "Rating",
                               0,
-                              true,
                             );
-                            logStat(sId, "Serve", "Ace", 1, false);
-                            handlePoint("ucc", true);
+                            changeRallyPhase("play");
                             setOppPassingPrompt(null);
-                            showToast(`Opponent #${oppPassingPrompt.passerId} Shank -> Ace & Point Lancers!`, "success");
+                            showToast(`Opponent #${oppPassingPrompt.passerId} 0-Pass (Overbump) • Play on!`, "info");
                           } else {
                             recordOppStatAndCheckPoint(
                               oppPassingPrompt.passerId,
@@ -13259,6 +13295,31 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+
+                  {/* Dedicated Opponent Aced Option */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sId = oppPassingPrompt.serverId || lineup[0] || "UCC";
+                      pushToHistory();
+                      logStat(
+                        oppPassingPrompt.passerId,
+                        "Pass",
+                        "Aced",
+                        0,
+                        true,
+                      );
+                      logStat(sId, "Serve", "Ace", 1, false);
+                      handlePoint("ucc", true);
+                      setOppPassingPrompt(null);
+                      showToast(`Ace! Opponent #${oppPassingPrompt.passerId} Aced (+1 Pt Lancers)`, "success");
+                    }}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer mt-1"
+                    title="Opponent got aced by our serve -> Point Lancers"
+                  >
+                    <CheckCircle2 size={15} />
+                    <span>Opponent Aced (Ace + Point Lancers)</span>
+                  </button>
 
                   <div className="pt-2 flex gap-2">
                     <button
@@ -17072,6 +17133,7 @@ export default function App() {
                   acc.pass2 += p.pass2 || 0;
                   acc.pass1 += p.pass1 || 0;
                   acc.pass0 += p.pass0 || 0;
+                  acc.passAced += p.passAced || 0;
                   acc.digCount += p.digCount || 0;
                   acc.digErr += p.digErr || 0;
                   acc.attCount += p.attCount || 0;
@@ -17108,6 +17170,7 @@ export default function App() {
                   pass2: 0,
                   pass1: 0,
                   pass0: 0,
+                  passAced: 0,
                   digCount: 0,
                   digErr: 0,
                   attCount: 0,
@@ -17162,6 +17225,7 @@ export default function App() {
                   acc.pass2 += p.pass2 || 0;
                   acc.pass1 += p.pass1 || 0;
                   acc.pass0 += p.pass0 || 0;
+                  acc.passAced += p.passAced || 0;
                   acc.digCount += p.digCount || 0;
                   acc.digErr += p.digErr || 0;
                   acc.attCount += p.attCount || 0;
@@ -17198,6 +17262,7 @@ export default function App() {
                   pass2: 0,
                   pass1: 0,
                   pass0: 0,
+                  passAced: 0,
                   digCount: 0,
                   digErr: 0,
                   attCount: 0,
@@ -17334,7 +17399,7 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Player View Banner with Anti-Screenshot Protection Indicator */}
+                  {/* Player View Banner */}
                   {isPlayerRole && isPlayerAccessAllowed && (
                     <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-2 border-amber-500/40 rounded-2xl p-4 mb-4 text-white shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 select-none">
                       <div className="flex items-center gap-3">
@@ -17344,18 +17409,17 @@ export default function App() {
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-black text-xs uppercase tracking-wider text-amber-300">
-                              Player View-Only Mode
+                              Player View Mode
                             </span>
-                            <span className="text-[10px] bg-red-950/90 text-red-300 px-2.5 py-0.5 rounded-full font-bold border border-red-800 flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
-                              Screenshot Shield & Forensic Watermark Active
+                            <span className="text-[10px] bg-emerald-950/90 text-emerald-300 px-2.5 py-0.5 rounded-full font-bold border border-emerald-800">
+                              View Only
                             </span>
                             <span className="text-[10px] bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full font-mono border border-slate-700">
                               {user?.email || "Google Account"}
                             </span>
                           </div>
                           <p className="text-slate-300 text-xs mt-0.5 leading-relaxed">
-                            Official team stats (view-only on your personal device). Screen captures, downloads, and printing are prohibited and forensically watermarked.
+                            Team statistics and individual performances for players.
                           </p>
                         </div>
                       </div>
@@ -17406,13 +17470,10 @@ export default function App() {
                             >
                               {isPlayerAccessAllowed ? "AVAILABLE TO PLAYERS" : "ACCESS CLOSED"}
                             </span>
-                            <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-bold border border-slate-700">
-                              Anti-Screenshot Always Active
-                            </span>
                           </div>
                           <p className="text-slate-400 text-xs mt-0.5">
                             {isPlayerAccessAllowed
-                              ? "Players with the team code can log in and view stats on personal devices (with screenshot prevention)."
+                              ? "Players with the team code can log in and view stats on personal devices."
                               : "Players are locked out. Stats are hidden from all player accounts until you re-enable access."}
                           </p>
                         </div>
@@ -17507,7 +17568,7 @@ export default function App() {
                             <span>Type numbers directly • <kbd className="px-1 py-0.5 bg-slate-100 rounded border text-[10px]">Enter</kbd> moves down • <kbd className="px-1 py-0.5 bg-slate-100 rounded border text-[10px]">Tab</kbd> moves right</span>
                           </>
                         ) : (
-                          <span>💡 Track momentum: Switch to <strong>Stats Evolution & Trends</strong> or <strong>Spreadsheet Edit Mode</strong></span>
+                          <span>View match statistics, evolution charts, or spreadsheet editor above</span>
                         )}
                       </div>
                     </div>
@@ -17609,6 +17670,24 @@ export default function App() {
                               setStatBreakdownModal({
                                 isOpen: true,
                                 selectedPlayer: teamTot,
+                                category: "pass",
+                                titleContext: "Team Times Aced / Receive Breakdown",
+                              })
+                            }
+                            className="p-2 sm:p-3 font-black text-center border-l border-slate-200 bg-amber-50/50 text-amber-950 cursor-pointer hover:bg-amber-100/70 transition-colors"
+                            title="Click to view Team Times Aced Breakdown"
+                          >
+                            ACED ▾
+                            <br />
+                            <span className="opacity-70 font-bold tracking-normal">
+                              (Times)
+                            </span>
+                          </th>
+                          <th
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
                                 category: "dig",
                                 titleContext: "Team Dig Breakdown",
                               })
@@ -17637,7 +17716,7 @@ export default function App() {
                             SWINGS ▾
                             <br />
                             <span className="opacity-70 font-bold tracking-normal text-[8px] sm:text-[9px]">
-                              Tot(F/B) K-E-B
+                              Tot(F/B) • FR Set%
                             </span>
                           </th>
                           <th
@@ -17761,6 +17840,23 @@ export default function App() {
                               ({teamTot.passCount})
                             </span>
                           </td>
+                          {/* ACED */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "pass",
+                                titleContext: "Team Passing Breakdown",
+                              })
+                            }
+                            className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-amber-950/40 text-amber-300 cursor-pointer hover:bg-amber-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            title="Times Team Got Aced on Receive"
+                          >
+                            <span className="text-sm sm:text-base font-black text-amber-300">
+                              {teamTot.passAced || 0}
+                            </span>
+                          </td>
                           {/* DIGS */}
                           <td
                             onClick={() =>
@@ -17799,8 +17895,13 @@ export default function App() {
                               {teamTot.attCount}
                             </span>{" "}
                             <span className="text-[9px] text-blue-200 font-medium">
-                              ({teamTot.attCountFront}/{teamTot.attCountBack})
+                              ({teamTot.attCountFront}F/{teamTot.attCountBack}B)
                             </span>
+                            {teamTot.attCount > 0 && (
+                              <span className="text-[8px] font-bold text-amber-300 ml-1">
+                                {((teamTot.attCountFront / teamTot.attCount) * 100).toFixed(0)}% FR
+                              </span>
+                            )}
                             <br />
                             <span className="text-emerald-300 font-black text-sm">
                               {teamTot.attKill}
@@ -17973,6 +18074,23 @@ export default function App() {
                                 ({shownTot.passCount})
                               </span>
                             </td>
+                            {/* ACED */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "pass",
+                                  titleContext: "Shown Players Passing Breakdown",
+                                })
+                              }
+                              className={`p-2 sm:p-3 font-black text-center border-l border-white/10 bg-amber-950/40 text-amber-300 cursor-pointer hover:bg-amber-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              title="Times Shown Players Got Aced on Receive"
+                            >
+                              <span className="text-sm sm:text-base font-black text-amber-300">
+                                {shownTot.passAced || 0}
+                              </span>
+                            </td>
                             {/* DIGS */}
                             <td
                               onClick={() =>
@@ -18134,7 +18252,7 @@ export default function App() {
                         {visibleUccPlayers.length === 0 ? (
                           <tr>
                             <td
-                              colSpan={8}
+                              colSpan={9}
                               className="p-8 text-center text-slate-400 font-bold tracking-wider text-xs"
                             >
                               No players visible. (Check filters or hidden
@@ -18218,6 +18336,29 @@ export default function App() {
                                     ({p.passCount})
                                   </span>
                                 </td>
+                                {/* ACED */}
+                                <td
+                                  onClick={() =>
+                                    setStatBreakdownModal({
+                                      isOpen: true,
+                                      selectedPlayer: p,
+                                      category: "pass",
+                                      titleContext: `${p.name} (#${p.number || "-"})`,
+                                    })
+                                  }
+                                  className={`p-2 sm:p-3 font-bold text-center border-l border-slate-100 bg-amber-50/20 cursor-pointer hover:bg-amber-100/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
+                                  title={`Click to view times ${p.name} was aced`}
+                                >
+                                  <span
+                                    className={
+                                      (p.passAced || 0) > 0
+                                        ? "text-rose-600 font-black text-xs sm:text-sm"
+                                        : "text-slate-400 font-bold"
+                                    }
+                                  >
+                                    {p.passAced || 0}
+                                  </span>
+                                </td>
                                 {/* DIGS */}
                                 <td
                                   onClick={() =>
@@ -18252,30 +18393,41 @@ export default function App() {
                                     })
                                   }
                                   className={`p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
-                                  title={`Click to view ${p.name}'s Attack breakdown (Front/Back, Net, Out, Stuffed)`}
+                                  title={`Click to view ${p.name}'s Attack breakdown (Front Row Set Dist: ${teamTot.attCountFront > 0 ? ((p.attCountFront / teamTot.attCountFront) * 100).toFixed(0) : "0"}%)`}
                                 >
-                                  <span className="font-bold text-slate-600">
-                                    {p.attCount}
-                                  </span>{" "}
-                                  <span className="text-[9px] text-slate-400 font-medium">
-                                    ({p.attCountFront}/{p.attCountBack})
-                                  </span>
-                                  <br />
-                                  <span className="text-green-600 font-black text-sm">
-                                    {p.attKill}
-                                  </span>{" "}
-                                  <span className="text-slate-300 mx-0.5">
-                                    -
-                                  </span>{" "}
-                                  <span className="text-red-500 font-bold text-xs">
-                                    {p.attErr}
-                                  </span>{" "}
-                                  <span className="text-slate-300 mx-0.5">
-                                    -
-                                  </span>{" "}
-                                  <span className="text-amber-600 font-bold text-xs">
-                                    {p.attBlk}
-                                  </span>
+                                  <div className="flex items-center justify-center gap-1 flex-wrap">
+                                    <span className="font-bold text-slate-700">
+                                      {p.attCount}
+                                    </span>
+                                    <span className="text-[9px] text-slate-400 font-medium">
+                                      ({p.attCountFront}F/{p.attCountBack}B)
+                                    </span>
+                                    {p.attCountFront > 0 && teamTot.attCountFront > 0 && (
+                                      <span
+                                        className="text-[8px] font-black bg-indigo-50 text-indigo-700 px-1 py-0.2 rounded border border-indigo-200"
+                                        title={`Front Row Set Distribution: ${((p.attCountFront / teamTot.attCountFront) * 100).toFixed(0)}% of team front-row sets were set to ${p.name}`}
+                                      >
+                                        {((p.attCountFront / teamTot.attCountFront) * 100).toFixed(0)}% FR
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] mt-0.5">
+                                    <span className="text-green-600 font-black text-sm">
+                                      {p.attKill}
+                                    </span>{" "}
+                                    <span className="text-slate-300 mx-0.5">
+                                      -
+                                    </span>{" "}
+                                    <span className="text-red-500 font-bold text-xs">
+                                      {p.attErr}
+                                    </span>{" "}
+                                    <span className="text-slate-300 mx-0.5">
+                                      -
+                                    </span>{" "}
+                                    <span className="text-amber-600 font-bold text-xs">
+                                      {p.attBlk}
+                                    </span>
+                                  </div>
                                 </td>
                                 {/* KILL % */}
                                 <td
@@ -18459,6 +18611,23 @@ export default function App() {
                               </span>{" "}
                               <span className="text-[9px] sm:text-[10px] text-indigo-200 font-bold ml-0.5 sm:ml-1">
                                 ({shownTot.passCount})
+                              </span>
+                            </td>
+                            {/* ACED */}
+                            <td
+                              onClick={() =>
+                                setStatBreakdownModal({
+                                  isOpen: true,
+                                  selectedPlayer: shownTot,
+                                  category: "pass",
+                                  titleContext: "Shown Players Passing Breakdown",
+                                })
+                              }
+                              className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-amber-950/40 cursor-pointer hover:bg-amber-900/50 transition-colors ${isShownTotConcealed ? "secure-stat-concealed" : ""}`}
+                              title="Click to view Shown Players Times Aced breakdown"
+                            >
+                              <span className="text-sm sm:text-base text-amber-300">
+                                {shownTot.passAced || 0}
                               </span>
                             </td>
                             {/* DIGS */}
@@ -18663,6 +18832,23 @@ export default function App() {
                               ({teamTot.passCount})
                             </span>
                           </td>
+                          {/* ACED */}
+                          <td
+                            onClick={() =>
+                              setStatBreakdownModal({
+                                isOpen: true,
+                                selectedPlayer: teamTot,
+                                category: "pass",
+                                titleContext: "Team Passing Breakdown",
+                              })
+                            }
+                            className={`p-2 sm:p-3 font-black text-white text-center border-l border-white/10 bg-amber-950/40 cursor-pointer hover:bg-amber-900/50 transition-colors ${isTeamTotConcealed ? "secure-stat-concealed" : ""}`}
+                            title="Click to view Team Times Aced breakdown"
+                          >
+                            <span className="text-sm sm:text-base text-amber-300">
+                              {teamTot.passAced || 0}
+                            </span>
+                          </td>
                           {/* DIGS */}
                           <td
                             onClick={() =>
@@ -18701,8 +18887,13 @@ export default function App() {
                               {teamTot.attCount}
                             </span>{" "}
                             <span className="text-[9px] text-blue-200 font-medium">
-                              ({teamTot.attCountFront}/{teamTot.attCountBack})
+                              ({teamTot.attCountFront}F/{teamTot.attCountBack}B)
                             </span>
+                            {teamTot.attCount > 0 && (
+                              <span className="text-[8px] font-bold text-amber-300 ml-1">
+                                {((teamTot.attCountFront / teamTot.attCount) * 100).toFixed(0)}% FR
+                              </span>
+                            )}
                             <br />
                             <span className="text-emerald-300 font-black text-sm">
                               {teamTot.attKill}
@@ -19238,6 +19429,8 @@ export default function App() {
             setStatBreakdownModal((prev) => ({ ...prev, isOpen: false }))
           }
           selectedPlayer={statBreakdownModal.selectedPlayer}
+          allPlayers={allUccPlayers}
+          teamStats={teamTot}
           initialCategory={statBreakdownModal.category}
           titleContext={statBreakdownModal.titleContext}
           onOpenCorrection={(playerId) => {

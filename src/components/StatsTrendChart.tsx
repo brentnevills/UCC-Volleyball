@@ -1,3 +1,4 @@
+import { calculatePassingIndex } from "../utils/volleyballStats";
 import React, { useState, useMemo } from "react";
 import {
   TrendingUp,
@@ -16,6 +17,8 @@ import {
   Activity,
   CheckCircle2,
   Trash2,
+  Crosshair,
+  Users,
 } from "lucide-react";
 
 export interface StatsTrendChartProps {
@@ -31,7 +34,19 @@ export interface StatsTrendChartProps {
 
 export type TimelineScope = "single_match" | "tournament_league" | "all_season";
 export type Granularity = "by_rally" | "by_set" | "by_game";
-export type MetricKey = "killPct" | "hittingEff" | "acePct" | "serveErrorPct" | "passAvg" | "sideoutPct";
+export type MetricKey =
+  | "killPct"
+  | "hittingEff"
+  | "swings"
+  | "frontSetPct"
+  | "inSystemPct"
+  | "outOfSystemPct"
+  | "acePct"
+  | "serveErrorPct"
+  | "passAvg"
+  | "passIndex"
+  | "timesAced"
+  | "sideoutPct";
 
 interface MetricConfig {
   key: MetricKey;
@@ -66,6 +81,46 @@ const METRICS: MetricConfig[] = [
     description: "Swing Efficiency = (Kills - Attack Errors) / Total Swings.",
   },
   {
+    key: "swings",
+    label: "Total Swings",
+    shortLabel: "Swings",
+    color: "bg-sky-500",
+    stroke: "#0ea5e9",
+    format: (v) => `${Math.round(v)}`,
+    unit: "att",
+    description: "Total attack attempts and swings taken.",
+  },
+  {
+    key: "frontSetPct",
+    label: "Front Row Set %",
+    shortLabel: "FR Set%",
+    color: "bg-indigo-600",
+    stroke: "#4f46e5",
+    format: (v) => `${(v * 100).toFixed(1)}%`,
+    unit: "%",
+    description: "Front Row Set Distribution: % of sets/swings taken from the front row.",
+  },
+  {
+    key: "inSystemPct",
+    label: "In-System Pass %",
+    shortLabel: "In-Sys%",
+    color: "bg-teal-500",
+    stroke: "#14b8a6",
+    format: (v) => `${(v * 100).toFixed(1)}%`,
+    unit: "%",
+    description: "In-System Passes (ratings 3 and 2) divided by total receptions.",
+  },
+  {
+    key: "outOfSystemPct",
+    label: "Out-of-System Pass %",
+    shortLabel: "OOS%",
+    color: "bg-amber-600",
+    stroke: "#d97706",
+    format: (v) => `${(v * 100).toFixed(1)}%`,
+    unit: "%",
+    description: "Out-of-System Passes (ratings 1 and 0) divided by total receptions.",
+  },
+  {
     key: "acePct",
     label: "Ace %",
     shortLabel: "Ace%",
@@ -94,6 +149,26 @@ const METRICS: MetricConfig[] = [
     format: (v) => v.toFixed(2),
     unit: "pts",
     description: "Serve receive passing grade on standard 0-3 point scale.",
+  },
+  {
+    key: "passIndex",
+    label: "Passing Index",
+    shortLabel: "Pass Idx",
+    color: "bg-purple-600",
+    stroke: "#9333ea",
+    format: (v) => `${Math.round(v)}`,
+    unit: "idx",
+    description: "Passing Index (0-100) combining receive volume and 0-3 pass quality.",
+  },
+  {
+    key: "timesAced",
+    label: "Times Aced",
+    shortLabel: "Aced",
+    color: "bg-orange-500",
+    stroke: "#f97316",
+    format: (v) => `${Math.round(v)}`,
+    unit: "times",
+    description: "Times aced on serve receive (reception errors).",
   },
   {
     key: "sideoutPct",
@@ -146,11 +221,16 @@ interface RallyPoint {
   runningAcePct: number;
   runningServeErrorPct: number;
   runningPassAvg: number;
+  runningPassIndex?: number;
+  runningTimesAced?: number;
   runningSideoutPct: number;
   runningEarnedPoints: number;
   runningUnforcedErrors: number;
   runningKills: number;
   runningAttacks: number;
+  runningFrontAttacks?: number;
+  runningBackAttacks?: number;
+  runningFrontSetPct?: number;
   runningAttackErrors: number;
   runningAces: number;
   runningServes: number;
@@ -187,8 +267,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
   // Granularities: By Rally / Point ("by_rally"), By Set ("by_set"), By Game / Match ("by_game")
   const [granularity, setGranularity] = useState<Granularity>("by_rally");
 
-  // Chart Presentation Mode: "metrics" (rates) | "running_score" (dual point-by-point curves) | "momentum" (differential)
-  const [chartMode, setChartMode] = useState<"running_score" | "momentum" | "metrics">("metrics");
+  // Chart Presentation Mode: "metrics" (rates) | "running_score" (dual point-by-point curves) | "momentum" (differential) | "swings" (attack evolution)
+  const [chartMode, setChartMode] = useState<"running_score" | "momentum" | "metrics" | "swings">("metrics");
 
   // Selected Match ID (for single match scope)
   const [selectedMatchId, setSelectedMatchId] = useState<string>(() => {
@@ -212,6 +292,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
   // Hovered Rally Tooltip State
   const [hoveredPoint, setHoveredPoint] = useState<any | null>(null);
   const [hoveredDiscretePoint, setHoveredDiscretePoint] = useState<any | null>(null);
+  const [hoveredSwingPoint, setHoveredSwingPoint] = useState<any | null>(null);
 
   // Group Matches into League Days and Tournaments
   const tournamentGroups = useMemo<TournamentLeagueGroup[]>(() => {
@@ -357,6 +438,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     // Check if recorded pointHistory exists
     if (setObj.pointHistory && Array.isArray(setObj.pointHistory) && setObj.pointHistory.length > 0) {
       let cumulativeAttacks = 0;
+      let cumulativeFrontAttacks = 0;
+      let cumulativeBackAttacks = 0;
       let cumulativeKills = 0;
       let cumulativeAttackErrors = 0;
       let cumulativeServes = 0;
@@ -364,6 +447,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       let cumulativeServeErrors = 0;
       let cumulativePassSum = 0;
       let cumulativePassCount = 0;
+      let cumulativeTimesAced = 0;
       let cumulativeStuffBlocks = 0;
       let cumulativeDigs = 0;
 
@@ -401,6 +485,10 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
           if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
             cumulativeAttacks += val;
+            const isFront = st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
+            if (isFront) cumulativeFrontAttacks += val;
+            else cumulativeBackAttacks += val;
+
             if (isAttackKillMetric(met)) {
               cumulativeKills += val;
             } else if (isAttackErrorMetric(met)) {
@@ -418,6 +506,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
             else if (met === "0" || met.includes("error")) sc = 0;
             cumulativePassSum += sc * val;
             cumulativePassCount += val;
+            if (met.includes("aced") || (st as any).isAced) cumulativeTimesAced += val;
           } else if (cat === "block") {
             if (met.includes("kill") || met.includes("solo") || met.includes("point") || met.includes("stuff") || met === "block") {
               cumulativeStuffBlocks += val;
@@ -476,6 +565,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         const runSideoutPct = u + o > 0 ? u / (u + o) : 0;
         const runEarnedPoints = cumulativeKills + cumulativeAces + cumulativeStuffBlocks;
         const runUnforcedErrors = cumulativeAttackErrors + cumulativeServeErrors;
+        const runFrontSetPct = cumulativeAttacks > 0 ? cumulativeFrontAttacks / cumulativeAttacks : 0;
 
         return {
           rallyNum: idx + 1,
@@ -495,11 +585,16 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           runningAcePct: runAcePct,
           runningServeErrorPct: runServeErrorPct,
           runningPassAvg: runPassAvg,
+          runningPassIndex: calculatePassingIndex(cumulativePassSum, cumulativePassCount),
+          runningTimesAced: cumulativeTimesAced,
           runningSideoutPct: runSideoutPct,
           runningEarnedPoints: runEarnedPoints,
           runningUnforcedErrors: runUnforcedErrors,
           runningKills: cumulativeKills,
           runningAttacks: cumulativeAttacks,
+          runningFrontAttacks: cumulativeFrontAttacks,
+          runningBackAttacks: cumulativeBackAttacks,
+          runningFrontSetPct: runFrontSetPct,
           runningAttackErrors: cumulativeAttackErrors,
           runningAces: cumulativeAces,
           runningServes: cumulativeServes,
@@ -518,6 +613,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     let curUcc = 0;
     let curOpp = 0;
     let cumulativeAttacks = 0;
+    let cumulativeFrontAttacks = 0;
+    let cumulativeBackAttacks = 0;
     let cumulativeKills = 0;
     let cumulativeAttackErrors = 0;
     let cumulativeServes = 0;
@@ -525,6 +622,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     let cumulativeServeErrors = 0;
     let cumulativePassSum = 0;
     let cumulativePassCount = 0;
+    let cumulativeTimesAced = 0;
     let cumulativeStuffBlocks = 0;
     let cumulativeDigs = 0;
 
@@ -543,6 +641,10 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
       if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
         cumulativeAttacks += val;
+        const isFront = st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
+        if (isFront) cumulativeFrontAttacks += val;
+        else cumulativeBackAttacks += val;
+
         if (isAttackKillMetric(met)) {
           cumulativeKills += val;
           pointAwardedTo = "ucc";
@@ -582,6 +684,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         else if (met === "0" || met.includes("error")) sc = 0;
         cumulativePassSum += sc * val;
         cumulativePassCount += val;
+        if (met.includes("aced") || (st as any).isAced) cumulativeTimesAced += val;
       } else if (cat === "dig") {
         cumulativeDigs += val;
       }
@@ -621,11 +724,16 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           runningAcePct: runAcePct,
           runningServeErrorPct: runServeErrorPct,
           runningPassAvg: runPassAvg,
+          runningPassIndex: calculatePassingIndex(cumulativePassSum, cumulativePassCount),
+          runningTimesAced: cumulativeTimesAced,
           runningSideoutPct: runSideoutPct,
           runningEarnedPoints: runEarnedPoints,
           runningUnforcedErrors: runUnforcedErrors,
           runningKills: cumulativeKills,
           runningAttacks: cumulativeAttacks,
+          runningFrontAttacks: cumulativeFrontAttacks,
+          runningBackAttacks: cumulativeBackAttacks,
+          runningFrontSetPct: cumulativeAttacks > 0 ? cumulativeFrontAttacks / cumulativeAttacks : 0,
           runningAttackErrors: cumulativeAttackErrors,
           runningAces: cumulativeAces,
           runningServes: cumulativeServes,
@@ -680,6 +788,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         runningUnforcedErrors: runUnforcedErrors,
         runningKills: cumulativeKills,
         runningAttacks: cumulativeAttacks,
+        runningFrontAttacks: cumulativeFrontAttacks,
+        runningBackAttacks: cumulativeBackAttacks,
+        runningFrontSetPct: cumulativeAttacks > 0 ? cumulativeFrontAttacks / cumulativeAttacks : 0,
         runningAttackErrors: cumulativeAttackErrors,
         runningAces: cumulativeAces,
         runningServes: cumulativeServes,
@@ -868,15 +979,23 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         precomputedMetrics: {
           killPct: r.runningKillPct,
           hittingEff: r.runningHittingEff,
+          swings: r.runningAttacks || 0,
+          frontSetPct: r.runningFrontSetPct || 0,
+          inSystemPct: 0,
+          outOfSystemPct: 0,
           acePct: r.runningAcePct,
           serveErrorPct: r.runningServeErrorPct,
           passAvg: r.runningPassAvg,
+          passIndex: r.runningPassIndex ?? calculatePassingIndex(r.raw?.passSum || 0, r.raw?.passCount || 0),
+          timesAced: r.runningTimesAced ?? 0,
           sideoutPct: r.runningSideoutPct,
         },
         raw: {
           kills: r.runningKills || 0,
           attackErrors: r.runningAttackErrors || 0,
           totalAttacks: r.runningAttacks || 0,
+          frontAttacks: r.runningFrontAttacks || 0,
+          backAttacks: r.runningBackAttacks || 0,
           aces: r.runningAces || 0,
           totalServes: r.runningServes || 0,
         },
@@ -924,11 +1043,18 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       let kills = 0;
       let attackErrors = 0;
       let totalAttacks = 0;
+      let frontAttacks = 0;
+      let backAttacks = 0;
       let aces = 0;
       let serveErrors = 0;
       let totalServes = 0;
       let passSum = 0;
       let passCount = 0;
+      let pass3 = 0;
+      let pass2 = 0;
+      let pass1 = 0;
+      let pass0 = 0;
+      let timesAced = 0;
       let pointsScored = 0;
 
       for (const st of pt.stats) {
@@ -938,6 +1064,10 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
         if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
           totalAttacks += val;
+          const isFront = st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
+          if (isFront) frontAttacks += val;
+          else backAttacks += val;
+
           if (isAttackKillMetric(met)) {
             kills += val;
             pointsScored += val;
@@ -954,12 +1084,13 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           }
         } else if (cat.includes("pass") || cat.includes("receive")) {
           let score = 2;
-          if (met === "3" || met === "perfect") score = 3;
-          else if (met === "2" || met === "good") score = 2;
-          else if (met === "1" || met === "poor") score = 1;
-          else if (met === "0" || met === "error") score = 0;
+          if (met === "3" || met.includes("perfect")) { score = 3; pass3 += val; }
+          else if (met === "2" || met.includes("good")) { score = 2; pass2 += val; }
+          else if (met === "1" || met.includes("poor")) { score = 1; pass1 += val; }
+          else if (met === "0" || met.includes("error") || met.includes("overbump")) { score = 0; pass0 += val; }
           passSum += score * val;
           passCount += val;
+          if (met.includes("aced") || (st as any).isAced) timesAced += val;
         } else if (cat === "block") {
           if (met.includes("kill") || met.includes("solo") || met.includes("point")) {
             pointsScored += val;
@@ -969,9 +1100,13 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
       const killPct = totalAttacks > 0 ? kills / totalAttacks : 0;
       const hittingEff = totalAttacks > 0 ? (kills - attackErrors) / totalAttacks : 0;
+      const frontSetPct = totalAttacks > 0 ? frontAttacks / totalAttacks : 0;
+      const inSystemPct = passCount > 0 ? (pass3 + pass2) / passCount : 0;
+      const outOfSystemPct = passCount > 0 ? (pass1 + pass0) / passCount : 0;
       const acePct = totalServes > 0 ? aces / totalServes : 0;
       const serveErrorPct = totalServes > 0 ? serveErrors / totalServes : 0;
       const passAvg = passCount > 0 ? passSum / passCount : 2.0;
+      const passIndex = calculatePassingIndex(passSum, passCount);
       const sideoutPct = totalAttacks + totalServes > 0 ? pointsScored / (totalAttacks + totalServes) : 0;
 
       return {
@@ -984,15 +1119,27 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         values: {
           killPct,
           hittingEff,
+          swings: totalAttacks,
+          frontSetPct,
+          inSystemPct,
+          outOfSystemPct,
           acePct,
           serveErrorPct,
           passAvg,
+          passIndex,
+          timesAced,
           sideoutPct,
         },
         raw: {
           kills,
           attackErrors,
           totalAttacks,
+          frontAttacks,
+          backAttacks,
+          pass3,
+          pass2,
+          pass1,
+          pass0,
           aces,
           serveErrors,
           totalServes,
@@ -1037,6 +1184,158 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       maxScore: mS + 2,
     };
   }, [rallyProgressionData]);
+
+  // Swings Evolution Data Aggregation
+  const swingsEvolutionData = useMemo(() => {
+    let targetStats = stats;
+    if (scope === "single_match" && targetMatch) {
+      targetStats = targetStats.filter((st) => st.matchId === targetMatch.id);
+      if (selectedSetFilter !== "all") {
+        targetStats = targetStats.filter((st) => st.setId === selectedSetFilter);
+      }
+    } else if (scope === "tournament_league" && activeGroup) {
+      targetStats = targetStats.filter((st) => activeGroup.matchIds.includes(st.matchId));
+    }
+
+    const ourStats = targetStats.filter((st) => !st.isOpponent && !st.isOpp);
+
+    let teamFrontSwings = 0;
+    let teamBackSwings = 0;
+    let teamTotalSwings = 0;
+    let teamKills = 0;
+    let teamErrors = 0;
+    let teamBlocked = 0;
+
+    const playerSwingsMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        number: string;
+        totalSwings: number;
+        frontSwings: number;
+        backSwings: number;
+        kills: number;
+        errors: number;
+        blocked: number;
+        killPct: number;
+        efficiency: number;
+        frontSetDistPct: number;
+      }
+    >();
+
+    roster.forEach((p) => {
+      playerSwingsMap.set(String(p.id), {
+        id: String(p.id),
+        name: p.name,
+        number: String(p.number ?? ""),
+        totalSwings: 0,
+        frontSwings: 0,
+        backSwings: 0,
+        kills: 0,
+        errors: 0,
+        blocked: 0,
+        killPct: 0,
+        efficiency: 0,
+        frontSetDistPct: 0,
+      });
+    });
+
+    ourStats.forEach((st) => {
+      const cat = (st.category || "").toLowerCase();
+      const met = (st.metric || "").toLowerCase();
+      const val = Number(st.value) || 1;
+      const pId = String(st.playerId || "");
+
+      const isSwing =
+        cat === "attack" ||
+        cat.includes("att") ||
+        (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)));
+
+      if (isSwing) {
+        teamTotalSwings += val;
+        const isFront = st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
+        if (isFront) teamFrontSwings += val;
+        else teamBackSwings += val;
+
+        const isKill = isAttackKillMetric(met);
+        const isBlk = met.includes("block") || met.includes("stuff");
+        const isErr = !isBlk && isAttackErrorMetric(met);
+
+        if (isKill) teamKills += val;
+        else if (isBlk) teamBlocked += val;
+        else if (isErr) teamErrors += val;
+
+        if (pId) {
+          if (!playerSwingsMap.has(pId)) {
+            const pObj = roster.find((p) => String(p.id) === pId);
+            playerSwingsMap.set(pId, {
+              id: pId,
+              name: pObj?.name || `Player #${pId}`,
+              number: String(pObj?.number ?? pId),
+              totalSwings: 0,
+              frontSwings: 0,
+              backSwings: 0,
+              kills: 0,
+              errors: 0,
+              blocked: 0,
+              killPct: 0,
+              efficiency: 0,
+              frontSetDistPct: 0,
+            });
+          }
+          const pRec = playerSwingsMap.get(pId)!;
+          pRec.totalSwings += val;
+          if (isFront) pRec.frontSwings += val;
+          else pRec.backSwings += val;
+
+          if (isKill) pRec.kills += val;
+          else if (isBlk) pRec.blocked += val;
+          else if (isErr) pRec.errors += val;
+        }
+      }
+    });
+
+    const rankedHitters = Array.from(playerSwingsMap.values())
+      .filter((p) => p.totalSwings > 0)
+      .map((p) => {
+        const killPct = p.totalSwings > 0 ? (p.kills / p.totalSwings) * 100 : 0;
+        const efficiency = p.totalSwings > 0 ? (p.kills - p.errors) / p.totalSwings : 0;
+        const frontSetDistPct = teamFrontSwings > 0 ? (p.frontSwings / teamFrontSwings) * 100 : 0;
+        return {
+          ...p,
+          killPct,
+          efficiency,
+          frontSetDistPct,
+        };
+      })
+      .sort((a, b) => b.totalSwings - a.totalSwings);
+
+    const teamKillPct = teamTotalSwings > 0 ? (teamKills / teamTotalSwings) * 100 : 0;
+    const teamEfficiency = teamTotalSwings > 0 ? (teamKills - teamErrors) / teamTotalSwings : 0;
+    const teamFrontPct = teamTotalSwings > 0 ? (teamFrontSwings / teamTotalSwings) * 100 : 0;
+    const teamBackPct = teamTotalSwings > 0 ? (teamBackSwings / teamTotalSwings) * 100 : 0;
+
+    const activeHitter =
+      selectedPlayerId !== "team"
+        ? rankedHitters.find((p) => p.id === String(selectedPlayerId)) || null
+        : null;
+
+    return {
+      teamTotalSwings,
+      teamFrontSwings,
+      teamBackSwings,
+      teamFrontPct,
+      teamBackPct,
+      teamKills,
+      teamErrors,
+      teamBlocked,
+      teamKillPct,
+      teamEfficiency,
+      rankedHitters,
+      activeHitter,
+    };
+  }, [stats, roster, scope, targetMatch, selectedSetFilter, activeGroup, selectedPlayerId]);
 
   return (
     <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm overflow-hidden p-4 sm:p-6 mb-8 transition-all">
@@ -1162,7 +1461,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
             )}
           </div>
 
-          {/* Mode Switcher for Point by Point */}
+          {/* Mode Switcher */}
           {granularity === "by_rally" ? (
             <div className="flex items-center gap-1 ml-2 border-l border-slate-200 pl-2">
               <button
@@ -1192,6 +1491,16 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
               >
                 Stats Evolution
               </button>
+              <button
+                type="button"
+                onClick={() => setChartMode("swings")}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  chartMode === "swings" ? "bg-indigo-600 text-white font-black shadow-xs" : "text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                <Crosshair size={12} />
+                <span>Swings Evolution</span>
+              </button>
             </div>
           ) : (
             <div className="flex items-center gap-1 ml-2 border-l border-slate-200 pl-2">
@@ -1212,6 +1521,16 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                 }`}
               >
                 Stats Evolution
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartMode("swings")}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  chartMode === "swings" ? "bg-indigo-600 text-white font-black shadow-xs" : "text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                <Crosshair size={12} />
+                <span>Swings Evolution</span>
               </button>
             </div>
           )}
@@ -1632,6 +1951,18 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                             {(hoveredPoint.runningSideoutPct * 100).toFixed(0)}%
                           </span>
                         </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">FR Set%:</span>
+                          <span className="font-mono font-bold text-indigo-300">
+                            {hoveredPoint.runningFrontSetPct !== undefined ? `${(hoveredPoint.runningFrontSetPct * 100).toFixed(0)}%` : "—"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Swings:</span>
+                          <span className="font-mono font-bold text-sky-400">
+                            {hoveredPoint.runningAttacks || 0} ({hoveredPoint.runningFrontAttacks || 0}F)
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1921,6 +2252,18 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                             {(hoveredPoint.runningSideoutPct * 100).toFixed(0)}%
                           </span>
                         </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">FR Set%:</span>
+                          <span className="font-mono font-bold text-indigo-300">
+                            {hoveredPoint.runningFrontSetPct !== undefined ? `${(hoveredPoint.runningFrontSetPct * 100).toFixed(0)}%` : "—"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-300">
+                          <span className="text-slate-400">Swings:</span>
+                          <span className="font-mono font-bold text-sky-400">
+                            {hoveredPoint.runningAttacks || 0} ({hoveredPoint.runningFrontAttacks || 0}F)
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1931,7 +2274,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         )}
 
         {/* CASE 2: DISCRETE SERIES CHART (BY SET OR BY GAME OR METRICS RATE) */}
-        {(granularity !== "by_rally" || chartMode === "metrics") && (
+        {chartMode !== "swings" && (granularity !== "by_rally" || chartMode === "metrics") && (
           <div>
             {discreteSeriesData.length === 0 && rallyProgressionData.length === 0 ? (
               <div className="py-16 text-center text-slate-400 text-xs font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200">
@@ -1988,7 +2331,18 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                           ? (idx / (dataItems.length - 1)) * graphWidth
                           : graphWidth / 2);
                       const rawVal = d.values[metricKey] || 0;
-                      const scaledVal = metricKey === "passAvg" ? rawVal / 3 : rawVal;
+                      let scaledVal = rawVal;
+                      if (metricKey === "passAvg") {
+                        scaledVal = rawVal / 3;
+                      } else if (metricKey === "passIndex") {
+                        scaledVal = rawVal / 100;
+                      } else if (metricKey === "swings") {
+                        const maxSwings = Math.max(...dataItems.map((item: any) => item.values.swings || 0), 1);
+                        scaledVal = rawVal / maxSwings;
+                      } else if (metricKey === "timesAced") {
+                        const maxAced = Math.max(...dataItems.map((item: any) => item.values.timesAced || 0), 5);
+                        scaledVal = rawVal / maxAced;
+                      }
                       const normVal = Math.max(-0.25, Math.min(1.0, scaledVal));
                       const normRatio = (normVal - (-0.25)) / 1.25;
                       const y = padding.top + graphHeight * (1 - normRatio);
@@ -2139,10 +2493,716 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
             )}
           </div>
         )}
+
+        {/* CASE 3: SWINGS EVOLUTION CHART */}
+        {chartMode === "swings" && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* SWINGS KPI HERO CARDS */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              {/* Total Swings */}
+              <div className="bg-slate-900 text-white p-3.5 rounded-2xl border border-slate-800 shadow-sm flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-400 text-[11px] font-bold">
+                  <span>Total Swings</span>
+                  <Crosshair size={14} className="text-sky-400" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-white">
+                    {swingsEvolutionData.activeHitter ? swingsEvolutionData.activeHitter.totalSwings : swingsEvolutionData.teamTotalSwings}
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {swingsEvolutionData.activeHitter
+                      ? `${swingsEvolutionData.activeHitter.frontSwings} Front · ${swingsEvolutionData.activeHitter.backSwings} Back`
+                      : `${swingsEvolutionData.teamFrontSwings} Front · ${swingsEvolutionData.teamBackSwings} Back`}
+                  </div>
+                </div>
+              </div>
+
+              {/* Front Row Swings */}
+              <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/50 p-3.5 rounded-2xl border border-indigo-200/80 shadow-2xs flex flex-col justify-between">
+                <div className="flex items-center justify-between text-indigo-900 text-[11px] font-black uppercase tracking-wider">
+                  <span>Front Row Swings</span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-600"></span>
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-indigo-700">
+                    {swingsEvolutionData.activeHitter ? swingsEvolutionData.activeHitter.frontSwings : swingsEvolutionData.teamFrontSwings}
+                  </div>
+                  <div className="text-[10px] text-indigo-800 font-bold mt-0.5">
+                    {swingsEvolutionData.activeHitter
+                      ? `${swingsEvolutionData.activeHitter.totalSwings > 0 ? ((swingsEvolutionData.activeHitter.frontSwings / swingsEvolutionData.activeHitter.totalSwings) * 100).toFixed(0) : "0"}% of swings`
+                      : `${swingsEvolutionData.teamFrontPct.toFixed(0)}% of attack volume`}
+                  </div>
+                </div>
+              </div>
+
+              {/* Back Row Swings */}
+              <div className="bg-gradient-to-br from-sky-50 to-sky-100/50 p-3.5 rounded-2xl border border-sky-200/80 shadow-2xs flex flex-col justify-between">
+                <div className="flex items-center justify-between text-sky-900 text-[11px] font-black uppercase tracking-wider">
+                  <span>Back Row Swings</span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-sky-700">
+                    {swingsEvolutionData.activeHitter ? swingsEvolutionData.activeHitter.backSwings : swingsEvolutionData.teamBackSwings}
+                  </div>
+                  <div className="text-[10px] text-sky-800 font-bold mt-0.5">
+                    {swingsEvolutionData.activeHitter
+                      ? `${swingsEvolutionData.activeHitter.totalSwings > 0 ? ((swingsEvolutionData.activeHitter.backSwings / swingsEvolutionData.activeHitter.totalSwings) * 100).toFixed(0) : "0"}% of swings`
+                      : `${swingsEvolutionData.teamBackPct.toFixed(0)}% of attack volume`}
+                  </div>
+                </div>
+              </div>
+
+              {/* FRONT ROW SET DISTRIBUTION STAT */}
+              <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-3.5 rounded-2xl border border-indigo-700 shadow-sm flex flex-col justify-between ring-2 ring-indigo-500/30">
+                <div className="flex items-center justify-between text-indigo-300 text-[11px] font-black uppercase tracking-wider">
+                  <span className="flex items-center gap-1">
+                    <Target size={13} className="text-indigo-400" />
+                    <span>FR Set Dist %</span>
+                  </span>
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-amber-300">
+                    {swingsEvolutionData.activeHitter
+                      ? `${swingsEvolutionData.activeHitter.frontSetDistPct.toFixed(1)}%`
+                      : `${swingsEvolutionData.teamTotalSwings > 0 ? "100.0%" : "0.0%"}`}
+                  </div>
+                  <div className="text-[10px] text-slate-300 font-medium mt-0.5 truncate" title={swingsEvolutionData.activeHitter ? `${swingsEvolutionData.activeHitter.frontSwings} of ${swingsEvolutionData.teamFrontSwings} team front-row sets` : "Front-row offense distribution"}>
+                    {swingsEvolutionData.activeHitter
+                      ? `${swingsEvolutionData.activeHitter.frontSwings} of ${swingsEvolutionData.teamFrontSwings} team FR sets`
+                      : `${swingsEvolutionData.teamFrontSwings} total team front sets`}
+                  </div>
+                </div>
+              </div>
+
+              {/* Kills & Kill % */}
+              <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-3.5 rounded-2xl border border-emerald-200/80 shadow-2xs flex flex-col justify-between">
+                <div className="flex items-center justify-between text-emerald-900 text-[11px] font-black uppercase tracking-wider">
+                  <span>Kills & Kill %</span>
+                  <Flame size={14} className="text-emerald-600" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-emerald-700">
+                    {swingsEvolutionData.activeHitter ? swingsEvolutionData.activeHitter.kills : swingsEvolutionData.teamKills}
+                  </div>
+                  <div className="text-[10px] text-emerald-800 font-bold mt-0.5">
+                    {swingsEvolutionData.activeHitter
+                      ? `${swingsEvolutionData.activeHitter.killPct.toFixed(1)}% Kill Rate`
+                      : `${swingsEvolutionData.teamKillPct.toFixed(1)}% Team Kill Rate`}
+                  </div>
+                </div>
+              </div>
+
+              {/* Hitting Efficiency */}
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 p-3.5 rounded-2xl border border-blue-200/80 shadow-2xs flex flex-col justify-between">
+                <div className="flex items-center justify-between text-blue-900 text-[11px] font-black uppercase tracking-wider">
+                  <span>Swing Efficiency</span>
+                  <Activity size={14} className="text-blue-600" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-blue-700">
+                    {swingsEvolutionData.activeHitter
+                      ? `${swingsEvolutionData.activeHitter.efficiency >= 0 ? "+" : ""}${swingsEvolutionData.activeHitter.efficiency.toFixed(3)}`
+                      : `${swingsEvolutionData.teamEfficiency >= 0 ? "+" : ""}${swingsEvolutionData.teamEfficiency.toFixed(3)}`}
+                  </div>
+                  <div className="text-[10px] text-blue-800 font-bold mt-0.5">
+                    {swingsEvolutionData.activeHitter
+                      ? `${swingsEvolutionData.activeHitter.errors} err · ${swingsEvolutionData.activeHitter.blocked} blk`
+                      : `${swingsEvolutionData.teamErrors} err · ${swingsEvolutionData.teamBlocked} blk`}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* SWINGS EVOLUTION SVG CHART */}
+            <div className="bg-slate-950 rounded-2xl p-4 sm:p-5 text-white border border-slate-800 shadow-md">
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+                    <Crosshair size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                      {granularity === "by_rally"
+                        ? "Rally-by-Rally Swings & Attack Trajectory"
+                        : granularity === "by_set"
+                        ? "Set-by-Set Swings Volume & Set Distribution"
+                        : "Game-by-Game Attack Distribution"}
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Front Row vs Back Row swings split with kill conversion markers
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 text-xs font-bold">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded bg-indigo-500 inline-block"></span>
+                    <span className="text-slate-300">Front Row</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded bg-sky-400 inline-block"></span>
+                    <span className="text-slate-300">Back Row</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-emerald-400 inline-block"></span>
+                    <span className="text-slate-300">Kills</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* RALLY-BY-RALLY AREA PROGRESSION */}
+              {granularity === "by_rally" && (
+                <div className="relative overflow-x-auto">
+                  {rallyProgressionData.length < 2 ? (
+                    <div className="py-16 text-center text-slate-500 text-xs italic">
+                      No rally point data recorded yet for this selection.
+                    </div>
+                  ) : (
+                    (() => {
+                      const maxRallySwings = Math.max(
+                        ...rallyProgressionData.map((r) => r.runningAttacks || 0),
+                        5
+                      );
+
+                      const points = rallyProgressionData.map((r, idx) => {
+                        const x =
+                          padding.left +
+                          (rallyProgressionData.length > 1
+                            ? (idx / (rallyProgressionData.length - 1)) * graphWidth
+                            : graphWidth / 2);
+                        const totAtt = r.runningAttacks || 0;
+                        const frontAtt = r.runningFrontAttacks || 0;
+                        const backAtt = r.runningBackAttacks || 0;
+                        const kills = r.runningKills || 0;
+
+                        const yTot = padding.top + graphHeight * (1 - totAtt / maxRallySwings);
+                        const yFront = padding.top + graphHeight * (1 - frontAtt / maxRallySwings);
+                        const yKills = padding.top + graphHeight * (1 - kills / maxRallySwings);
+                        const yZero = padding.top + graphHeight;
+
+                        return {
+                          x,
+                          yTot,
+                          yFront,
+                          yKills,
+                          yZero,
+                          r,
+                          idx,
+                          totAtt,
+                          frontAtt,
+                          backAtt,
+                          kills,
+                        };
+                      });
+
+                      const frontAreaPath = points.reduce((acc, p, idx) => {
+                        return `${acc} ${idx === 0 ? "M" : "L"} ${p.x} ${p.yFront}`;
+                      }, "") + ` L ${points[points.length - 1].x} ${points[points.length - 1].yZero} L ${points[0].x} ${points[0].yZero} Z`;
+
+                      const totLinePath = points.reduce((acc, p, idx) => {
+                        return `${acc} ${idx === 0 ? "M" : "L"} ${p.x} ${p.yTot}`;
+                      }, "");
+
+                      const killsLinePath = points.reduce((acc, p, idx) => {
+                        return `${acc} ${idx === 0 ? "M" : "L"} ${p.x} ${p.yKills}`;
+                      }, "");
+
+                      return (
+                        <div className="relative">
+                          <svg
+                            viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                            className="w-full h-auto min-w-[650px] overflow-visible select-none"
+                          >
+                            <defs>
+                              <linearGradient id="frontAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#4f46e5" stopOpacity="0.7" />
+                                <stop offset="100%" stopColor="#4f46e5" stopOpacity="0.1" />
+                              </linearGradient>
+                            </defs>
+
+                            {/* Horizontal Grid Lines */}
+                            {[0, 0.25, 0.5, 0.75, 1.0].map((t) => {
+                              const y = padding.top + graphHeight * (1 - t);
+                              const swingVal = Math.round(t * maxRallySwings);
+                              return (
+                                <g key={t}>
+                                  <line
+                                    x1={padding.left}
+                                    y1={y}
+                                    x2={svgWidth - padding.right}
+                                    y2={y}
+                                    stroke="#334155"
+                                    strokeWidth="1"
+                                    strokeDasharray="4 4"
+                                  />
+                                  <text
+                                    x={padding.left - 8}
+                                    y={y + 3}
+                                    fill="#94a3b8"
+                                    fontSize="9"
+                                    fontWeight="bold"
+                                    textAnchor="end"
+                                  >
+                                    {swingVal}
+                                  </text>
+                                </g>
+                              );
+                            })}
+
+                            {/* Front Area Fill */}
+                            <path d={frontAreaPath} fill="url(#frontAreaGrad)" />
+
+                            {/* Total Swings Line */}
+                            <path
+                              d={totLinePath}
+                              fill="none"
+                              stroke="#38bdf8"
+                              strokeWidth="3"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+
+                            {/* Kills Line */}
+                            <path
+                              d={killsLinePath}
+                              fill="none"
+                              stroke="#10b981"
+                              strokeWidth="2.5"
+                              strokeDasharray="3 3"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+
+                            {/* Interactive Event Nodes on Points */}
+                            {points.map((p, pIdx) => {
+                              const isAtt = p.r.eventType === "kill" || p.r.eventType === "error";
+                              const isHovered = hoveredSwingPoint?.rallyNum === p.r.rallyNum;
+                              return (
+                                <g
+                                  key={pIdx}
+                                  onMouseEnter={() =>
+                                    setHoveredSwingPoint({
+                                      rallyNum: p.r.rallyNum,
+                                      setNum: p.r.setNum,
+                                      scoreUcc: p.r.scoreUcc,
+                                      scoreOpp: p.r.scoreOpp,
+                                      eventDescription: p.r.eventDescription,
+                                      eventType: p.r.eventType,
+                                      playerName: p.r.playerName,
+                                      playerNumber: p.r.playerNumber,
+                                      totAtt: p.totAtt,
+                                      frontAtt: p.frontAtt,
+                                      backAtt: p.backAtt,
+                                      kills: p.kills,
+                                      frSetDist: p.r.runningFrontSetPct
+                                        ? (p.r.runningFrontSetPct * 100).toFixed(0)
+                                        : "0",
+                                    })
+                                  }
+                                  onMouseLeave={() => setHoveredSwingPoint(null)}
+                                  className="cursor-pointer"
+                                >
+                                  {/* Total Swings Point */}
+                                  <circle
+                                    cx={p.x}
+                                    cy={p.yTot}
+                                    r={isHovered ? 6 : isAtt ? 4 : 2}
+                                    fill={isHovered ? "#38bdf8" : "#ffffff"}
+                                    stroke="#0284c7"
+                                    strokeWidth={isHovered ? 3 : 1.5}
+                                  />
+
+                                  {/* Kill Dot */}
+                                  {p.r.eventType === "kill" && (
+                                    <circle
+                                      cx={p.x}
+                                      cy={p.yKills}
+                                      r={isHovered ? 7 : 5}
+                                      fill="#10b981"
+                                      stroke="#ffffff"
+                                      strokeWidth="2"
+                                    />
+                                  )}
+                                </g>
+                              );
+                            })}
+
+                            {/* X-Axis Rallies */}
+                            {points.map((p, pIdx) => {
+                              const step = points.length > 25 ? Math.ceil(points.length / 10) : points.length > 14 ? 2 : 1;
+                              if (pIdx !== 0 && pIdx !== points.length - 1 && pIdx % step !== 0) return null;
+                              return (
+                                <text
+                                  key={pIdx}
+                                  x={p.x}
+                                  y={svgHeight - padding.bottom + 18}
+                                  fill="#94a3b8"
+                                  fontSize="9"
+                                  fontWeight="bold"
+                                  textAnchor="middle"
+                                >
+                                  P{p.r.rallyNum}
+                                </text>
+                              );
+                            })}
+                          </svg>
+
+                          {/* Hover Tooltip for Rally Swings */}
+                          {hoveredSwingPoint && (
+                            <div className="absolute top-2 right-4 bg-slate-900 text-white p-3.5 rounded-2xl shadow-2xl text-xs border border-slate-700 pointer-events-none z-20 min-w-[220px]">
+                              <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1.5 mb-2">
+                                <span className="font-black text-amber-400">
+                                  Rally #{hoveredSwingPoint.rallyNum} · Set {hoveredSwingPoint.setNum}
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-300">
+                                  {hoveredSwingPoint.scoreUcc} - {hoveredSwingPoint.scoreOpp}
+                                </span>
+                              </div>
+                              <div className="space-y-1 text-[11px]">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400">Cumulative Swings:</span>
+                                  <strong className="text-white font-mono">{hoveredSwingPoint.totAtt}</strong>
+                                </div>
+                                <div className="flex justify-between text-indigo-300 font-bold">
+                                  <span>Front Row Swings:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.frontAtt}</span>
+                                </div>
+                                <div className="flex justify-between text-sky-300 font-bold">
+                                  <span>Back Row Swings:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.backAtt}</span>
+                                </div>
+                                <div className="flex justify-between text-amber-300 font-black">
+                                  <span>FR Set Dist %:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.frSetDist}%</span>
+                                </div>
+                                <div className="flex justify-between text-emerald-300 font-bold pt-1 border-t border-slate-800">
+                                  <span>Cumulative Kills:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.kills}</span>
+                                </div>
+                              </div>
+                              {hoveredSwingPoint.eventDescription && (
+                                <div className="mt-2 pt-1.5 border-t border-slate-800 text-[10px] font-mono text-amber-300/90 bg-slate-950/80 px-2 py-1 rounded">
+                                  {hoveredSwingPoint.eventDescription}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              )}
+
+              {/* SET-BY-SET OR GAME-BY-GAME BAR CHART */}
+              {granularity !== "by_rally" && (
+                <div className="relative overflow-x-auto">
+                  {discreteSeriesData.length === 0 ? (
+                    <div className="py-16 text-center text-slate-500 text-xs italic">
+                      No comparative set or game data available for this selection.
+                    </div>
+                  ) : (
+                    (() => {
+                      const maxBarSwings = Math.max(
+                        ...discreteSeriesData.map((d: any) => d.raw?.totalAttacks || d.counts?.attacks || 0),
+                        10
+                      );
+
+                      const totalBars = discreteSeriesData.length;
+                      const barWidth = Math.max(16, Math.min(48, graphWidth / (totalBars * 2)));
+
+                      return (
+                        <div className="relative">
+                          <svg
+                            viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                            className="w-full h-auto min-w-[650px] overflow-visible select-none"
+                          >
+                            {/* Horizontal Grid */}
+                            {[0, 0.25, 0.5, 0.75, 1.0].map((t) => {
+                              const y = padding.top + graphHeight * (1 - t);
+                              const swingVal = Math.round(t * maxBarSwings);
+                              return (
+                                <g key={t}>
+                                  <line
+                                    x1={padding.left}
+                                    y1={y}
+                                    x2={svgWidth - padding.right}
+                                    y2={y}
+                                    stroke="#334155"
+                                    strokeWidth="1"
+                                    strokeDasharray="4 4"
+                                  />
+                                  <text
+                                    x={padding.left - 8}
+                                    y={y + 3}
+                                    fill="#94a3b8"
+                                    fontSize="9"
+                                    fontWeight="bold"
+                                    textAnchor="end"
+                                  >
+                                    {swingVal}
+                                  </text>
+                                </g>
+                              );
+                            })}
+
+                            {/* Stacked Bars */}
+                            {discreteSeriesData.map((d: any, idx: number) => {
+                              const x =
+                                padding.left +
+                                (totalBars > 1
+                                  ? (idx / (totalBars - 1)) * (graphWidth - barWidth * 2) + barWidth
+                                  : graphWidth / 2);
+                              const totAtt = d.raw?.totalAttacks || d.counts?.attacks || 0;
+                              const frontAtt = d.raw?.frontAttacks || 0;
+                              const backAtt = d.raw?.backAttacks || Math.max(0, totAtt - frontAtt);
+                              const frSetDist = d.values?.frontSetPct ? (d.values.frontSetPct * 100).toFixed(0) : "0";
+
+                              const frontHeight = (frontAtt / maxBarSwings) * graphHeight;
+                              const backHeight = (backAtt / maxBarSwings) * graphHeight;
+                              const yFront = padding.top + graphHeight - frontHeight;
+                              const yBack = yFront - backHeight;
+
+                              return (
+                                <g
+                                  key={idx}
+                                  onMouseEnter={() =>
+                                    setHoveredSwingPoint({
+                                      label: d.label,
+                                      subLabel: d.subLabel,
+                                      totAtt,
+                                      frontAtt,
+                                      backAtt,
+                                      kills: d.raw?.kills || d.counts?.kills || 0,
+                                      frSetDist,
+                                      killPct: d.values?.killPct ? (d.values.killPct * 100).toFixed(1) : "0",
+                                      eff: d.values?.hittingEff ? d.values.hittingEff.toFixed(3) : "0",
+                                    })
+                                  }
+                                  onMouseLeave={() => setHoveredSwingPoint(null)}
+                                  className="cursor-pointer"
+                                >
+                                  {/* Back Row (Top part of stacked bar) */}
+                                  <rect
+                                    x={x - barWidth / 2}
+                                    y={yBack}
+                                    width={barWidth}
+                                    height={backHeight}
+                                    fill="#38bdf8"
+                                    rx="2"
+                                    className="hover:opacity-80 transition-opacity"
+                                  />
+
+                                  {/* Front Row (Bottom part of stacked bar) */}
+                                  <rect
+                                    x={x - barWidth / 2}
+                                    y={yFront}
+                                    width={barWidth}
+                                    height={frontHeight}
+                                    fill="#4f46e5"
+                                    rx="2"
+                                    className="hover:opacity-80 transition-opacity"
+                                  />
+
+                                  {/* Total Swings Text on Bar Top */}
+                                  {totAtt > 0 && (
+                                    <text
+                                      x={x}
+                                      y={yBack - 6}
+                                      fill="#ffffff"
+                                      fontSize="10"
+                                      fontWeight="bold"
+                                      textAnchor="middle"
+                                    >
+                                      {totAtt}
+                                    </text>
+                                  )}
+
+                                  {/* FR Set Dist Indicator Badge below total */}
+                                  <text
+                                    x={x}
+                                    y={svgHeight - padding.bottom + 18}
+                                    fill="#e2e8f0"
+                                    fontSize="10"
+                                    fontWeight="bold"
+                                    textAnchor="middle"
+                                  >
+                                    {d.label}
+                                  </text>
+                                  <text
+                                    x={x}
+                                    y={svgHeight - padding.bottom + 30}
+                                    fill="#818cf8"
+                                    fontSize="9"
+                                    fontWeight="bold"
+                                    textAnchor="middle"
+                                  >
+                                    {frSetDist}% FR
+                                  </text>
+                                </g>
+                              );
+                            })}
+                          </svg>
+
+                          {/* Hover Tooltip for Set/Game Bar */}
+                          {hoveredSwingPoint && (
+                            <div className="absolute top-2 right-4 bg-slate-900 text-white p-3.5 rounded-2xl shadow-2xl text-xs border border-slate-700 pointer-events-none z-20 min-w-[220px]">
+                              <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1.5 mb-2">
+                                <span className="font-black text-amber-400">{hoveredSwingPoint.label}</span>
+                                <span className="text-[10px] text-slate-300">{hoveredSwingPoint.subLabel}</span>
+                              </div>
+                              <div className="space-y-1 text-[11px]">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400">Total Swings:</span>
+                                  <strong className="text-white font-mono">{hoveredSwingPoint.totAtt}</strong>
+                                </div>
+                                <div className="flex justify-between text-indigo-300 font-bold">
+                                  <span>Front Row:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.frontAtt}</span>
+                                </div>
+                                <div className="flex justify-between text-sky-300 font-bold">
+                                  <span>Back Row:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.backAtt}</span>
+                                </div>
+                                <div className="flex justify-between text-amber-300 font-black">
+                                  <span>FR Set Dist %:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.frSetDist}%</span>
+                                </div>
+                                <div className="flex justify-between text-emerald-300 font-bold pt-1 border-t border-slate-800">
+                                  <span>Kills / Kill %:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.kills} ({hoveredSwingPoint.killPct}%)</span>
+                                </div>
+                                <div className="flex justify-between text-blue-300 font-bold">
+                                  <span>Efficiency:</span>
+                                  <span className="font-mono">{hoveredSwingPoint.eff}</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* HITTER SET DISTRIBUTION LEADERBOARD */}
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="p-3.5 sm:p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="p-1 rounded-lg bg-indigo-100 text-indigo-700">
+                    <Users size={15} />
+                  </span>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-black text-slate-900 uppercase tracking-wider">
+                      Hitter Swings & Front Row Set Distribution
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      When running front row, percentage of sets directed to each attacker
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-[11px] font-bold text-slate-600 bg-white px-3 py-1 rounded-xl border border-slate-200 shadow-2xs">
+                  Team Front-Row Swings: <strong className="text-indigo-700 font-mono">{swingsEvolutionData.teamFrontSwings}</strong>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-100/60 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      <th className="p-3">Hitter</th>
+                      <th className="p-3 text-center">Total Swings</th>
+                      <th className="p-3 text-center">Front / Back</th>
+                      <th className="p-3 text-left min-w-[160px]">Front Row Set Dist %</th>
+                      <th className="p-3 text-center text-emerald-700">Kills</th>
+                      <th className="p-3 text-center">Kill %</th>
+                      <th className="p-3 text-center text-rose-600">Errors</th>
+                      <th className="p-3 text-right">Hitting Eff</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {swingsEvolutionData.rankedHitters.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="p-6 text-center text-slate-400 italic">
+                          No attack attempts recorded in this selection.
+                        </td>
+                      </tr>
+                    ) : (
+                      swingsEvolutionData.rankedHitters.map((h) => {
+                        const isFiltered = selectedPlayerId === h.id;
+                        return (
+                          <tr
+                            key={h.id}
+                            onClick={() => setSelectedPlayerId(selectedPlayerId === h.id ? "team" : h.id)}
+                            className={`transition-colors cursor-pointer hover:bg-indigo-50/40 ${
+                              isFiltered ? "bg-indigo-50/80 font-bold" : ""
+                            }`}
+                            title={`Click to filter chart to ${h.name}`}
+                          >
+                            <td className="p-3 font-bold flex items-center gap-2">
+                              <span className="h-6 w-6 rounded-full bg-slate-900 text-amber-300 font-black flex items-center justify-center text-[10px] shrink-0 font-mono shadow-2xs">
+                                #{h.number}
+                              </span>
+                              <span className="text-slate-900 font-black truncate max-w-[150px]">
+                                {h.name}
+                              </span>
+                              {isFiltered && (
+                                <span className="text-[9px] bg-indigo-600 text-white px-1.5 py-0.2 rounded font-black uppercase">
+                                  Filtered
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3 text-center font-mono font-bold text-slate-800">
+                              {h.totalSwings}
+                            </td>
+                            <td className="p-3 text-center font-mono text-[11px] text-slate-500">
+                              <span className="text-indigo-700 font-bold">{h.frontSwings}F</span>
+                              <span className="mx-1">/</span>
+                              <span className="text-sky-600 font-bold">{h.backSwings}B</span>
+                            </td>
+                            <td className="p-3">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-indigo-700 w-12 text-right">
+                                  {h.frontSetDistPct.toFixed(1)}%
+                                </span>
+                                <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden max-w-[100px]">
+                                  <div
+                                    className="bg-indigo-600 h-full rounded-full transition-all"
+                                    style={{ width: `${Math.min(100, Math.max(0, h.frontSetDistPct))}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-3 text-center font-mono font-black text-emerald-600 text-sm">
+                              {h.kills}
+                            </td>
+                            <td className="p-3 text-center font-mono font-bold text-slate-700">
+                              {h.killPct.toFixed(1)}%
+                            </td>
+                            <td className="p-3 text-center font-mono font-bold text-rose-500">
+                              {h.errors} {h.blocked > 0 ? `(${h.blocked}b)` : ""}
+                            </td>
+                            <td className="p-3 text-right font-mono font-black text-blue-700 text-sm">
+                              {h.efficiency >= 0 ? "+" : ""}{h.efficiency.toFixed(3)}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* METRIC SUMMARY CARDS */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-6 pt-5 border-t border-slate-100">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 mt-6 pt-5 border-t border-slate-100">
         {METRICS.map((m) => {
           let summaryVal = 0;
           if (granularity === "by_rally" && discreteSeriesData.length > 0) {
@@ -2156,6 +3216,20 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
               const k = lastPt.raw?.kills ?? lastPt.counts?.kills ?? 0;
               const err = lastPt.raw?.attackErrors ?? lastPt.counts?.attackErrors ?? 0;
               summaryVal = att > 0 ? (k - err) / att : 0;
+            } else if (m.key === "swings") {
+              summaryVal = lastPt.raw?.totalAttacks ?? lastPt.counts?.attacks ?? 0;
+            } else if (m.key === "frontSetPct") {
+              const att = lastPt.raw?.totalAttacks ?? lastPt.counts?.attacks ?? 0;
+              const fr = lastPt.raw?.frontAttacks ?? 0;
+              summaryVal = att > 0 ? fr / att : 0;
+            } else if (m.key === "inSystemPct") {
+              const pCount = lastPt.raw?.passCount ?? 0;
+              const inSys = (lastPt.raw?.pass3 ?? 0) + (lastPt.raw?.pass2 ?? 0);
+              summaryVal = pCount > 0 ? inSys / pCount : 0;
+            } else if (m.key === "outOfSystemPct") {
+              const pCount = lastPt.raw?.passCount ?? 0;
+              const outSys = (lastPt.raw?.pass1 ?? 0) + (lastPt.raw?.pass0 ?? 0);
+              summaryVal = pCount > 0 ? outSys / pCount : 0;
             } else if (m.key === "acePct") {
               const srv = lastPt.raw?.totalServes ?? lastPt.counts?.serves ?? 0;
               const aces = lastPt.raw?.aces ?? lastPt.counts?.aces ?? 0;
@@ -2175,6 +3249,36 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
               });
               if (m.key === "killPct") summaryVal = totA > 0 ? totK / totA : 0;
               else summaryVal = totA > 0 ? (totK - totE) / totA : 0;
+            } else if (m.key === "swings") {
+              let totSwings = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totSwings += d.raw?.totalAttacks || d.counts?.attacks || 0;
+              });
+              summaryVal = totSwings;
+            } else if (m.key === "frontSetPct") {
+              let totAtt = 0;
+              let totFront = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totAtt += d.raw?.totalAttacks || d.counts?.attacks || 0;
+                totFront += d.raw?.frontAttacks || 0;
+              });
+              summaryVal = totAtt > 0 ? totFront / totAtt : 0;
+            } else if (m.key === "inSystemPct") {
+              let totP = 0;
+              let totInSys = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totP += d.raw?.passCount || d.counts?.passCount || 0;
+                totInSys += (d.raw?.pass3 || 0) + (d.raw?.pass2 || 0);
+              });
+              summaryVal = totP > 0 ? totInSys / totP : 0;
+            } else if (m.key === "outOfSystemPct") {
+              let totP = 0;
+              let totOutSys = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totP += d.raw?.passCount || d.counts?.passCount || 0;
+                totOutSys += (d.raw?.pass1 || 0) + (d.raw?.pass0 || 0);
+              });
+              summaryVal = totP > 0 ? totOutSys / totP : 0;
             } else if (m.key === "acePct") {
               let totAce = 0;
               let totSrv = 0;
@@ -2183,6 +3287,20 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                 totSrv += d.counts?.serves || d.raw?.totalServes || 0;
               });
               summaryVal = totSrv > 0 ? totAce / totSrv : 0;
+            } else if (m.key === "timesAced") {
+              let totAced = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totAced += d.values?.timesAced || d.counts?.timesAced || 0;
+              });
+              summaryVal = totAced;
+            } else if (m.key === "passIndex") {
+              let totPassSum = 0;
+              let totPassCount = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totPassSum += d.counts?.passSum || 0;
+                totPassCount += d.counts?.passCount || 0;
+              });
+              summaryVal = calculatePassingIndex(totPassSum, totPassCount);
             } else {
               const values = discreteSeriesData.map((d) => d.values[m.key] || 0);
               summaryVal = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;

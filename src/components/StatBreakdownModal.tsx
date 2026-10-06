@@ -16,7 +16,9 @@ import {
   Copy,
   Check,
   Edit3,
+  Target,
 } from "lucide-react";
+import { calculatePassingIndex } from "../utils/volleyballStats";
 
 export type StatCategoryType = "all" | "serve" | "attack" | "block" | "pass" | "dig";
 
@@ -32,6 +34,7 @@ export interface PlayerBreakdownStats {
   pass2: number;
   pass1: number;
   pass0: number;
+  passAced?: number;
   // Attacking
   attCount: number;
   attCountFront: number;
@@ -151,6 +154,17 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
       ? ((selectedPlayer.attCountBack / totalSwings) * 100).toFixed(0)
       : "0";
 
+  // Front row set distribution: % of team front-row sets received by this player
+  const totalTeamFrontSwings =
+    teamStats?.attCountFront ||
+    (allPlayers && allPlayers.length > 0
+      ? allPlayers.reduce((acc, p) => acc + (p.attCountFront || 0), 0)
+      : selectedPlayer.attCountFront);
+  const frontRowSetDistPct =
+    totalTeamFrontSwings > 0
+      ? ((selectedPlayer.attCountFront / totalTeamFrontSwings) * 100).toFixed(1)
+      : "0.0";
+
   // Block
   const totalBlockActions =
     selectedPlayer.blkStuff +
@@ -171,6 +185,11 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
   const inSystemPct =
     totalPasses > 0
       ? ((inSystemPasses / totalPasses) * 100).toFixed(1)
+      : "0.0";
+  const outOfSystemPasses = selectedPlayer.pass1 + selectedPlayer.pass0;
+  const outOfSystemPct =
+    totalPasses > 0
+      ? ((outOfSystemPasses / totalPasses) * 100).toFixed(1)
       : "0.0";
   const p3Pct =
     totalPasses > 0
@@ -1121,6 +1140,27 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                     %)
                   </span>
                 </div>
+
+                {/* FRONT ROW SET DISTRIBUTION STAT */}
+                <div className="mt-3 p-3.5 bg-gradient-to-r from-indigo-50/80 via-blue-50/60 to-indigo-50/80 rounded-xl border border-indigo-100/90 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                      <Target size={14} className="text-indigo-600" />
+                      Front Row Set Distribution
+                    </span>
+                    <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                      When in front row, percentage of sets directed to this hitter
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-2xl font-black text-indigo-700 font-mono">
+                      {frontRowSetDistPct}%
+                    </span>
+                    <span className="text-[10px] text-indigo-600 font-bold block">
+                      {selectedPlayer.attCountFront} of {totalTeamFrontSwings} team front-row sets
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1243,7 +1283,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
           {/* ===================== PASSING TAB ===================== */}
           {activeCategory === "pass" && (
             <div className="space-y-5 animate-in fade-in duration-200">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
                   <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 block">
                     Pass Rating Avg
@@ -1253,6 +1293,18 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   </span>
                   <span className="text-[10px] text-blue-600 font-bold block mt-0.5">
                     Scale: 0.00 - 3.00
+                  </span>
+                </div>
+
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-center">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 block">
+                    Passing Index
+                  </span>
+                  <span className="text-2xl sm:text-3xl font-black text-purple-800">
+                    {calculatePassingIndex(selectedPlayer.passSum, totalPasses)}
+                  </span>
+                  <span className="text-[10px] text-purple-600 font-bold block mt-0.5">
+                    Vol + Quality (0-100)
                   </span>
                 </div>
 
@@ -1280,15 +1332,27 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   </span>
                 </div>
 
-                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-red-600 block">
-                    Pass Errors (0s)
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 block">
+                    Out-of-System (1s & 0s)
                   </span>
-                  <span className="text-2xl sm:text-3xl font-black text-red-600">
-                    {selectedPlayer.pass0}
+                  <span className="text-2xl sm:text-3xl font-black text-amber-800">
+                    {outOfSystemPasses}
                   </span>
-                  <span className="text-[10px] text-red-500 font-black block mt-0.5">
-                    {p0Pct}% Error / Ace Allowed
+                  <span className="text-[10px] text-amber-600 font-black block mt-0.5">
+                    {outOfSystemPct}% Out-of-Sys
+                  </span>
+                </div>
+
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-center">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 block">
+                    Times Aced
+                  </span>
+                  <span className="text-2xl sm:text-3xl font-black text-rose-700">
+                    {selectedPlayer.passAced || 0}
+                  </span>
+                  <span className="text-[10px] text-rose-500 font-bold block mt-0.5">
+                    Reception Errors
                   </span>
                 </div>
               </div>
@@ -1311,6 +1375,9 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       </span>
                       <span>Perfect</span>
                     </div>
+                    <span className="text-[9px] font-black uppercase text-emerald-600 block mt-0.5">
+                      In-System
+                    </span>
                     <span className="text-2xl font-black text-emerald-700 my-1 block">
                       {selectedPlayer.pass3}
                     </span>
@@ -1327,6 +1394,9 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       </span>
                       <span>Good</span>
                     </div>
+                    <span className="text-[9px] font-black uppercase text-blue-600 block mt-0.5">
+                      In-System
+                    </span>
                     <span className="text-2xl font-black text-blue-700 my-1 block">
                       {selectedPlayer.pass2}
                     </span>
@@ -1343,6 +1413,9 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       </span>
                       <span>Poor</span>
                     </div>
+                    <span className="text-[9px] font-black uppercase text-amber-600 block mt-0.5">
+                      Out of System
+                    </span>
                     <span className="text-2xl font-black text-amber-700 my-1 block">
                       {selectedPlayer.pass1}
                     </span>
@@ -1352,17 +1425,20 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   </div>
 
                   {/* Rating 0 */}
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
-                    <div className="flex items-center justify-center gap-1.5 text-xs font-black text-red-800 uppercase">
-                      <span className="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-xs">
+                  <div className="bg-amber-50/70 border border-amber-300 rounded-xl p-3 text-center">
+                    <div className="flex items-center justify-center gap-1.5 text-xs font-black text-amber-900 uppercase">
+                      <span className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs">
                         0
                       </span>
-                      <span>Error</span>
+                      <span>Overbump / Err</span>
                     </div>
-                    <span className="text-2xl font-black text-red-600 my-1 block">
+                    <span className="text-[9px] font-black uppercase text-amber-700 block mt-0.5">
+                      Out of System
+                    </span>
+                    <span className="text-2xl font-black text-amber-800 my-1 block">
                       {selectedPlayer.pass0}
                     </span>
-                    <span className="text-[10px] text-red-500 font-bold">
+                    <span className="text-[10px] text-amber-700 font-bold">
                       {p0Pct}% of passes
                     </span>
                   </div>
