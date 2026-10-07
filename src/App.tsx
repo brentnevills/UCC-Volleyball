@@ -5512,6 +5512,68 @@ export default function App() {
     return { uccStats: uccData, opponentStats: oppData };
   }, [filteredStats, appData.roster, appData.matches]);
 
+  const overallUccPlayers = useMemo(() => {
+    return Object.values(uccStats).filter((p: any) => {
+      if (!showRetired && p.isRetired) return false;
+      return true;
+    });
+  }, [uccStats, showRetired]);
+
+  const overallTeamTot = useMemo(() => {
+    return overallUccPlayers.reduce((acc: any, p: any) => {
+      acc.passCount = (acc.passCount || 0) + (p.passCount || 0);
+      acc.passSum = (acc.passSum || 0) + (p.passSum || 0);
+      acc.pass3 = (acc.pass3 || 0) + (p.pass3 || 0);
+      acc.pass2 = (acc.pass2 || 0) + (p.pass2 || 0);
+      acc.pass1 = (acc.pass1 || 0) + (p.pass1 || 0);
+      acc.pass0 = (acc.pass0 || 0) + (p.pass0 || 0);
+      acc.passAced = (acc.passAced || 0) + (p.passAced || 0);
+      acc.attCount = (acc.attCount || 0) + (p.attCount || 0);
+      acc.attCountFront = (acc.attCountFront || 0) + (p.attCountFront || 0);
+      acc.attCountBack = (acc.attCountBack || 0) + (p.attCountBack || 0);
+      acc.attKill = (acc.attKill || 0) + (p.attKill || 0);
+      acc.attErr = (acc.attErr || 0) + (p.attErr || 0);
+      acc.attBlk = (acc.attBlk || 0) + (p.attBlk || 0);
+      acc.blkStuff = (acc.blkStuff || 0) + (p.blkStuff || 0);
+      acc.blkLate = (acc.blkLate || 0) + (p.blkLate || 0);
+      acc.blkNet = (acc.blkNet || 0) + (p.blkNet || 0);
+      acc.blkUsed = (acc.blkUsed || 0) + (p.blkUsed || 0);
+      acc.blkCount = (acc.blkCount || 0) + (p.blkCount || 0);
+      acc.srvAce = (acc.srvAce || 0) + (p.srvAce || 0);
+      acc.srvErr = (acc.srvErr || 0) + (p.srvErr || 0);
+      acc.srvCount = (acc.srvCount || 0) + (p.srvCount || 0);
+      acc.digCount = (acc.digCount || 0) + (p.digCount || 0);
+      acc.digErr = (acc.digErr || 0) + (p.digErr || 0);
+      return acc;
+    }, {
+      id: "team_total",
+      name: "Team Totals",
+      passCount: 0,
+      passSum: 0,
+      pass3: 0,
+      pass2: 0,
+      pass1: 0,
+      pass0: 0,
+      passAced: 0,
+      attCount: 0,
+      attCountFront: 0,
+      attCountBack: 0,
+      attKill: 0,
+      attErr: 0,
+      attBlk: 0,
+      blkStuff: 0,
+      blkLate: 0,
+      blkNet: 0,
+      blkUsed: 0,
+      blkCount: 0,
+      srvAce: 0,
+      srvErr: 0,
+      srvCount: 0,
+      digCount: 0,
+      digErr: 0,
+    });
+  }, [overallUccPlayers]);
+
   const exportCSV = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
     if (!isCoachRole && (currentTeam?.role === "player" || isPlayerRole)) {
@@ -19429,8 +19491,8 @@ export default function App() {
             setStatBreakdownModal((prev) => ({ ...prev, isOpen: false }))
           }
           selectedPlayer={statBreakdownModal.selectedPlayer}
-          allPlayers={allUccPlayers}
-          teamStats={teamTot}
+          allPlayers={overallUccPlayers}
+          teamStats={overallTeamTot}
           initialCategory={statBreakdownModal.category}
           titleContext={statBreakdownModal.titleContext}
           onOpenCorrection={(playerId) => {
