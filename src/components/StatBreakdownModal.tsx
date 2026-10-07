@@ -39,6 +39,8 @@ export interface PlayerBreakdownStats {
   attCount: number;
   attCountFront: number;
   attCountBack: number;
+  teamFrontSwingsWhileInFront?: number;
+  frontRowSetDistPct?: number;
   attKill: number;
   attErr: number;
   attErrNet: number;
@@ -154,16 +156,20 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
       ? ((selectedPlayer.attCountBack / totalSwings) * 100).toFixed(0)
       : "0";
 
-  // Front row set distribution: % of team front-row sets received by this player
-  const totalTeamFrontSwings =
-    teamStats?.attCountFront ||
-    (allPlayers && allPlayers.length > 0
-      ? allPlayers.reduce((acc, p) => acc + (p.attCountFront || 0), 0)
-      : selectedPlayer.attCountFront);
+  // Front row set distribution: % of sets directed to this hitter when in front row
+  // Only considers when that specific player is in the front row
+  const playerFrontSwings = selectedPlayer.attCountFront || 0;
+  const playerTeamFrontSwings =
+    (selectedPlayer as any).teamFrontSwingsWhileInFront !== undefined &&
+    (selectedPlayer as any).teamFrontSwingsWhileInFront > 0
+      ? (selectedPlayer as any).teamFrontSwingsWhileInFront
+      : playerFrontSwings;
   const frontRowSetDistPct =
-    totalTeamFrontSwings > 0
-      ? ((selectedPlayer.attCountFront / totalTeamFrontSwings) * 100).toFixed(1)
-      : "0.0";
+    (selectedPlayer as any).frontRowSetDistPct !== undefined
+      ? Number((selectedPlayer as any).frontRowSetDistPct).toFixed(1)
+      : playerTeamFrontSwings > 0
+        ? ((playerFrontSwings / playerTeamFrontSwings) * 100).toFixed(1)
+        : "0.0";
 
   // Block
   const totalBlockActions =
@@ -1157,7 +1163,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       {frontRowSetDistPct}%
                     </span>
                     <span className="text-[10px] text-indigo-600 font-bold block">
-                      {selectedPlayer.attCountFront} of {totalTeamFrontSwings} team front-row sets
+                      {selectedPlayer.attCountFront} of {playerTeamFrontSwings} sets while in front row
                     </span>
                   </div>
                 </div>

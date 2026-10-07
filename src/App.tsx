@@ -86,6 +86,7 @@ import { PlayerAccessLogModal } from "./components/PlayerAccessLogModal";
 import { StatsTrendChart } from "./components/StatsTrendChart";
 import { TimeoutStatsModal } from "./components/TimeoutStatsModal";
 import { RollingSnapshotsModal } from "./components/RollingSnapshotsModal";
+import { calculateFrontRowSetDistribution } from "./utils/volleyballStats";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -3271,6 +3272,14 @@ export default function App() {
     }
     const statId =
       Date.now().toString() + Math.random().toString(36).substring(7);
+    const currentLineup = isOpponent ? oppLineup : lineup;
+    const currentFrontRow = Array.isArray(currentLineup)
+      ? [currentLineup[1], currentLineup[2], currentLineup[3]].filter(Boolean)
+      : [];
+    if (!isOpponent && row === "Front" && playerId && !currentFrontRow.includes(playerId)) {
+      currentFrontRow.push(playerId);
+    }
+
     const newStat = {
       id: statId,
       matchId: activeMatch.id,
@@ -3281,6 +3290,12 @@ export default function App() {
       value,
       isOpponent,
       ...(row ? { row } : {}),
+      ...(category === "Attack" || row
+        ? {
+            lineup: Array.isArray(currentLineup) ? [...currentLineup] : [],
+            frontRowPlayers: currentFrontRow,
+          }
+        : {}),
       timestamp: new Date().toISOString(),
     };
 
@@ -5334,6 +5349,8 @@ export default function App() {
         attCount: 0,
         attCountFront: 0,
         attCountBack: 0,
+        teamFrontSwingsWhileInFront: 0,
+        frontRowSetDistPct: 0,
         attBlk: 0,
         attKill: 0,
         attErr: 0,
@@ -5509,8 +5526,21 @@ export default function App() {
         }
       }
     });
+    const frDistMap = calculateFrontRowSetDistribution(
+      filteredStats,
+      appData.sets,
+      appData.roster,
+    );
+    Object.values(uccData).forEach((p: any) => {
+      const frInfo = frDistMap.get(String(p.id));
+      p.teamFrontSwingsWhileInFront = frInfo
+        ? frInfo.teamFrontSwingsWhileInFront
+        : (p.attCountFront || 0);
+      p.frontRowSetDistPct = frInfo ? frInfo.frontRowSetDistPct : 0;
+    });
+
     return { uccStats: uccData, opponentStats: oppData };
-  }, [filteredStats, appData.roster, appData.matches]);
+  }, [filteredStats, appData.roster, appData.matches, appData.sets]);
 
   const overallUccPlayers = useMemo(() => {
     return Object.values(uccStats).filter((p: any) => {
@@ -18455,7 +18485,7 @@ export default function App() {
                                     })
                                   }
                                   className={`p-2 sm:p-3 border-l border-slate-100 text-center cursor-pointer hover:bg-amber-50/50 transition-colors ${isConcealed ? "secure-stat-concealed" : ""}`}
-                                  title={`Click to view ${p.name}'s Attack breakdown (Front Row Set Dist: ${teamTot.attCountFront > 0 ? ((p.attCountFront / teamTot.attCountFront) * 100).toFixed(0) : "0"}%)`}
+                                  title={`Click to view ${p.name}'s Attack breakdown (Front Row Set Dist: ${(p.frontRowSetDistPct ?? 0).toFixed(0)}% when in front row)`}
                                 >
                                   <div className="flex items-center justify-center gap-1 flex-wrap">
                                     <span className="font-bold text-slate-700">
@@ -18464,12 +18494,12 @@ export default function App() {
                                     <span className="text-[9px] text-slate-400 font-medium">
                                       ({p.attCountFront}F/{p.attCountBack}B)
                                     </span>
-                                    {p.attCountFront > 0 && teamTot.attCountFront > 0 && (
+                                    {p.attCountFront > 0 && (
                                       <span
                                         className="text-[8px] font-black bg-indigo-50 text-indigo-700 px-1 py-0.2 rounded border border-indigo-200"
-                                        title={`Front Row Set Distribution: ${((p.attCountFront / teamTot.attCountFront) * 100).toFixed(0)}% of team front-row sets were set to ${p.name}`}
+                                        title={`Front Row Set Distribution: ${(p.frontRowSetDistPct ?? 0).toFixed(0)}% of sets directed to ${p.name} when in front row (${p.attCountFront} of ${p.teamFrontSwingsWhileInFront || p.attCountFront} sets)`}
                                       >
-                                        {((p.attCountFront / teamTot.attCountFront) * 100).toFixed(0)}% FR
+                                        {(p.frontRowSetDistPct ?? 0).toFixed(0)}% FR
                                       </span>
                                     )}
                                   </div>

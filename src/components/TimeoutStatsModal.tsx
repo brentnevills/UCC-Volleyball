@@ -31,6 +31,7 @@ import {
 import {
   calculatePassingIndex,
   calculateAdjustedPassQuality,
+  calculateFrontRowSetDistribution,
 } from "../utils/volleyballStats";
 
 interface TimeoutStatsModalProps {
@@ -86,6 +87,7 @@ export interface HitterRankInfo {
   totalAttacks: number;
   frontAttacks: number;
   backAttacks: number;
+  teamFrontAttacksWhileInFront?: number;
   frontSetDistPct: number;
   killPct: number;
   efficiency: number;
@@ -651,13 +653,16 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
         : null;
 
     // Ranked Hitters list
+    const frDistMap = calculateFrontRowSetDistribution(stats, undefined, roster);
     const rankedHitters: HitterRankInfo[] = Array.from(playerAttackMap.values())
       .filter((p) => p.totalAttacks > 0)
       .map((p) => {
         const kPct = p.totalAttacks > 0 ? (p.kills / p.totalAttacks) * 100 : 0;
         const eff =
           p.totalAttacks > 0 ? (p.kills - p.unforcedErrors) / p.totalAttacks : 0;
-        const frSetDistPct = totalFrontAttacks > 0 ? ((p.frontAttacks || 0) / totalFrontAttacks) * 100 : 0;
+        const frInfo = frDistMap.get(String(p.id));
+        const teamFrontWhileInFront = frInfo ? frInfo.teamFrontSwingsWhileInFront : (p.frontAttacks || 0);
+        const frSetDistPct = frInfo ? frInfo.frontRowSetDistPct : 0;
         return {
           id: p.id,
           name: p.name,
@@ -668,6 +673,7 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
           totalAttacks: p.totalAttacks,
           frontAttacks: p.frontAttacks || 0,
           backAttacks: p.backAttacks || 0,
+          teamFrontAttacksWhileInFront: teamFrontWhileInFront,
           frontSetDistPct: frSetDistPct,
           killPct: kPct,
           efficiency: eff,
@@ -1391,7 +1397,7 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
                           <tr className="border-b border-slate-700/80 text-[10px] font-black uppercase tracking-wider text-slate-400">
                             <th className="pb-2">Hitter</th>
                             <th className="pb-2 text-center">Swings</th>
-                            <th className="pb-2 text-center" title="Front Row Set Distribution (% of team front-row sets received)">
+                            <th className="pb-2 text-center" title="Front Row Set Distribution: When in front row, % of sets directed to this hitter (not of total FR sets)">
                               FR Set %
                             </th>
                             <th className="pb-2 text-center">Kills</th>
@@ -1415,10 +1421,13 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
                               <td className="py-2.5 text-center font-mono font-bold text-slate-300">
                                 {h.totalAttacks}
                               </td>
-                              <td className="py-2.5 text-center font-mono font-bold text-indigo-300">
+                              <td
+                                className="py-2.5 text-center font-mono font-bold text-indigo-300"
+                                title={`When in front row: ${h.frontAttacks} of ${h.teamFrontAttacksWhileInFront || h.frontAttacks} sets directed to ${h.name} (${h.frontSetDistPct.toFixed(0)}%)`}
+                              >
                                 {h.frontSetDistPct.toFixed(0)}%{" "}
                                 <span className="text-[9px] text-slate-400 font-normal">
-                                  ({h.frontAttacks}F)
+                                  ({h.frontAttacks}/{h.teamFrontAttacksWhileInFront || h.frontAttacks})
                                 </span>
                               </td>
                               <td className="py-2.5 text-center font-mono font-black text-emerald-400 text-sm">

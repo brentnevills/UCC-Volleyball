@@ -1,4 +1,4 @@
-import { calculatePassingIndex } from "../utils/volleyballStats";
+import { calculatePassingIndex, calculateFrontRowSetDistribution } from "../utils/volleyballStats";
 import React, { useState, useMemo } from "react";
 import {
   TrendingUp,
@@ -98,7 +98,7 @@ const METRICS: MetricConfig[] = [
     stroke: "#4f46e5",
     format: (v) => `${(v * 100).toFixed(1)}%`,
     unit: "%",
-    description: "Front Row Set Distribution: % of sets/swings taken from the front row.",
+    description: "Front Row Set Distribution: % of sets directed to this hitter when in front row.",
   },
   {
     key: "inSystemPct",
@@ -1220,6 +1220,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         blocked: number;
         killPct: number;
         efficiency: number;
+        teamFrontSwingsWhileInFront: number;
         frontSetDistPct: number;
       }
     >();
@@ -1237,6 +1238,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         blocked: 0,
         killPct: 0,
         efficiency: 0,
+        teamFrontSwingsWhileInFront: 0,
         frontSetDistPct: 0,
       });
     });
@@ -1281,6 +1283,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
               blocked: 0,
               killPct: 0,
               efficiency: 0,
+              teamFrontSwingsWhileInFront: 0,
               frontSetDistPct: 0,
             });
           }
@@ -1296,16 +1299,21 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       }
     });
 
+    const frDistMap = calculateFrontRowSetDistribution(ourStats, sets, roster);
+
     const rankedHitters = Array.from(playerSwingsMap.values())
       .filter((p) => p.totalSwings > 0)
       .map((p) => {
         const killPct = p.totalSwings > 0 ? (p.kills / p.totalSwings) * 100 : 0;
         const efficiency = p.totalSwings > 0 ? (p.kills - p.errors) / p.totalSwings : 0;
-        const frontSetDistPct = teamFrontSwings > 0 ? (p.frontSwings / teamFrontSwings) * 100 : 0;
+        const frInfo = frDistMap.get(p.id);
+        const teamFrontWhileInFront = frInfo ? frInfo.teamFrontSwingsWhileInFront : (p.frontSwings || 0);
+        const frontSetDistPct = frInfo ? frInfo.frontRowSetDistPct : 0;
         return {
           ...p,
           killPct,
           efficiency,
+          teamFrontSwingsWhileInFront: teamFrontWhileInFront,
           frontSetDistPct,
         };
       })
@@ -2567,9 +2575,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                       ? `${swingsEvolutionData.activeHitter.frontSetDistPct.toFixed(1)}%`
                       : `${swingsEvolutionData.teamTotalSwings > 0 ? "100.0%" : "0.0%"}`}
                   </div>
-                  <div className="text-[10px] text-slate-300 font-medium mt-0.5 truncate" title={swingsEvolutionData.activeHitter ? `${swingsEvolutionData.activeHitter.frontSwings} of ${swingsEvolutionData.teamFrontSwings} team front-row sets` : "Front-row offense distribution"}>
+                  <div className="text-[10px] text-slate-300 font-medium mt-0.5 truncate" title={swingsEvolutionData.activeHitter ? `${swingsEvolutionData.activeHitter.frontSwings} of ${swingsEvolutionData.activeHitter.teamFrontSwingsWhileInFront || swingsEvolutionData.activeHitter.frontSwings} sets while in front row` : "Front-row offense distribution"}>
                     {swingsEvolutionData.activeHitter
-                      ? `${swingsEvolutionData.activeHitter.frontSwings} of ${swingsEvolutionData.teamFrontSwings} team FR sets`
+                      ? `${swingsEvolutionData.activeHitter.frontSwings} of ${swingsEvolutionData.activeHitter.teamFrontSwingsWhileInFront || swingsEvolutionData.activeHitter.frontSwings} sets while in front row`
                       : `${swingsEvolutionData.teamFrontSwings} total team front sets`}
                   </div>
                 </div>
@@ -3117,7 +3125,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                       <th className="p-3">Hitter</th>
                       <th className="p-3 text-center">Total Swings</th>
                       <th className="p-3 text-center">Front / Back</th>
-                      <th className="p-3 text-left min-w-[160px]">Front Row Set Dist %</th>
+                      <th className="p-3 text-left min-w-[180px]" title="When in front row, percentage of sets directed to this hitter (not of total FR sets)">
+                        Front Row Set Dist %
+                      </th>
                       <th className="p-3 text-center text-emerald-700">Kills</th>
                       <th className="p-3 text-center">Kill %</th>
                       <th className="p-3 text-center text-rose-600">Errors</th>
@@ -3164,17 +3174,23 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                               <span className="mx-1">/</span>
                               <span className="text-sky-600 font-bold">{h.backSwings}B</span>
                             </td>
-                            <td className="p-3">
+                            <td
+                              className="p-3"
+                              title={`${h.name}: ${h.frontSwings} of ${h.teamFrontSwingsWhileInFront || h.frontSwings} sets directed to this hitter when in front row (${h.frontSetDistPct.toFixed(1)}%)`}
+                            >
                               <div className="flex items-center gap-2">
                                 <span className="font-mono font-black text-indigo-700 w-12 text-right">
                                   {h.frontSetDistPct.toFixed(1)}%
                                 </span>
-                                <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden max-w-[100px]">
+                                <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden max-w-[80px]">
                                   <div
                                     className="bg-indigo-600 h-full rounded-full transition-all"
                                     style={{ width: `${Math.min(100, Math.max(0, h.frontSetDistPct))}%` }}
                                   />
                                 </div>
+                                <span className="text-[10px] text-slate-400 font-mono font-medium whitespace-nowrap">
+                                  ({h.frontSwings}/{h.teamFrontSwingsWhileInFront || h.frontSwings})
+                                </span>
                               </div>
                             </td>
                             <td className="p-3 text-center font-mono font-black text-emerald-600 text-sm">
