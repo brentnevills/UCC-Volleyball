@@ -233,6 +233,7 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
         teamColor: "bg-slate-800",
         passCount: 0,
         passSum: 0,
+        passAced: 0,
         attCount: 0,
         attKill: 0,
         attErr: 0,
@@ -268,6 +269,7 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
             teamColor: team.color,
             passCount: 0,
             passSum: 0,
+            passAced: 0,
             attCount: 0,
             attKill: 0,
             attErr: 0,
@@ -295,7 +297,10 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
 
             if (s.category === "Pass") {
               pTeam.passCount += 1;
-              pTeam.passSum += s.value;
+              pTeam.passSum += (s.value || 0);
+              if (s.metric === "Aced" || s.isAced || (s.metric && String(s.metric).toLowerCase().includes("aced"))) {
+                pTeam.passAced = (pTeam.passAced || 0) + 1;
+              }
             } else if (s.category === "Dig") {
               if (s.metric === "Dig") pTeam.digCount += 1;
               if (s.metric === "Error") pTeam.digErr += 1;
@@ -357,15 +362,22 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
               if (s.metric === "Net Viol") pTeam.blkNet += s.value || 1;
               if (s.metric === "Used") pTeam.blkUsed += s.value || 1;
             } else if (s.category === "Serve") {
-              if (s.metric === "Attempt") pTeam.srvCount += 1;
-              if (s.metric === "Ace") pTeam.srvAce += 1;
-              if (s.metric?.includes("Miss") || s.metric === "Error") pTeam.srvErr += 1;
+              const isAce =
+                s.metric === "Ace" ||
+                Boolean(s.isAce) ||
+                (s.metric && String(s.metric).toLowerCase().includes("ace"));
+              const isErr =
+                s.metric?.includes("Miss") || s.metric === "Error";
+              if (s.metric === "Attempt" || s.metric === "In Play" || (!isAce && !isErr)) pTeam.srvCount += 1;
+              if (isAce) pTeam.srvAce += 1;
+              if (isErr) pTeam.srvErr += 1;
             }
           });
 
           teamResults.push(pTeam);
           tot.passCount += pTeam.passCount;
           tot.passSum += pTeam.passSum;
+          tot.passAced += pTeam.passAced;
           tot.attCount += pTeam.attCount;
           tot.attKill += pTeam.attKill;
           tot.attErr += pTeam.attErr;
@@ -658,6 +670,10 @@ export default function App() {
     sets: [],
     stats: [],
   });
+  const appDataRef = useRef(appData);
+  useEffect(() => {
+    appDataRef.current = appData;
+  }, [appData]);
 
   // Current Session State
   const [activeMatch, setActiveMatch] = useState(null);
@@ -2103,6 +2119,7 @@ export default function App() {
   // -------------------------------------------------------------
 
   const writeLocalDb = (updatedData: any) => {
+    appDataRef.current = updatedData;
     setAppData(updatedData);
     const targetTeamKey = activeTeam || "ucc_main";
     // Rugged Multi-Tier Persistence (LocalStorage + Double-Buffer + IndexedDB Mirror + Snapshot)
@@ -2405,6 +2422,7 @@ export default function App() {
           )
         : [...existingSets, { id: targetSetId, ...updates }];
       const nextData = { ...prev, sets: nextSets };
+      appDataRef.current = nextData;
       const targetTeamKey = activeTeam || "ucc_main";
       ruggedSaveTeamData(targetTeamKey, nextData).catch((err) => {
         console.warn("RuggedSave background notice:", err);
@@ -2879,8 +2897,13 @@ export default function App() {
     setShowEndGameModal(true);
   };
 
-  const confirmEndGameLive = async (toView: "stats" | "menu" = "stats") => {
+  const confirmEndGameLive = async (toView: "stats" | "menu" | "pause" = "stats") => {
     setShowEndGameModal(false);
+    if (toView === "pause") {
+      showToast("Session paused • You can resume anytime from the home screen banner", "info");
+      setView("menu");
+      return;
+    }
     const matchToEnd =
       activeMatch ||
       lastActiveMatchRef.current ||
@@ -3276,19 +3299,52 @@ export default function App() {
     const currentFrontRow = Array.isArray(currentLineup)
       ? [currentLineup[1], currentLineup[2], currentLineup[3]].filter(Boolean)
       : [];
-    if (!isOpponent && row === "Front" && playerId && !currentFrontRow.includes(playerId)) {
-      currentFrontRow.push(playerId);
+    const cleanPlayerId = (rawId: any) => {
+      if (!rawId) return rawId;
+      const s = String(rawId);
+      if (s.startsWith("ucc_pos_")) {
+        const idx = parseInt(s.replace("ucc_pos_", ""), 10);
+        return lineup[idx] || s;
+      }
+      if (s.startsWith("opp_pos_")) {
+        const idx = parseInt(s.replace("opp_pos_", ""), 10);
+        return oppLineup[idx] || s;
+      }
+      if (s.includes("_pos")) {
+        return s.split("_pos")[0];
+      }
+      return s;
+    };
+    const resolvedPlayerId =
+      cleanPlayerId(playerId) ||
+      (isOpponent ? (oppLineup[0] || "Opponent") : (lineup[0] || appData.roster[0]?.id || "Team"));
+
+    if (!isOpponent && row === "Front" && resolvedPlayerId && !currentFrontRow.includes(resolvedPlayerId)) {
+      currentFrontRow.push(resolvedPlayerId);
     }
+
+    const isAced =
+      category === "Pass" &&
+      (metric === "Aced" ||
+        metric === "0 (Aced)" ||
+        (metric && String(metric).toLowerCase().includes("aced")));
+    const isAce =
+      category === "Serve" &&
+      (metric === "Ace" || (metric && String(metric).toLowerCase().includes("ace")));
 
     const newStat = {
       id: statId,
       matchId: activeMatch.id,
       setId: activeSetId,
-      playerId,
+      setNum: Number(currentSetNum) || 1,
+      playerId: resolvedPlayerId,
       category,
       metric,
       value,
-      isOpponent,
+      isOpponent: Boolean(isOpponent),
+      isOpp: Boolean(isOpponent),
+      isAced,
+      isAce,
       ...(row ? { row } : {}),
       ...(category === "Attack" || row
         ? {
@@ -3299,11 +3355,15 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
 
-    // Always update local state & localStorage immediately
-    writeLocalDb({
-      ...appData,
-      stats: [...appData.stats, newStat],
-    });
+    // Use current snapshot from appDataRef to prevent dropped stats when logging in rapid succession
+    const currentData = appDataRef.current || appData;
+    const updatedStats = [...(currentData.stats || []), newStat];
+    const updatedAppData = {
+      ...currentData,
+      stats: updatedStats,
+    };
+    appDataRef.current = updatedAppData;
+    writeLocalDb(updatedAppData);
 
     if (isFirebaseAvailable && user && activeTeam && db) {
       try {
@@ -3315,14 +3375,126 @@ export default function App() {
         console.warn("Stat cloud sync deferred (saved locally):", err?.message || err);
       }
     }
+    return newStat;
+  };
+
+  const logMultipleStats = async (
+    statsList: Array<{
+      playerId: any;
+      category: any;
+      metric: any;
+      value?: number;
+      isOpponent?: boolean;
+      row?: "Front" | "Back" | null;
+    }>,
+  ) => {
+    if (!activeMatch || !activeSetId || !statsList || statsList.length === 0) {
+      return [];
+    }
+
+    const cleanPlayerId = (rawId: any) => {
+      if (!rawId) return rawId;
+      const s = String(rawId);
+      if (s.startsWith("ucc_pos_")) {
+        const idx = parseInt(s.replace("ucc_pos_", ""), 10);
+        return lineup[idx] || s;
+      }
+      if (s.startsWith("opp_pos_")) {
+        const idx = parseInt(s.replace("opp_pos_", ""), 10);
+        return oppLineup[idx] || s;
+      }
+      if (s.includes("_pos")) {
+        return s.split("_pos")[0];
+      }
+      return s;
+    };
+
+    const newStats: any[] = [];
+    const timestamp = new Date().toISOString();
+
+    for (const item of statsList) {
+      const statId =
+        Date.now().toString() + Math.random().toString(36).substring(7);
+      const isOpponent = Boolean(item.isOpponent);
+      const currentLineup = isOpponent ? oppLineup : lineup;
+      const currentFrontRow = Array.isArray(currentLineup)
+        ? [currentLineup[1], currentLineup[2], currentLineup[3]].filter(Boolean)
+        : [];
+
+      const resolvedPlayerId =
+        cleanPlayerId(item.playerId) ||
+        (isOpponent ? (oppLineup[0] || "Opponent") : (lineup[0] || appData.roster[0]?.id || "Team"));
+
+      const isAced =
+        item.category === "Pass" &&
+        (item.metric === "Aced" ||
+          item.metric === "0 (Aced)" ||
+          (item.metric && String(item.metric).toLowerCase().includes("aced")));
+      const isAce =
+        item.category === "Serve" &&
+        (item.metric === "Ace" ||
+          (item.metric && String(item.metric).toLowerCase().includes("ace")));
+
+      const statObj = {
+        id: statId,
+        matchId: activeMatch.id,
+        setId: activeSetId,
+        setNum: Number(currentSetNum) || 1,
+        playerId: resolvedPlayerId,
+        category: item.category,
+        metric: item.metric,
+        value: item.value !== undefined ? item.value : 1,
+        isOpponent,
+        isOpp: isOpponent,
+        isAced,
+        isAce,
+        ...(item.row ? { row: item.row } : {}),
+        ...(item.category === "Attack" || item.row
+          ? {
+              lineup: Array.isArray(currentLineup) ? [...currentLineup] : [],
+              frontRowPlayers: currentFrontRow,
+            }
+          : {}),
+        timestamp,
+      };
+
+      newStats.push(statObj);
+    }
+
+    const currentData = appDataRef.current || appData;
+    const updatedStats = [...(currentData.stats || []), ...newStats];
+    const updatedAppData = {
+      ...currentData,
+      stats: updatedStats,
+    };
+    appDataRef.current = updatedAppData;
+    writeLocalDb(updatedAppData);
+
+    if (isFirebaseAvailable && user && activeTeam && db) {
+      for (const st of newStats) {
+        try {
+          await setDoc(
+            doc(db, `${publicPath}/${activeTeam}/stats/${st.id}`),
+            st,
+          );
+        } catch (err: any) {
+          console.warn("Stat cloud sync deferred (saved locally):", err?.message || err);
+        }
+      }
+    }
+
+    return newStats;
   };
 
   const handleDeleteStat = async (statId: string) => {
-    const updatedStats = appData.stats.filter((s) => s.id !== statId);
-    writeLocalDb({
-      ...appData,
+    const currentData = appDataRef.current || appData;
+    const updatedStats = (currentData.stats || []).filter((s) => s.id !== statId);
+    const updatedData = {
+      ...currentData,
       stats: updatedStats,
-    });
+    };
+    appDataRef.current = updatedData;
+    writeLocalDb(updatedData);
 
     if (isFirebaseAvailable && user && activeTeam && db) {
       try {
@@ -3334,17 +3506,20 @@ export default function App() {
   };
 
   const handleUpdateStat = async (statId: string, updatedFields: any) => {
-    const updatedStats = appData.stats.map((s) =>
+    const currentData = appDataRef.current || appData;
+    const updatedStats = (currentData.stats || []).map((s) =>
       s.id === statId ? { ...s, ...updatedFields } : s,
     );
-    writeLocalDb({
-      ...appData,
+    const updatedData = {
+      ...currentData,
       stats: updatedStats,
-    });
+    };
+    appDataRef.current = updatedData;
+    writeLocalDb(updatedData);
 
     if (isFirebaseAvailable && user && activeTeam && db) {
       try {
-        const existingStat = appData.stats.find((s) => s.id === statId);
+        const existingStat = (currentData.stats || []).find((s) => s.id === statId);
         const mergedStat = { ...(existingStat || {}), ...updatedFields };
         await setDoc(
           doc(db, `${publicPath}/${activeTeam}/stats/${statId}`),
@@ -3367,14 +3542,15 @@ export default function App() {
     matchId?: string;
     setId?: string;
   }) => {
+    const currentData = appDataRef.current || appData;
     const targetMatchId =
       statData.matchId ||
       activeMatch?.id ||
-      (appData.matches.length > 0 ? appData.matches[0].id : "general_match");
+      (currentData.matches?.length > 0 ? currentData.matches[0].id : "general_match");
     const targetSetId =
       statData.setId ||
       activeSetId ||
-      appData.sets.find((s) => s.matchId === targetMatchId)?.id ||
+      currentData.sets?.find((s) => s.matchId === targetMatchId)?.id ||
       "manual_set";
     const statId =
       Date.now().toString() + Math.random().toString(36).substring(7);
@@ -3391,10 +3567,12 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
 
-    writeLocalDb({
-      ...appData,
-      stats: [...appData.stats, newStat],
-    });
+    const updatedData = {
+      ...currentData,
+      stats: [...(currentData.stats || []), newStat],
+    };
+    appDataRef.current = updatedData;
+    writeLocalDb(updatedData);
 
     if (isFirebaseAvailable && user && activeTeam && db) {
       try {
@@ -3642,9 +3820,11 @@ export default function App() {
           pointReason = "Serve Error";
         }
       } else if (category === "Pass") {
-        if (metric === "Error") {
+        if (metric === "Error" || metric === "Aced" || (metric && String(metric).toLowerCase().includes("aced"))) {
           pointAwardedTo = "opp";
-          pointReason = "Reception Error";
+          pointReason = "Reception Error (Aced)";
+          const oppServerId = oppLineup[0] || "Opponent";
+          logStat(oppServerId, "Serve", "Ace", 1, true);
         }
       } else if (category === "Setting" || category === "Set") {
         if (["Error", "Double", "Lift"].includes(metric)) {
@@ -3716,9 +3896,11 @@ export default function App() {
           pointReason = "Opponent Serve Error";
         }
       } else if (category === "Pass") {
-        if (metric === "Error") {
+        if (metric === "Error" || metric === "Aced" || (metric && String(metric).toLowerCase().includes("aced"))) {
           pointAwardedTo = "ucc";
           pointReason = "Opponent Reception Error";
+          const uccServerId = lineup[0] || "UCC";
+          logStat(uccServerId, "Serve", "Ace", 1, false);
         } else if (metric === "Rating" && value === 0) {
           pointAwardedTo = "ucc";
           pointReason = "Opponent Shank (0-Pass)";
@@ -4152,26 +4334,70 @@ export default function App() {
   };
 
   const confirmAceReceivers = () => {
-    const { serverId, team, isOpp } = pendingAceData;
-    logStat(serverId, "Serve", "Ace", 1, isOpp);
+    const { serverId, team, isOpp } = pendingAceData || {};
+    const isOpponentServe = Boolean(isOpp);
+    const validServer =
+      serverId ||
+      (isOpponentServe
+        ? oppLineup[0] || "Opponent"
+        : lineup[0] || appData.roster[0]?.id || "Team");
 
-    selectedAceReceivers.forEach((receiverId) => {
-      logStat(receiverId, "Pass", "Aced", 0, !isOpp);
-    });
+    const serverStat = {
+      playerId: validServer,
+      category: "Serve",
+      metric: "Ace",
+      value: 1,
+      isOpponent: isOpponentServe,
+    };
+
+    const receiverStats = selectedAceReceivers.map((receiverId) => ({
+      playerId: receiverId,
+      category: "Pass",
+      metric: "Aced",
+      value: 0,
+      isOpponent: !isOpponentServe,
+    }));
+
+    logMultipleStats([serverStat, ...receiverStats]);
 
     setAceReceiverPrompt(null);
     setPendingAceData(null);
     setSelectedAceReceivers([]);
-    handlePoint(team, true);
+    handlePoint(team || (isOpp ? "opp" : "ucc"), true);
   };
 
   const skipAceReceivers = () => {
-    const { serverId, team, isOpp } = pendingAceData;
-    logStat(serverId, "Serve", "Ace", 1, isOpp);
+    const { serverId, team, isOpp } = pendingAceData || {};
+    const isOpponentServe = Boolean(isOpp);
+    const validServer =
+      serverId ||
+      (isOpponentServe
+        ? oppLineup[0] || "Opponent"
+        : lineup[0] || appData.roster[0]?.id || "Team");
+
+    const serverStat = {
+      playerId: validServer,
+      category: "Serve",
+      metric: "Ace",
+      value: 1,
+      isOpponent: isOpponentServe,
+    };
+
+    const teamReceiveStat = {
+      playerId:
+        team === "opp" || isOpp ? "TEAM_RECEIVE" : "OPP_TEAM_RECEIVE",
+      category: "Pass",
+      metric: "Aced",
+      value: 0,
+      isOpponent: !isOpponentServe,
+    };
+
+    logMultipleStats([serverStat, teamReceiveStat]);
+
     setAceReceiverPrompt(null);
     setPendingAceData(null);
     setSelectedAceReceivers([]);
-    handlePoint(team, true);
+    handlePoint(team || (isOpp ? "opp" : "ucc"), true);
   };
 
   const getSevenReceivers = (receivingTeam: "ucc" | "opp") => {
@@ -5421,9 +5647,15 @@ export default function App() {
           )
             p.attErr = (p.attErr || 0) + 1;
         } else if (s.category === "Serve") {
-          if (s.metric === "Attempt") p.srvCount = (p.srvCount || 0) + 1;
-          if (s.metric === "Ace") p.srvAce += 1;
-          if (s.metric?.includes("Miss") || s.metric === "Error") p.srvErr += 1;
+          const isAce =
+            s.metric === "Ace" ||
+            Boolean(s.isAce) ||
+            (s.metric && String(s.metric).toLowerCase().includes("ace"));
+          const isErr =
+            s.metric?.includes("Miss") || s.metric === "Error";
+          if (s.metric === "Attempt" || s.metric === "In Play" || (!isAce && !isErr)) p.srvCount = (p.srvCount || 0) + 1;
+          if (isAce) p.srvAce = (p.srvAce || 0) + 1;
+          if (isErr) p.srvErr = (p.srvErr || 0) + 1;
         } else if (s.category === "Pass") {
           p.passCount += 1;
           p.passSum += (s.value || 0);
@@ -5512,9 +5744,15 @@ export default function App() {
           if (s.metric === "Net Viol") p.blkNet += s.value || 1;
           if (s.metric === "Used") p.blkUsed += s.value || 1;
         } else if (s.category === "Serve") {
-          if (s.metric === "Attempt") p.srvCount += 1;
-          if (s.metric === "Ace") p.srvAce += 1;
-          if (s.metric?.includes("Miss") || s.metric === "Error") {
+          const isAce =
+            s.metric === "Ace" ||
+            Boolean(s.isAce) ||
+            (s.metric && String(s.metric).toLowerCase().includes("ace"));
+          const isErr =
+            s.metric?.includes("Miss") || s.metric === "Error";
+          if (s.metric === "Attempt" || s.metric === "In Play" || (!isAce && !isErr)) p.srvCount += 1;
+          if (isAce) p.srvAce += 1;
+          if (isErr) {
             p.srvErr += 1;
             const m = s.metric.toLowerCase();
             if (m.includes("net")) p.srvErrNet += 1;
@@ -5550,7 +5788,7 @@ export default function App() {
   }, [uccStats, showRetired]);
 
   const overallTeamTot = useMemo(() => {
-    return overallUccPlayers.reduce((acc: any, p: any) => {
+    const res = overallUccPlayers.reduce((acc: any, p: any) => {
       acc.passCount = (acc.passCount || 0) + (p.passCount || 0);
       acc.passSum = (acc.passSum || 0) + (p.passSum || 0);
       acc.pass3 = (acc.pass3 || 0) + (p.pass3 || 0);
@@ -5602,7 +5840,15 @@ export default function App() {
       digCount: 0,
       digErr: 0,
     });
-  }, [overallUccPlayers]);
+
+    const oppAcesAgainstUs = filteredStats.filter((s: any) =>
+      (s.isOpponent || s.isOpp) &&
+      s.category === "Serve" &&
+      (s.metric === "Ace" || (s.metric && String(s.metric).toLowerCase().includes("ace")))
+    ).length;
+    res.passAced = Math.max(res.passAced || 0, oppAcesAgainstUs);
+    return res;
+  }, [overallUccPlayers, filteredStats]);
 
   const exportCSV = () => {
     const currentTeam = myTeams.find((t) => t.id === activeTeam);
@@ -5630,6 +5876,7 @@ export default function App() {
     const teamTot = {
       passCount: 0,
       passSum: 0,
+      passAced: 0,
       digCount: 0,
       digErr: 0,
       attCount: 0,
@@ -5651,6 +5898,7 @@ export default function App() {
     allPlayers.forEach((p) => {
       teamTot.passCount += p.passCount || 0;
       teamTot.passSum += p.passSum || 0;
+      teamTot.passAced += p.passAced || 0;
       teamTot.digCount += p.digCount || 0;
       teamTot.digErr += p.digErr || 0;
       teamTot.attCount += p.attCount || 0;
@@ -5668,6 +5916,13 @@ export default function App() {
       teamTot.srvAce += p.srvAce || 0;
       teamTot.srvErr += p.srvErr || 0;
     });
+
+    const oppAcesInScopeCSV = filteredStats.filter((s: any) =>
+      (s.isOpponent || s.isOpp) &&
+      s.category === "Serve" &&
+      (s.metric === "Ace" || (s.metric && String(s.metric).toLowerCase().includes("ace")))
+    ).length;
+    teamTot.passAced = Math.max(teamTot.passAced || 0, oppAcesInScopeCSV);
 
     const shownTot = {
       passCount: 0,
@@ -5720,10 +5975,6 @@ export default function App() {
       shownTot.srvCount += p.srvCount || 0;
       shownTot.srvAce += p.srvAce || 0;
       shownTot.srvErr += p.srvErr || 0;
-
-      teamTot.passCount += p.passCount || 0;
-      teamTot.passSum += p.passSum || 0;
-      teamTot.passAced = (teamTot.passAced || 0) + (p.passAced || 0);
 
       csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.passAced || 0},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
     });
@@ -5858,6 +6109,7 @@ export default function App() {
     const teamTot = {
       passCount: 0,
       passSum: 0,
+      passAced: 0,
       digCount: 0,
       digErr: 0,
       attCount: 0,
@@ -5879,6 +6131,7 @@ export default function App() {
     allPlayers.forEach((p) => {
       teamTot.passCount += p.passCount || 0;
       teamTot.passSum += p.passSum || 0;
+      teamTot.passAced += p.passAced || 0;
       teamTot.digCount += p.digCount || 0;
       teamTot.digErr += p.digErr || 0;
       teamTot.attCount += p.attCount || 0;
@@ -5897,9 +6150,17 @@ export default function App() {
       teamTot.srvErr += p.srvErr || 0;
     });
 
+    const oppAcesInScopePDF = filteredStats.filter((s: any) =>
+      (s.isOpponent || s.isOpp) &&
+      s.category === "Serve" &&
+      (s.metric === "Ace" || (s.metric && String(s.metric).toLowerCase().includes("ace")))
+    ).length;
+    teamTot.passAced = Math.max(teamTot.passAced || 0, oppAcesInScopePDF);
+
     const shownTot = {
       passCount: 0,
       passSum: 0,
+      passAced: 0,
       digCount: 0,
       digErr: 0,
       attCount: 0,
@@ -5931,6 +6192,7 @@ export default function App() {
 
       shownTot.passCount += p.passCount || 0;
       shownTot.passSum += p.passSum || 0;
+      shownTot.passAced = (shownTot.passAced || 0) + (p.passAced || 0);
       shownTot.digCount += p.digCount || 0;
       shownTot.digErr += p.digErr || 0;
       shownTot.attCount += p.attCount || 0;
@@ -7553,14 +7815,23 @@ export default function App() {
                 className="w-full py-3.5 bg-gradient-to-b from-[#0033A0] to-[#001b5e] hover:from-[#0044cc] hover:to-[#002277] text-white font-black rounded-xl uppercase tracking-wider shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
               >
                 <BarChart3 size={18} />
-                <span>End {isPractice ? "Practice" : "Game"} & View Stats</span>
+                <span>Finalize {isPractice ? "Practice" : "Game"} & View Full Stats</span>
               </button>
               <button
                 type="button"
                 onClick={() => confirmEndGameLive("menu")}
-                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black rounded-xl uppercase tracking-wider active:scale-95 transition-all text-xs cursor-pointer border border-slate-200"
+                className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-black rounded-xl uppercase tracking-wider active:scale-95 transition-all text-xs cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
               >
-                End & Return to Menu
+                <CheckCircle2 size={16} />
+                <span>Finalize {isPractice ? "Practice" : "Game"} & Return to Menu</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => confirmEndGameLive("pause")}
+                className="w-full py-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-black rounded-xl uppercase tracking-wider active:scale-95 transition-all text-xs cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <Pause size={15} />
+                <span>Pause Session & Exit to Menu (Resume Later)</span>
               </button>
               <button
                 type="button"
@@ -7568,13 +7839,6 @@ export default function App() {
                 className="w-full py-2.5 text-slate-500 font-black hover:text-slate-800 transition-colors uppercase tracking-wider text-xs cursor-pointer"
               >
                 Cancel / Keep Playing
-              </button>
-              <button
-                type="button"
-                onClick={() => confirmEndGameLive("menu")}
-                className="w-full py-1.5 text-red-500 hover:text-red-700 transition-colors uppercase tracking-wider text-[11px] font-bold cursor-pointer"
-              >
-                Force Exit to Menu
               </button>
             </div>
           </div>
@@ -8151,6 +8415,7 @@ export default function App() {
         lineup={lineup}
         roster={appData.roster}
         stats={appData.stats}
+        sets={appData.sets}
         activeMatch={activeMatch}
         activeSetId={activeSetId}
         teamStats={teamStats}
@@ -10058,6 +10323,15 @@ export default function App() {
                   <Clock size={10} className="text-amber-300 shrink-0" />
                   <span>TO ({teamStats.uccTimeouts}-{teamStats.oppTimeouts})</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={handleEndGameLive}
+                  className="px-2 py-0.5 rounded-lg bg-red-600/90 hover:bg-red-600 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm transition-transform active:scale-95 cursor-pointer ring-1 ring-red-400/60"
+                  title="Exit / End Game"
+                >
+                  <LogOut size={10} className="shrink-0" />
+                  <span>Exit</span>
+                </button>
               </div>
               {score.ucc === 0 && score.opp === 0 && (
                 <button
@@ -11037,14 +11311,29 @@ export default function App() {
                         handleGameStat(
                           statPrompt.playerId,
                           statPrompt.type,
-                          "Error",
-                          1,
+                          "Aced",
+                          0,
                         );
                         setStatPrompt(null);
                       }}
-                      className="col-span-4 bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center"
+                      className="col-span-4 bg-gradient-to-r from-red-600 to-rose-600 text-white p-3.5 rounded-xl font-black text-sm uppercase shadow-sm border border-red-500 active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      ERROR
+                      <XCircle size={16} />
+                      <span>ACED / RECEPTION ERROR (+Point)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleGameStat(
+                          statPrompt.playerId,
+                          statPrompt.type,
+                          "Error",
+                          0,
+                        );
+                        setStatPrompt(null);
+                      }}
+                      className="col-span-4 bg-slate-200 hover:bg-slate-300 text-slate-700 p-2.5 rounded-xl font-bold text-xs uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center cursor-pointer"
+                    >
+                      Other Pass Error
                     </button>
                   </div>
                 )}
@@ -11052,14 +11341,17 @@ export default function App() {
                   <div className="flex flex-col gap-2">
                     <button
                       onClick={() => {
-                        handleGameStat(
-                          statPrompt.playerId,
-                          statPrompt.type,
-                          "Ace",
-                        );
+                        const wasOpp = Boolean(statPrompt.isOpp);
+                        const sId = statPrompt.playerId;
                         setStatPrompt(null);
+                        setPendingAceData({
+                          serverId: sId,
+                          team: wasOpp ? "opp" : "ucc",
+                          isOpp: wasOpp,
+                        });
+                        setAceReceiverPrompt(wasOpp ? "opp" : "ucc");
                       }}
-                      className="bg-gradient-to-b from-green-500 to-green-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20"
+                      className="bg-gradient-to-b from-green-500 to-green-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
                     >
                       ACE
                     </button>
@@ -11518,6 +11810,68 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* PASS / SERVE RECEIVE SECTION */}
+                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                    <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
+                      <Target size={12} className="mr-1 text-indigo-600" /> Receive / Pass (0-3)
+                    </h4>
+                    {rallyPhase === "receive" && (
+                      <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-900 px-1.5 py-0.5 rounded border border-indigo-300 animate-pulse">
+                        Awaiting Receive
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-2">
+                    {[
+                      { val: 3, label: "Perfect (3)", color: "from-green-500 to-green-600" },
+                      { val: 2, label: "Good (2)", color: "from-emerald-500 to-teal-600" },
+                      { val: 1, label: "Poor (1)", color: "from-amber-500 to-orange-600" },
+                      { val: 0, label: "0 / Shank", color: "from-slate-600 to-slate-700" },
+                    ].map(({ val, label, color }) => (
+                      <button
+                        key={`modal-pass-${val}`}
+                        type="button"
+                        onClick={() => {
+                          if (val === 0) {
+                            logStat(selectedPlayerId, "Pass", "Rating", 0, false);
+                            changeRallyPhase("play");
+                            setSelectedPlayerId(null);
+                            showToast("0-Pass (Overbump) recorded • Play continues", "info");
+                          } else {
+                            recordStatAndCheckPoint(selectedPlayerId, "Pass", "Rating", val);
+                            setSelectedPlayerId(null);
+                          }
+                        }}
+                        className={`bg-gradient-to-b ${color} text-white p-2 sm:p-2.5 rounded-lg sm:rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all cursor-pointer`}
+                      >
+                        <span className="text-xl sm:text-2xl leading-none">{val}</span>
+                        <span className="text-[8px] uppercase tracking-wider opacity-90 mt-0.5 text-center font-bold">
+                          {label.split(" ")[0]}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sId = oppLineup[0] || "Opponent";
+                      logMultipleStats([
+                        { playerId: selectedPlayerId, category: "Pass", metric: "Aced", value: 0, isOpponent: false },
+                        { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: true },
+                      ]);
+                      handlePoint("opp", true);
+                      setSelectedPlayerId(null);
+                      showToast(`Aced! #${selectedPlayerObj?.number} got aced -> Point Opponent`, "info");
+                    }}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                    title="Receiver got aced (reception error) -> Point for Opponent"
+                  >
+                    <XCircle size={15} />
+                    <span>Aced / Reception Error (+1 Pt Opponent)</span>
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
                   <button
                     onClick={() =>
@@ -11752,24 +12106,31 @@ export default function App() {
                     <h4 className="text-[10px] sm:text-xs font-black text-amber-700 uppercase tracking-widest mb-2 flex items-center">
                       <Activity size={12} className="mr-1" /> Opp. Serve Receive
                     </h4>
-                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-2">
                       {[3, 2, 1, 0].map((val) => (
                         <button
                           key={`opp-rec-rate-${val}`}
                           onClick={() => {
-                            recordOppStatAndCheckPoint(
-                              selectedOppId,
-                              "Pass",
-                              "Rating",
-                              val,
-                            );
-                            setSelectedOppId(null);
+                            if (val === 0) {
+                              logStat(selectedOppId, "Pass", "Rating", 0, true);
+                              changeRallyPhase("play");
+                              setSelectedOppId(null);
+                              showToast("Opponent 0-Pass recorded • Play continues", "info");
+                            } else {
+                              recordOppStatAndCheckPoint(
+                                selectedOppId,
+                                "Pass",
+                                "Rating",
+                                val,
+                              );
+                              setSelectedOppId(null);
+                            }
                           }}
                           className={`p-3 sm:p-4 rounded-lg sm:rounded-xl font-black text-xl sm:text-2xl shadow-sm active:scale-95 transition-all ${
                             val === 3
                               ? "bg-gradient-to-b from-green-400 to-green-500 text-white border border-green-500"
                               : val === 0
-                                ? "bg-gradient-to-b from-red-400 to-red-500 text-white border border-red-500"
+                                ? "bg-gradient-to-b from-slate-600 to-slate-700 text-white border border-slate-600"
                                 : "bg-white text-slate-700 border border-slate-200"
                           }`}
                         >
@@ -11777,6 +12138,24 @@ export default function App() {
                         </button>
                       ))}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sId = lineup[0] || appData.roster[0]?.id || "UCC";
+                        logMultipleStats([
+                          { playerId: selectedOppId, category: "Pass", metric: "Aced", value: 0, isOpponent: true },
+                          { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: false },
+                        ]);
+                        handlePoint("ucc", true);
+                        setSelectedOppId(null);
+                        showToast(`Ace! Opponent #${selectedOppId} aced (+1 Pt Lancers)`, "success");
+                      }}
+                      className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                      title="Opponent got aced by our serve -> Point Lancers"
+                    >
+                      <CheckCircle2 size={15} />
+                      <span>Opponent Aced (Ace → +1 Pt Lancers)</span>
+                    </button>
                   </div>
                 ) : (
                   <div className="flex flex-col space-y-3">
@@ -12300,7 +12679,9 @@ export default function App() {
                 <Activity size={26} />
               </div>
               <h2 className="text-xl sm:text-2xl font-black mb-1 text-center tracking-wider uppercase">
-                {aceReceiverPrompt === "opp" ? "Who Got Aced?" : "Who Passed 0?"}
+                {aceReceiverPrompt === "opp"
+                  ? `${opponentName || "Opponent"} Ace! Who On ${effectiveTeamName || "Lancers"} Got Aced?`
+                  : `${effectiveTeamName || "Lancers"} Ace! Who On ${opponentName || "Opponent"} Got Aced?`}
               </h2>
               <p className="text-slate-400 font-bold mb-3.5 text-center text-xs uppercase tracking-wider">
                 {selectedAceReceivers.length > 0
@@ -12797,8 +13178,10 @@ export default function App() {
                               type="button"
                               onClick={() => {
                                 const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
-                                logStat(item.id, "Pass", "Rating", 0, false);
-                                logStat(sId, "Serve", "Ace", 1, true);
+                                logMultipleStats([
+                                  { playerId: item.id, category: "Pass", metric: "Aced", value: 0, isOpponent: false },
+                                  { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: true },
+                                ]);
                                 handlePoint("opp", true);
                                 setOppServeReceivePrompt(null);
                               }}
@@ -12829,7 +13212,10 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
-                        logStat(sId, "Serve", "Ace", 1, true);
+                        logMultipleStats([
+                          { playerId: "TEAM_RECEIVE", category: "Pass", metric: "Aced", value: 0, isOpponent: false },
+                          { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: true },
+                        ]);
                         handlePoint("opp", true);
                         setOppServeReceivePrompt(null);
                       }}
@@ -13027,14 +13413,22 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       const sId = oppServeReceivePrompt.serverId || oppLineup[0] || "Opponent";
-                      logStat(
-                        oppServeReceivePrompt.passerId,
-                        "Pass",
-                        "Aced",
-                        0,
-                        false,
-                      );
-                      logStat(sId, "Serve", "Ace", 1, true);
+                      logMultipleStats([
+                        {
+                          playerId: oppServeReceivePrompt.passerId,
+                          category: "Pass",
+                          metric: "Aced",
+                          value: 0,
+                          isOpponent: false,
+                        },
+                        {
+                          playerId: sId,
+                          category: "Serve",
+                          metric: "Ace",
+                          value: 1,
+                          isOpponent: true,
+                        },
+                      ]);
                       handlePoint("opp", true);
                       setOppServeReceivePrompt(null);
                       showToast("Receiver Aced -> Point Opponent", "info");
@@ -13161,10 +13555,12 @@ export default function App() {
                               key={`${item.id}-${idx}`}
                               type="button"
                               onClick={() => {
-                                const sId = oppPassingPrompt.serverId || lineup[0] || "UCC";
+                                const sId = oppPassingPrompt.serverId || lineup[0] || appData.roster[0]?.id || "UCC";
                                 pushToHistory();
-                                logStat(item.id, "Pass", "Rating", 0, true);
-                                logStat(sId, "Serve", "Ace", 1, false);
+                                logMultipleStats([
+                                  { playerId: item.id, category: "Pass", metric: "Aced", value: 0, isOpponent: true },
+                                  { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: false },
+                                ]);
                                 handlePoint("ucc", true);
                                 setOppPassingPrompt(null);
                                 showToast(`Ace! Opponent #${item.number} aced (+1 Pt)`, "success");
@@ -13195,9 +13591,12 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => {
-                        const sId = oppPassingPrompt.serverId || lineup[0] || "UCC";
+                        const sId = oppPassingPrompt.serverId || lineup[0] || appData.roster[0]?.id || "UCC";
                         pushToHistory();
-                        logStat(sId, "Serve", "Ace", 1, false);
+                        logMultipleStats([
+                          { playerId: "OPP_TEAM_RECEIVE", category: "Pass", metric: "Aced", value: 0, isOpponent: true },
+                          { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: false },
+                        ]);
                         handlePoint("ucc", true);
                         setOppPassingPrompt(null);
                         showToast("Ace (+1 Pt Lancers)!", "success");
@@ -13392,16 +13791,12 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => {
-                      const sId = oppPassingPrompt.serverId || lineup[0] || "UCC";
+                      const sId = oppPassingPrompt.serverId || lineup[0] || appData.roster[0]?.id || "UCC";
                       pushToHistory();
-                      logStat(
-                        oppPassingPrompt.passerId,
-                        "Pass",
-                        "Aced",
-                        0,
-                        true,
-                      );
-                      logStat(sId, "Serve", "Ace", 1, false);
+                      logMultipleStats([
+                        { playerId: oppPassingPrompt.passerId, category: "Pass", metric: "Aced", value: 0, isOpponent: true },
+                        { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: false },
+                      ]);
                       handlePoint("ucc", true);
                       setOppPassingPrompt(null);
                       showToast(`Ace! Opponent #${oppPassingPrompt.passerId} Aced (+1 Pt Lancers)`, "success");
@@ -14980,9 +15375,11 @@ export default function App() {
             </button>
             <button
               onClick={handleEndGameLive}
-              className="bg-red-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-red-600 transition-colors cursor-pointer"
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+              title="Exit or Finalize Practice Session"
             >
-              END
+              <LogOut size={16} />
+              <span>EXIT / END</span>
             </button>
           </div>
         </div>
@@ -15742,6 +16139,7 @@ export default function App() {
       const playerStats = filteredStats.filter((s) => s.playerId === playerId);
       let pSum = 0;
       let pCount = 0;
+      let pAced = 0;
       let aCount = 0;
       let aKill = 0;
       let aErr = 0;
@@ -15755,6 +16153,9 @@ export default function App() {
         if (s.category === "Pass") {
           pCount++;
           pSum += s.value || 0;
+          if (s.metric === "Aced" || s.isAced || (s.metric && String(s.metric).toLowerCase().includes("aced"))) {
+            pAced++;
+          }
         } else if (s.category === "Attack") {
           if (
             [
@@ -15798,6 +16199,7 @@ export default function App() {
       return {
         passAvg: pCount > 0 ? (pSum / pCount).toFixed(2) : "-",
         passCount: pCount,
+        passAced: pAced,
         attPct: aCount > 0 ? (((aKill - aErr) / aCount) * 100).toFixed(0) : "0",
         aKill,
         aErr,
@@ -17290,6 +17692,14 @@ export default function App() {
                 }
               );
 
+              // Ensure teamTot.passAced includes any opponent aces served against us or unassigned reception errors
+              const oppAcesInFiltered = filteredStats.filter((s: any) =>
+                (s.isOpponent || s.isOpp) &&
+                s.category === "Serve" &&
+                (s.metric === "Ace" || (s.metric && String(s.metric).toLowerCase().includes("ace")))
+              ).length;
+              teamTot.passAced = Math.max(teamTot.passAced || 0, oppAcesInFiltered);
+
               const teamPassAvg =
                 teamTot.passCount > 0
                   ? (teamTot.passSum / teamTot.passCount).toFixed(2)
@@ -17381,6 +17791,8 @@ export default function App() {
                   srvErrOther: 0,
                 }
               );
+
+              shownTot.passAced = Math.max(shownTot.passAced || 0, teamTot.passAced);
 
               const shownPassAvg =
                 shownTot.passCount > 0

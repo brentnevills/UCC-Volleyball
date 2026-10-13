@@ -55,10 +55,10 @@ interface MetricColDef {
 
 const STAT_COLUMNS: MetricColDef[] = [
   // PASSING
-  { key: "pass3", label: "3 (Perfect)", shortLabel: "3", category: "Pass", metric: "Pass", value: 3, bgHeader: "bg-blue-900/60 text-blue-200", bgCell: "focus:ring-blue-500", tooltip: "Perfect 3-point pass to setter" },
-  { key: "pass2", label: "2 (Good)", shortLabel: "2", category: "Pass", metric: "Pass", value: 2, bgHeader: "bg-blue-900/60 text-blue-200", bgCell: "focus:ring-blue-500", tooltip: "Positive 2-point pass" },
-  { key: "pass1", label: "1 (Playable)", shortLabel: "1", category: "Pass", metric: "Pass", value: 1, bgHeader: "bg-blue-900/60 text-blue-200", bgCell: "focus:ring-blue-500", tooltip: "Poor/Playable 1-point pass" },
-  { key: "pass0", label: "0 (Ace Against)", shortLabel: "0", category: "Pass", metric: "Pass", value: 0, bgHeader: "bg-blue-900/60 text-red-200", bgCell: "focus:ring-red-500", tooltip: "0-point shanked or direct ace allowed" },
+  { key: "pass3", label: "3 (Perfect)", shortLabel: "3", category: "Pass", metric: "Rating", value: 3, bgHeader: "bg-blue-900/60 text-blue-200", bgCell: "focus:ring-blue-500", tooltip: "Perfect 3-point pass to setter" },
+  { key: "pass2", label: "2 (Good)", shortLabel: "2", category: "Pass", metric: "Rating", value: 2, bgHeader: "bg-blue-900/60 text-blue-200", bgCell: "focus:ring-blue-500", tooltip: "Positive 2-point pass" },
+  { key: "pass1", label: "1 (Playable)", shortLabel: "1", category: "Pass", metric: "Rating", value: 1, bgHeader: "bg-blue-900/60 text-blue-200", bgCell: "focus:ring-blue-500", tooltip: "Poor/Playable 1-point pass" },
+  { key: "pass0", label: "0 (Ace Against)", shortLabel: "0", category: "Pass", metric: "Aced", value: 0, bgHeader: "bg-blue-900/60 text-red-200", bgCell: "focus:ring-red-500", tooltip: "0-point shanked or direct ace allowed (Times Aced)" },
   
   // DIGS
   { key: "digCount", label: "Digs", shortLabel: "Dig", category: "Dig", metric: "Dig", bgHeader: "bg-cyan-900/60 text-cyan-200", bgCell: "focus:ring-cyan-500", tooltip: "Successful defensive dig" },
@@ -151,10 +151,11 @@ export const StatSpreadsheetEditor: React.FC<StatSpreadsheetEditorProps> = ({
 
       let colKey: string | null = null;
       if (s.category === "Pass") {
-        if (s.value === 3) colKey = "pass3";
+        if (s.metric === "Aced" || s.isAced || (s.metric && String(s.metric).toLowerCase().includes("aced")) || s.value === 0) {
+          colKey = "pass0";
+        } else if (s.value === 3) colKey = "pass3";
         else if (s.value === 2) colKey = "pass2";
         else if (s.value === 1) colKey = "pass1";
-        else if (s.value === 0) colKey = "pass0";
         else colKey = "pass2";
       } else if (s.category === "Dig") {
         if (s.metric === "Dig") colKey = "digCount";
@@ -241,9 +242,11 @@ export const StatSpreadsheetEditor: React.FC<StatSpreadsheetEditorProps> = ({
             setId: targetSet,
             playerId,
             category: colDef.category,
-            metric: colDef.metric,
+            metric: colDef.key === "pass0" ? "Aced" : colDef.metric,
             value: colDef.value ?? 1,
+            isAced: colDef.key === "pass0",
             isOpponent: false,
+            isOpp: false,
             timestamp: new Date().toISOString(),
           });
         }

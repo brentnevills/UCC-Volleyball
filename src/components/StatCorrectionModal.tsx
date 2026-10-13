@@ -198,6 +198,8 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
     let passSum = 0;
     let passCount = 0;
 
+    let timesAced = 0;
+
     filteredStats.forEach((s) => {
       if (s.category === "Attack") {
         swings++;
@@ -213,11 +215,14 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
       } else if (s.category === "Pass") {
         passSum += Number(s.value ?? 0);
         passCount++;
+        if (s.metric === "Aced" || s.isAced || (s.metric && String(s.metric).toLowerCase().includes("aced"))) {
+          timesAced++;
+        }
       }
     });
 
     const passAvg = passCount > 0 ? (passSum / passCount).toFixed(2) : "0.00";
-    return { kills, attackErrors, swings, aces, serveErrors, blocks, digs, passAvg, passCount };
+    return { kills, attackErrors, swings, aces, serveErrors, blocks, digs, passAvg, passCount, timesAced };
   }, [filteredStats]);
 
   if (!isOpen) return null;
@@ -238,6 +243,7 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
       category: editCategory,
       metric: editMetric,
       value: editValue,
+      isAced: editCategory === "Pass" && (editMetric === "Aced" || editMetric === "0 (Aced)"),
       ...(editSetId ? { setId: editSetId } : {}),
       ...(editCategory === "Attack" ? { row: editRow } : {}),
     });
@@ -265,7 +271,9 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
       category: newCategory,
       metric: newMetric,
       value: Number(newValue),
+      isAced: newCategory === "Pass" && (newMetric === "Aced" || newMetric === "0 (Aced)"),
       isOpponent: newTeam === "opp",
+      isOpp: newTeam === "opp",
       row: newCategory === "Attack" ? newRow : undefined,
     });
 
@@ -559,12 +567,25 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                           setNewValue(val);
                         }}
                         className={`flex-1 py-1.5 rounded-lg text-xs font-black transition-all ${
-                          newValue === val ? "bg-blue-600 text-white shadow-sm" : "bg-white text-slate-700 border border-slate-200"
+                          newMetric !== "Aced" && newValue === val ? "bg-blue-600 text-white shadow-sm" : "bg-white text-slate-700 border border-slate-200"
                         }`}
                       >
                         {val}
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewMetric("Aced");
+                        setNewValue(0);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                        newMetric === "Aced" ? "bg-rose-600 text-white shadow-sm" : "bg-white text-rose-700 border border-rose-300 hover:bg-rose-50"
+                      }`}
+                      title="Player was Aced on receive (0-pass / direct reception error)"
+                    >
+                      Aced (0)
+                    </button>
                   </div>
                 ) : newCategory === "Attack" ? (
                   <div className="flex gap-1">
@@ -767,6 +788,9 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
             <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md border border-blue-200">
               Pass Avg: <strong>{summaryMetrics.passAvg}</strong> ({summaryMetrics.passCount})
             </span>
+            <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded-md border border-rose-200">
+              Times Aced: <strong>{summaryMetrics.timesAced}</strong>
+            </span>
           </div>
         </div>
 
@@ -856,14 +880,30 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                               <button
                                 type="button"
                                 key={`edit-rate-${v}`}
-                                onClick={() => setEditValue(v)}
+                                onClick={() => {
+                                  setEditMetric("Rating");
+                                  setEditValue(v);
+                                }}
                                 className={`flex-1 py-1 rounded text-xs font-bold ${
-                                  editValue === v ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700"
+                                  editMetric !== "Aced" && editValue === v ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700"
                                 }`}
                               >
                                 {v}
                               </button>
                             ))}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditMetric("Aced");
+                                setEditValue(0);
+                              }}
+                              className={`px-2.5 py-1 rounded text-xs font-bold ${
+                                editMetric === "Aced" ? "bg-rose-600 text-white" : "bg-rose-50 text-rose-700 border border-rose-200"
+                              }`}
+                              title="Set as Aced (Reception Error)"
+                            >
+                              Aced
+                            </button>
                           </div>
                         ) : editCategory === "Attack" ? (
                           <div className="flex gap-1">
@@ -963,7 +1003,14 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                           </div>
                           <span className="text-xs text-slate-500 font-medium">
                             {stat.category === "Pass" ? (
-                              <>Rating: <strong className="text-blue-700 font-black">{stat.value}</strong></>
+                              <>
+                                Rating: <strong className="text-blue-700 font-black">{stat.value}</strong>
+                                {(stat.metric === "Aced" || Boolean((stat as any).isAced) || (stat.metric && String(stat.metric).toLowerCase().includes("aced"))) && (
+                                  <span className="ml-1.5 px-1.5 py-0.2 bg-rose-100 text-rose-800 text-[10px] font-black rounded border border-rose-300">
+                                    Aced
+                                  </span>
+                                )}
+                              </>
                             ) : stat.category === "Attack" ? (
                               <>{stat.metric} {stat.row ? `(${stat.row} Row)` : ""}</>
                             ) : stat.category === "Block" ? (

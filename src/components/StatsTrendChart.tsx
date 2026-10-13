@@ -42,6 +42,7 @@ export type MetricKey =
   | "inSystemPct"
   | "outOfSystemPct"
   | "acePct"
+  | "acesScored"
   | "serveErrorPct"
   | "passAvg"
   | "passIndex"
@@ -57,6 +58,25 @@ interface MetricConfig {
   format: (v: number) => string;
   unit: string;
   description: string;
+}
+
+export function getCurvedPath(pts: Array<{ x: number; y: number }>): string {
+  if (!pts || pts.length === 0) return "";
+  if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+  if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+  let path = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i === 0 ? 0 : i - 1];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2 < pts.length ? i + 2 : i + 1];
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    path += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return path;
 }
 
 const METRICS: MetricConfig[] = [
@@ -131,6 +151,16 @@ const METRICS: MetricConfig[] = [
     description: "Aces divided by total service attempts.",
   },
   {
+    key: "acesScored",
+    label: "Aces Scored (For)",
+    shortLabel: "Aces (For)",
+    color: "bg-emerald-600",
+    stroke: "#059669",
+    format: (v) => `${Math.round(v)}`,
+    unit: "aces",
+    description: "Total service aces scored by our team.",
+  },
+  {
     key: "serveErrorPct",
     label: "Serve Error %",
     shortLabel: "Srv Err%",
@@ -162,13 +192,13 @@ const METRICS: MetricConfig[] = [
   },
   {
     key: "timesAced",
-    label: "Times Aced",
-    shortLabel: "Aced",
-    color: "bg-orange-500",
-    stroke: "#f97316",
+    label: "Times Aced (Against)",
+    shortLabel: "Aced (Against)",
+    color: "bg-rose-600",
+    stroke: "#e11d48",
     format: (v) => `${Math.round(v)}`,
     unit: "times",
-    description: "Times aced on serve receive (reception errors).",
+    description: "Times our team got aced on serve receive (reception errors).",
   },
   {
     key: "sideoutPct",
@@ -458,6 +488,23 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       });
       let statCursor = 0;
 
+      // Also sort any opponent serve aces in this set to ensure times aced is accurately tracked in team view
+      const sortedOppAces = (selectedPlayerId === "team"
+        ? stats.filter(
+            (st) =>
+              (st.setId === setObj.id || (st.matchId === setObj.matchId && st.setNum === setObj.setNum)) &&
+              Boolean(st.isOpponent || st.isOpp) &&
+              (st.category || "").toLowerCase() === "serve" &&
+              (st.metric || "").toLowerCase().includes("ace")
+          )
+        : []
+      ).sort((a, b) => {
+        const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return tA - tB;
+      });
+      let oppAceCursor = 0;
+
       return setObj.pointHistory.map((pt: any, idx: number) => {
         const u = Number(pt.scoreUcc) || 0;
         const o = Number(pt.scoreOpp) || 0;
@@ -465,8 +512,17 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
         const ptTime = pt.timestamp ? new Date(pt.timestamp).getTime() : 0;
 
-        // Absorb all stats logged up to this point's timestamp (or all remaining on final point)
+        // Absorb opponent serve aces up to this timestamp
         const isLastPoint = idx === setObj.pointHistory.length - 1;
+        while (oppAceCursor < sortedOppAces.length) {
+          const st = sortedOppAces[oppAceCursor];
+          const stTime = st.timestamp ? new Date(st.timestamp).getTime() : 0;
+          if (!isLastPoint && ptTime > 0 && stTime > 0 && stTime > ptTime + 3000) break;
+          oppAceCursor++;
+          cumulativeTimesAced += 1;
+        }
+
+        // Absorb all stats logged up to this point's timestamp (or all remaining on final point)
         while (statCursor < sortedSetStats.length) {
           const st = sortedSetStats[statCursor];
           const stTime = st.timestamp ? new Date(st.timestamp).getTime() : 0;
@@ -500,13 +556,20 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
             else if (met.includes("error")) cumulativeServeErrors += val;
           } else if (cat.includes("pass") || cat.includes("receive")) {
             let sc = 2;
-            if (met === "3" || met.includes("perfect")) sc = 3;
+            if (st.value !== undefined && !isNaN(Number(st.value))) {
+              sc = Math.min(3, Math.max(0, Number(st.value)));
+            } else if (met === "3" || met.includes("perfect")) sc = 3;
             else if (met === "2" || met.includes("good")) sc = 2;
             else if (met === "1" || met.includes("poor")) sc = 1;
-            else if (met === "0" || met.includes("error")) sc = 0;
-            cumulativePassSum += sc * val;
-            cumulativePassCount += val;
-            if (met.includes("aced") || (st as any).isAced) cumulativeTimesAced += val;
+            else if (met === "0" || met.includes("error") || met.includes("aced")) sc = 0;
+            cumulativePassSum += sc;
+            cumulativePassCount += 1;
+            const isAced =
+              met.includes("aced") ||
+              met === "0 (aced)" ||
+              Boolean((st as any).isAced) ||
+              (sc === 0 && (met.includes("aced") || met.includes("reception error")));
+            if (isAced) cumulativeTimesAced += 1;
           } else if (cat === "block") {
             if (met.includes("kill") || met.includes("solo") || met.includes("point") || met.includes("stuff") || met === "block") {
               cumulativeStuffBlocks += val;
@@ -603,7 +666,20 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     }
 
     // Synthesize point sequence from setStats and known final score
-    const sortedStats = [...setStats].sort((a, b) => {
+    const synthSetStats = selectedPlayerId === "team"
+      ? [
+          ...setStats,
+          ...stats.filter(
+            (st) =>
+              (st.setId === setObj.id || (st.matchId === setObj.matchId && st.setNum === setObj.setNum)) &&
+              Boolean(st.isOpponent || st.isOpp) &&
+              (st.category || "").toLowerCase() === "serve" &&
+              (st.metric || "").toLowerCase().includes("ace")
+          ),
+        ]
+      : setStats;
+
+    const sortedStats = [...synthSetStats].sort((a, b) => {
       const tA = new Date(a.timestamp || 0).getTime();
       const tB = new Date(b.timestamp || 0).getTime();
       return tA - tB;
@@ -631,6 +707,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       const cat = (st.category || "").toLowerCase();
       const met = (st.metric || "").toLowerCase();
       const val = Number(st.value) || 1;
+      const isOppStat = Boolean(st.isOpponent || st.isOpp);
       const pInfo = playerMap.get(String(st.playerId));
       const pName = pInfo?.name || "";
       const pNum = pInfo?.number || "";
@@ -639,7 +716,14 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       let eventType: "kill" | "ace" | "block" | "error" | "point" | "neutral" = "neutral";
       let desc = "";
 
-      if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
+      if (isOppStat) {
+        if (cat === "serve" && met.includes("ace")) {
+          cumulativeTimesAced += 1;
+          pointAwardedTo = "opp";
+          eventType = "error";
+          desc = `Service Ace by ${matchOpponentName || "Opponent"} (Aced)`;
+        }
+      } else if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
         cumulativeAttacks += val;
         const isFront = st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
         if (isFront) cumulativeFrontAttacks += val;
@@ -678,13 +762,20 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         }
       } else if (cat.includes("pass") || cat.includes("receive")) {
         let sc = 2;
-        if (met === "3" || met.includes("perfect")) sc = 3;
+        if (st.value !== undefined && !isNaN(Number(st.value))) {
+          sc = Math.min(3, Math.max(0, Number(st.value)));
+        } else if (met === "3" || met.includes("perfect")) sc = 3;
         else if (met === "2" || met.includes("good")) sc = 2;
         else if (met === "1" || met.includes("poor")) sc = 1;
-        else if (met === "0" || met.includes("error")) sc = 0;
-        cumulativePassSum += sc * val;
-        cumulativePassCount += val;
-        if (met.includes("aced") || (st as any).isAced) cumulativeTimesAced += val;
+        else if (met === "0" || met.includes("error") || met.includes("aced")) sc = 0;
+        cumulativePassSum += sc;
+        cumulativePassCount += 1;
+        const isAced =
+          met.includes("aced") ||
+          met === "0 (aced)" ||
+          Boolean((st as any).isAced) ||
+          (sc === 0 && (met.includes("aced") || met.includes("reception error")));
+        if (isAced) cumulativeTimesAced += 1;
       } else if (cat === "dig") {
         cumulativeDigs += val;
       }
@@ -910,11 +1001,16 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         });
 
         const mStats = stats.filter((st) => st.matchId === m.id);
+        const oppAcesInScope = mStats.filter((st) =>
+          (st.isOpponent || st.isOpp) &&
+          (st.category || "").toLowerCase() === "serve" &&
+          (st.metric || "").toLowerCase().includes("ace")
+        ).length;
         let filteredStats = mStats;
         if (selectedPlayerId !== "team") {
           filteredStats = filteredStats.filter((st) => String(st.playerId) === String(selectedPlayerId));
         } else {
-          filteredStats = filteredStats.filter((st) => !st.isOpponent);
+          filteredStats = filteredStats.filter((st) => !st.isOpponent && !st.isOpp);
         }
 
         return {
@@ -922,6 +1018,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           label: m.opponent ? `vs ${m.opponent}` : `Game ${idx + 1}`,
           subLabel: `${setsWonU}-${setsWonO} (${sUcc}-${sOpp})`,
           stats: filteredStats,
+          oppAcesInScope: selectedPlayerId === "team" ? oppAcesInScope : 0,
           scoreUcc: sUcc,
           scoreOpp: sOpp,
           diff: sUcc - sOpp,
@@ -947,11 +1044,17 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         const u = Number(s.scoreUcc) || 0;
         const o = Number(s.scoreOpp) || 0;
 
-        let filteredStats = stats.filter((st) => st.setId === s.id || (st.matchId === s.matchId && st.setNum === s.setNum));
+        const setAllStats = stats.filter((st) => st.setId === s.id || (st.matchId === s.matchId && st.setNum === s.setNum));
+        const oppAcesInScope = setAllStats.filter((st) =>
+          (st.isOpponent || st.isOpp) &&
+          (st.category || "").toLowerCase() === "serve" &&
+          (st.metric || "").toLowerCase().includes("ace")
+        ).length;
+        let filteredStats = setAllStats;
         if (selectedPlayerId !== "team") {
           filteredStats = filteredStats.filter((st) => String(st.playerId) === String(selectedPlayerId));
         } else {
-          filteredStats = filteredStats.filter((st) => !st.isOpponent);
+          filteredStats = filteredStats.filter((st) => !st.isOpponent && !st.isOpp);
         }
 
         return {
@@ -959,6 +1062,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           label: scope === "single_match" ? `Set ${s.setNum || idx + 1}` : `S${s.setNum || idx + 1} vs ${oppName}`,
           subLabel: `${u}-${o}`,
           stats: filteredStats,
+          oppAcesInScope: selectedPlayerId === "team" ? oppAcesInScope : 0,
           scoreUcc: u,
           scoreOpp: o,
           diff: u - o,
@@ -984,6 +1088,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           inSystemPct: 0,
           outOfSystemPct: 0,
           acePct: r.runningAcePct,
+          acesScored: r.runningAces || 0,
           serveErrorPct: r.runningServeErrorPct,
           passAvg: r.runningPassAvg,
           passIndex: r.runningPassIndex ?? calculatePassingIndex(r.raw?.passSum || 0, r.raw?.passCount || 0),
@@ -1084,18 +1189,33 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           }
         } else if (cat.includes("pass") || cat.includes("receive")) {
           let score = 2;
-          if (met === "3" || met.includes("perfect")) { score = 3; pass3 += val; }
-          else if (met === "2" || met.includes("good")) { score = 2; pass2 += val; }
-          else if (met === "1" || met.includes("poor")) { score = 1; pass1 += val; }
-          else if (met === "0" || met.includes("error") || met.includes("overbump")) { score = 0; pass0 += val; }
-          passSum += score * val;
-          passCount += val;
-          if (met.includes("aced") || (st as any).isAced) timesAced += val;
+          if (st.value !== undefined && !isNaN(Number(st.value))) {
+            score = Math.min(3, Math.max(0, Number(st.value)));
+          } else if (met === "3" || met.includes("perfect")) { score = 3; }
+          else if (met === "2" || met.includes("good")) { score = 2; }
+          else if (met === "1" || met.includes("poor")) { score = 1; }
+          else if (met === "0" || met.includes("error") || met.includes("overbump") || met.includes("aced")) { score = 0; }
+          if (score === 3) pass3 += 1;
+          else if (score === 2) pass2 += 1;
+          else if (score === 1) pass1 += 1;
+          else pass0 += 1;
+          passSum += score;
+          passCount += 1;
+          const isAced =
+            met.includes("aced") ||
+            met === "0 (aced)" ||
+            Boolean((st as any).isAced) ||
+            (score === 0 && (met.includes("aced") || met.includes("reception error")));
+          if (isAced) timesAced += 1;
         } else if (cat === "block") {
           if (met.includes("kill") || met.includes("solo") || met.includes("point")) {
             pointsScored += val;
           }
         }
+      }
+
+      if (pt.oppAcesInScope) {
+        timesAced = Math.max(timesAced, pt.oppAcesInScope);
       }
 
       const killPct = totalAttacks > 0 ? kills / totalAttacks : 0;
@@ -1124,6 +1244,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           inSystemPct,
           outOfSystemPct,
           acePct,
+          acesScored: aces,
           serveErrorPct,
           passAvg,
           passIndex,
@@ -1644,31 +1765,77 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         </div>
       )}
 
-      {/* METRIC PILLS (When chartMode is "metrics") */}
+      {/* QUICK PRESETS & METRIC PILLS (When chartMode is "metrics") */}
       {chartMode === "metrics" && (
-        <div className="flex flex-wrap items-center gap-2 py-3">
-          <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 mr-1 flex items-center gap-1">
-            <Percent size={13} />
-            Metrics:
-          </span>
-          {METRICS.map((m) => {
-            const isActive = activeMetricKeys.includes(m.key);
-            return (
-              <button
-                key={m.key}
-                type="button"
-                onClick={() => toggleMetric(m.key)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border cursor-pointer ${
-                  isActive
-                    ? "bg-slate-900 text-white border-slate-900 shadow-sm"
-                    : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                }`}
-              >
-                <span className={`w-2.5 h-2.5 rounded-full ${m.color}`}></span>
-                <span>{m.label}</span>
-              </button>
-            );
-          })}
+        <div className="space-y-2 py-3 border-b border-slate-100 mb-2">
+          {/* 1-Click Trend Presets */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 mr-1 flex items-center gap-1">
+              <Zap size={12} className="text-amber-500" />
+              Presets:
+            </span>
+            <button
+              type="button"
+              onClick={() => setActiveMetricKeys(["killPct", "hittingEff", "passAvg"])}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+            >
+              Overall Key 3
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMetricKeys(["acesScored", "timesAced", "acePct", "passAvg"])}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/60 transition-colors cursor-pointer"
+            >
+              Serve & Receive (Aces)
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMetricKeys(["killPct", "hittingEff", "swings"])}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200/60 transition-colors cursor-pointer"
+            >
+              Offensive Attack
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMetricKeys(["passAvg", "inSystemPct", "timesAced"])}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200/60 transition-colors cursor-pointer"
+            >
+              Passing & Receive
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMetricKeys(["passAvg"])}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
+            >
+              Pass Rating Only (0-3)
+            </button>
+          </div>
+
+          {/* Metric Selector Pills */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 mr-1 flex items-center gap-1">
+              <Percent size={12} />
+              Metrics:
+            </span>
+            {METRICS.map((m) => {
+              const isActive = activeMetricKeys.includes(m.key);
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => toggleMetric(m.key)}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border cursor-pointer ${
+                    isActive
+                      ? "bg-slate-900 text-white border-slate-900 shadow-sm scale-[1.02]"
+                      : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${m.color}`}></span>
+                  <span>{m.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -2294,35 +2461,83 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                   viewBox={`0 0 ${svgWidth} ${svgHeight}`}
                   className="w-full h-auto min-w-[650px] overflow-visible select-none"
                 >
-                  {/* Grid Lines (-25% to 100%) */}
-                  {[-0.25, 0, 0.25, 0.5, 0.75, 1.0].map((tick) => {
-                    const norm = (tick - (-0.25)) / 1.25;
-                    const y = padding.top + graphHeight * (1 - norm);
-                    const isZeroLine = Math.abs(tick) < 0.001;
-                    return (
-                      <g key={tick}>
-                        <line
-                          x1={padding.left}
-                          y1={y}
-                          x2={svgWidth - padding.right}
-                          y2={y}
-                          stroke={isZeroLine ? "#94a3b8" : "#f1f5f9"}
-                          strokeWidth={isZeroLine ? "1.5" : "1"}
-                          strokeDasharray={isZeroLine ? "none" : "4 4"}
-                        />
-                        <text
-                          x={padding.left - 8}
-                          y={y + 3}
-                          fill={isZeroLine ? "#334155" : "#94a3b8"}
-                          fontSize="9"
-                          fontWeight={isZeroLine ? "black" : "bold"}
-                          textAnchor="end"
-                        >
-                          {(tick * 100).toFixed(0)}%
-                        </text>
-                      </g>
-                    );
-                  })}
+                  {/* Adaptive Grid Lines & Y-Axis */}
+                  {(() => {
+                    const dataItems = discreteSeriesData.length > 0 ? discreteSeriesData : [];
+                    const isSingle = activeMetricKeys.length === 1;
+                    const singleKey = isSingle ? activeMetricKeys[0] : null;
+
+                    const ticks: Array<{ ratio: number; label: string; isZero: boolean }> = [];
+
+                    if (singleKey === "passAvg") {
+                      [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0].forEach((v) => {
+                        ticks.push({
+                          ratio: v / 3.0,
+                          label: v === 2.0 ? "2.0 (Target)" : v === 3.0 ? "3.0 (Max)" : v.toFixed(1),
+                          isZero: v === 0,
+                        });
+                      });
+                    } else if (singleKey === "passIndex") {
+                      [0, 20, 40, 60, 80, 100].forEach((v) => {
+                        ticks.push({
+                          ratio: v / 100,
+                          label: String(v),
+                          isZero: v === 0,
+                        });
+                      });
+                    } else if (singleKey === "timesAced" || singleKey === "acesScored" || singleKey === "swings") {
+                      const maxVal = Math.max(
+                        ...dataItems.map((d: any) => d.values[singleKey] || 0),
+                        4
+                      );
+                      const step = Math.max(1, Math.ceil(maxVal / 4));
+                      const top = step * 4;
+                      for (let i = 0; i <= 4; i++) {
+                        const val = i * step;
+                        ticks.push({
+                          ratio: val / top,
+                          label: String(val),
+                          isZero: val === 0,
+                        });
+                      }
+                    } else {
+                      [-0.20, 0, 0.20, 0.40, 0.60, 0.80, 1.0].forEach((tick) => {
+                        const norm = (tick - (-0.20)) / 1.20;
+                        ticks.push({
+                          ratio: norm,
+                          label: `${(tick * 100).toFixed(0)}%`,
+                          isZero: Math.abs(tick) < 0.001,
+                        });
+                      });
+                    }
+
+                    return ticks.map((t, idx) => {
+                      const y = padding.top + graphHeight * (1 - t.ratio);
+                      return (
+                        <g key={idx}>
+                          <line
+                            x1={padding.left}
+                            y1={y}
+                            x2={svgWidth - padding.right}
+                            y2={y}
+                            stroke={t.isZero ? "#94a3b8" : "#f1f5f9"}
+                            strokeWidth={t.isZero ? "1.5" : "1"}
+                            strokeDasharray={t.isZero ? "none" : "4 4"}
+                          />
+                          <text
+                            x={padding.left - 8}
+                            y={y + 3}
+                            fill={t.isZero ? "#334155" : "#94a3b8"}
+                            fontSize="9"
+                            fontWeight={t.isZero ? "black" : "bold"}
+                            textAnchor="end"
+                          >
+                            {t.label}
+                          </text>
+                        </g>
+                      );
+                    });
+                  })()}
 
                   {/* Render Data Series */}
                   {activeMetricKeys.map((metricKey) => {
@@ -2331,6 +2546,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
                     const dataItems = discreteSeriesData.length > 0 ? discreteSeriesData : [];
                     if (dataItems.length === 0) return null;
+                    const isSingle = activeMetricKeys.length === 1;
+                    const singleKey = isSingle ? activeMetricKeys[0] : null;
 
                     const points = dataItems.map((d, idx) => {
                       const x =
@@ -2339,30 +2556,62 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                           ? (idx / (dataItems.length - 1)) * graphWidth
                           : graphWidth / 2);
                       const rawVal = d.values[metricKey] || 0;
-                      let scaledVal = rawVal;
-                      if (metricKey === "passAvg") {
-                        scaledVal = rawVal / 3;
-                      } else if (metricKey === "passIndex") {
-                        scaledVal = rawVal / 100;
-                      } else if (metricKey === "swings") {
-                        const maxSwings = Math.max(...dataItems.map((item: any) => item.values.swings || 0), 1);
-                        scaledVal = rawVal / maxSwings;
-                      } else if (metricKey === "timesAced") {
-                        const maxAced = Math.max(...dataItems.map((item: any) => item.values.timesAced || 0), 5);
-                        scaledVal = rawVal / maxAced;
+                      let ratio = 0;
+
+                      if (isSingle) {
+                        if (singleKey === "passAvg") {
+                          ratio = Math.max(0, Math.min(1.0, rawVal / 3.0));
+                        } else if (singleKey === "passIndex") {
+                          ratio = Math.max(0, Math.min(1.0, rawVal / 100));
+                        } else if (singleKey === "timesAced" || singleKey === "acesScored" || singleKey === "swings") {
+                          const maxVal = Math.max(...dataItems.map((item: any) => item.values[singleKey] || 0), 4);
+                          const step = Math.max(1, Math.ceil(maxVal / 4));
+                          const top = step * 4;
+                          ratio = Math.max(0, Math.min(1.0, rawVal / top));
+                        } else {
+                          const normVal = Math.max(-0.20, Math.min(1.0, rawVal));
+                          ratio = (normVal - (-0.20)) / 1.20;
+                        }
+                      } else {
+                        // Multi-metric normalized overlay
+                        let scaledVal = rawVal;
+                        if (metricKey === "passAvg") {
+                          scaledVal = rawVal / 3;
+                        } else if (metricKey === "passIndex") {
+                          scaledVal = rawVal / 100;
+                        } else if (metricKey === "swings") {
+                          const maxSwings = Math.max(...dataItems.map((item: any) => item.values.swings || 0), 1);
+                          scaledVal = rawVal / maxSwings;
+                        } else if (metricKey === "timesAced") {
+                          const maxAced = Math.max(...dataItems.map((item: any) => item.values.timesAced || 0), 4);
+                          scaledVal = rawVal / maxAced;
+                        } else if (metricKey === "acesScored") {
+                          const maxAces = Math.max(...dataItems.map((item: any) => item.values.acesScored || 0), 4);
+                          scaledVal = rawVal / maxAces;
+                        }
+                        const normVal = Math.max(-0.20, Math.min(1.0, scaledVal));
+                        ratio = (normVal - (-0.20)) / 1.20;
                       }
-                      const normVal = Math.max(-0.25, Math.min(1.0, scaledVal));
-                      const normRatio = (normVal - (-0.25)) / 1.25;
-                      const y = padding.top + graphHeight * (1 - normRatio);
+
+                      const y = padding.top + graphHeight * (1 - ratio);
                       return { x, y, rawVal, label: d.label };
                     });
 
-                    const pathStr = points.reduce((acc, p, idx) => `${acc} ${idx === 0 ? "M" : "L"} ${p.x} ${p.y}`, "");
+                    const curvePath = getCurvedPath(points);
+                    const zeroY = padding.top + graphHeight;
 
                     return (
                       <g key={metricKey}>
+                        {points.length > 1 && (
+                          <path
+                            d={`${curvePath} L ${points[points.length - 1].x} ${zeroY} L ${points[0].x} ${zeroY} Z`}
+                            fill={metricConf.stroke}
+                            opacity="0.08"
+                            className="pointer-events-none"
+                          />
+                        )}
                         <path
-                          d={pathStr}
+                          d={curvePath}
                           fill="none"
                           stroke={metricConf.stroke}
                           strokeWidth="3"
@@ -3267,9 +3516,14 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
               else summaryVal = totA > 0 ? (totK - totE) / totA : 0;
             } else if (m.key === "swings") {
               let totSwings = 0;
-              discreteSeriesData.forEach((d: any) => {
-                totSwings += d.raw?.totalAttacks || d.counts?.attacks || 0;
-              });
+              if (granularity === "by_rally") {
+                const lastPt = discreteSeriesData[discreteSeriesData.length - 1];
+                totSwings = lastPt?.values?.swings || lastPt?.raw?.totalAttacks || lastPt?.counts?.attacks || 0;
+              } else {
+                discreteSeriesData.forEach((d: any) => {
+                  totSwings += d.raw?.totalAttacks || d.counts?.attacks || d.values?.swings || 0;
+                });
+              }
               summaryVal = totSwings;
             } else if (m.key === "frontSetPct") {
               let totAtt = 0;
@@ -3303,11 +3557,27 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                 totSrv += d.counts?.serves || d.raw?.totalServes || 0;
               });
               summaryVal = totSrv > 0 ? totAce / totSrv : 0;
+            } else if (m.key === "acesScored") {
+              let totAce = 0;
+              if (granularity === "by_rally") {
+                const lastPt = discreteSeriesData[discreteSeriesData.length - 1];
+                totAce = lastPt?.values?.acesScored || lastPt?.counts?.aces || lastPt?.raw?.aces || 0;
+              } else {
+                discreteSeriesData.forEach((d: any) => {
+                  totAce += d.counts?.aces || d.raw?.aces || d.values?.acesScored || 0;
+                });
+              }
+              summaryVal = totAce;
             } else if (m.key === "timesAced") {
               let totAced = 0;
-              discreteSeriesData.forEach((d: any) => {
-                totAced += d.values?.timesAced || d.counts?.timesAced || 0;
-              });
+              if (granularity === "by_rally") {
+                const lastPt = discreteSeriesData[discreteSeriesData.length - 1];
+                totAced = lastPt?.values?.timesAced || lastPt?.counts?.timesAced || 0;
+              } else {
+                discreteSeriesData.forEach((d: any) => {
+                  totAced += d.values?.timesAced || d.counts?.timesAced || 0;
+                });
+              }
               summaryVal = totAced;
             } else if (m.key === "passIndex") {
               let totPassSum = 0;
