@@ -61,6 +61,7 @@ import {
   TrendingUp,
   RotateCcw,
   History,
+  Pause,
 } from "lucide-react";
 
 import {
@@ -7830,7 +7831,20 @@ export default function App() {
                 onClick={() => confirmEndGameLive("pause")}
                 className="w-full py-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-black rounded-xl uppercase tracking-wider active:scale-95 transition-all text-xs cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
               >
-                <Pause size={15} />
+                <svg
+                  width={15}
+                  height={15}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="shrink-0"
+                >
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
                 <span>Pause Session & Exit to Menu (Resume Later)</span>
               </button>
               <button
