@@ -469,7 +469,13 @@ export async function getRollingSnapshots(teamId?: string): Promise<RollingSnaps
         if (!key) continue;
         if (key.startsWith("ucc_backup_") || key.startsWith("ucc_vball_db_")) {
           const isBackupKey = key.startsWith("ucc_backup_");
-          const tId = key.replace(isBackupKey ? "ucc_backup_" : "ucc_vball_db_", "");
+          let rawTId = key.replace(isBackupKey ? "ucc_backup_" : "ucc_vball_db_", "");
+          let isPreResyncBackup = false;
+          if (rawTId.startsWith("pre_resync_")) {
+            rawTId = rawTId.replace("pre_resync_", "");
+            isPreResyncBackup = true;
+          }
+          const tId = rawTId;
           const raw = localStorage.getItem(key);
           if (raw) {
             try {
@@ -482,10 +488,10 @@ export async function getRollingSnapshots(teamId?: string): Promise<RollingSnaps
                 const matchTitles = matches.map((m: any) =>
                   m.opponent ? `vs ${m.opponent}` : m.type || "Match",
                 );
-                const lastSave = localStorage.getItem(`ucc_last_save_${tId}`);
+                const lastSave = localStorage.getItem(`ucc_last_save_${tId}`) || localStorage.getItem(`ucc_last_save_pre_resync_${tId}`);
                 const created = lastSave ? new Date(lastSave).getTime() : Date.now();
 
-                const uniqueKey = `ls_${tId}_${isBackupKey ? "bk" : "db"}_${matches.length}_${stats.length}`;
+                const uniqueKey = `ls_${tId}_${isPreResyncBackup ? "preresync" : isBackupKey ? "bk" : "db"}_${matches.length}_${stats.length}`;
                 if (!seenIds.has(uniqueKey)) {
                   seenIds.add(uniqueKey);
                   snapshots.push({
@@ -500,8 +506,16 @@ export async function getRollingSnapshots(teamId?: string): Promise<RollingSnaps
                       minute: "2-digit",
                       second: "2-digit",
                     }),
-                    source: isBackupKey ? "LocalStorage Double-Buffer Backup" : "LocalStorage Team Cache",
-                    note: isBackupKey ? "Synchronous Safety Buffer" : "Active Local Cache",
+                    source: isPreResyncBackup
+                      ? "Pre-Resync Snapshot"
+                      : isBackupKey
+                      ? "LocalStorage Double-Buffer Backup"
+                      : "LocalStorage Team Cache",
+                    note: isPreResyncBackup
+                      ? "Automated Pre-Resync Safeguard"
+                      : isBackupKey
+                      ? "Synchronous Safety Buffer"
+                      : "Active Local Cache",
                     matchesCount: matches.length,
                     setsCount: sets.length,
                     statsCount: stats.length,
@@ -600,13 +614,30 @@ export async function restoreRollingSnapshot(teamId: string, snapshotData: any):
   const targetKey = (teamId || "ucc_main").trim();
 
   try {
-    // 1. Save to all rugged storage tiers
-    await ruggedSaveTeamData(targetKey, snapshotData);
+    const cloned = JSON.parse(JSON.stringify(snapshotData));
+    const sanitized = {
+      ...cloned,
+      matches: Array.isArray(cloned.matches) ? cloned.matches : [],
+      sets: Array.isArray(cloned.sets) ? cloned.sets : [],
+      stats: Array.isArray(cloned.stats) ? cloned.stats : [],
+      roster: Array.isArray(cloned.roster) ? cloned.roster : [],
+      opponents: (cloned.opponents && typeof cloned.opponents === "object") ? cloned.opponents : {},
+      savedLineups: (cloned.savedLineups && typeof cloned.savedLineups === "object") ? cloned.savedLineups : {},
+      savedRosters: (cloned.savedRosters && typeof cloned.savedRosters === "object") ? cloned.savedRosters : {},
+    };
 
-    // 2. Also log a restore snapshot marker
+    // 1. Save to all rugged storage tiers (hot memory cache, localStorage double-buffer, IndexedDB mirror, snapshots)
+    await ruggedSaveTeamData(targetKey, sanitized);
+
+    // 2. Also ensure current active team key in localStorage matches targetKey
+    try {
+      localStorage.setItem("ucc_vball_active_team", targetKey);
+    } catch {}
+
+    // 3. Log an explicit restore snapshot checkpoint so this point can also be revisited
     await createManualSnapshot(
       targetKey,
-      snapshotData,
+      sanitized,
       `Restored on ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
     );
 

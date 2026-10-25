@@ -338,7 +338,7 @@ export const PlayerAccessLogModal: React.FC<PlayerAccessLogModalProps> = ({
               </div>
               <p className="text-slate-400 text-xs mt-0.5">
                 {isPlayerAccessAllowed
-                  ? "Players can view team stats on personal devices with anti-screenshot protection."
+                  ? "Players can view team stats on personal devices in view-only mode."
                   : "Stats are hidden for players. Only coaches can view or edit stats."}
               </p>
             </div>
@@ -683,7 +683,7 @@ export const PlayerAccessLogModal: React.FC<PlayerAccessLogModalProps> = ({
           <div className="flex items-center gap-2">
             <Shield size={14} className="text-amber-400 shrink-0" />
             <span>
-              Players with player codes are restricted to <strong>on-device view-only</strong>. Downloads & screenshots are blocked and audited.
+              Players with player codes are in <strong>view-only mode</strong> on personal devices.
             </span>
           </div>
           <button

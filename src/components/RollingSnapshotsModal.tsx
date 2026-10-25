@@ -32,9 +32,9 @@ interface RollingSnapshotsModalProps {
   isOpen: boolean;
   onClose: () => void;
   activeTeam: string;
-  onRestoreSuccess?: (restoredData: any, uploadToCloud: boolean) => Promise<void>;
+  onRestoreSuccess?: (restoredData: any, targetTeam: string, uploadToCloud: boolean) => Promise<void>;
   showToast?: (message: string, type?: "info" | "success" | "warning" | "error") => void;
-  syncLocalGamesToCloud?: (isManualTrigger?: boolean) => Promise<void>;
+  syncLocalGamesToCloud?: (isManualTrigger?: boolean, dataOverride?: any, teamOverride?: string) => Promise<void>;
   currentAppData?: any;
 }
 
@@ -114,9 +114,9 @@ export const RollingSnapshotsModal: React.FC<RollingSnapshotsModalProps> = ({
 
       if (success) {
         if (onRestoreSuccess) {
-          await onRestoreSuccess(selectedSnapshotForRestore.data, uploadToCloudOnRestore);
+          await onRestoreSuccess(selectedSnapshotForRestore.data, targetTeam, uploadToCloudOnRestore);
         } else if (uploadToCloudOnRestore && syncLocalGamesToCloud) {
-          await syncLocalGamesToCloud(true);
+          await syncLocalGamesToCloud(true, selectedSnapshotForRestore.data, targetTeam);
         }
 
         const matchCount = selectedSnapshotForRestore.matchesCount;
@@ -339,6 +339,23 @@ export const RollingSnapshotsModal: React.FC<RollingSnapshotsModalProps> = ({
 
         {/* Snapshot List Content Area */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5 custom-scrollbar">
+          {/* Resync Recovery Info Banner */}
+          <div className="bg-amber-950/40 border border-amber-500/40 rounded-2xl p-3.5 flex items-start gap-3 text-xs text-amber-200">
+            <RotateCcw size={18} className="text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-black text-amber-300 uppercase tracking-wider text-[11px]">
+                  Data Disappeared After Resync?
+                </span>
+                <span className="bg-amber-500/20 text-amber-200 px-2 py-0.2 rounded-full font-bold text-[10px] border border-amber-500/30">
+                  Automated Safeguards
+                </span>
+              </div>
+              <p className="text-slate-300 text-xs leading-relaxed">
+                Before every cloud resync, an automated <strong>Pre-Resync Snapshot</strong> is permanently archived on this device. Find the snapshot matching your previous state below and click <strong className="text-emerald-400">Restore</strong> to recover all matches, sets, and stats.
+              </p>
+            </div>
+          </div>
           {loading ? (
             <div className="py-16 text-center text-slate-400 space-y-3">
               <RefreshCw size={28} className="animate-spin mx-auto text-indigo-400" />

@@ -15,6 +15,7 @@ import {
   Crosshair,
   ArrowRightLeft,
   Save,
+  Bookmark,
   FolderOpen,
   FileText,
   Clock,
@@ -87,6 +88,8 @@ import { PlayerAccessLogModal } from "./components/PlayerAccessLogModal";
 import { StatsTrendChart } from "./components/StatsTrendChart";
 import { TimeoutStatsModal } from "./components/TimeoutStatsModal";
 import { RollingSnapshotsModal } from "./components/RollingSnapshotsModal";
+import { SavedLineupsModal } from "./components/SavedLineupsModal";
+import { SeasonHistoryModal } from "./components/SeasonHistoryModal";
 import { calculateFrontRowSetDistribution } from "./utils/volleyballStats";
 
 import jsPDF from "jspdf";
@@ -692,6 +695,9 @@ export default function App() {
   const [rosterPresetName, setRosterPresetName] = useState("");
   const [lineupPresetName, setLineupPresetName] = useState("");
   const [isRosterModalOpen, setIsRosterModalOpen] = useState(false);
+  const [isLineupsModalOpen, setIsLineupsModalOpen] = useState(false);
+  const [lineupsModalContext, setLineupsModalContext] = useState<"setup" | "inGame" | "betweenSets">("setup");
+  const [showSeasonHistoryModal, setShowSeasonHistoryModal] = useState(false);
 
   // Game State
   const [lineup, setLineup] = useState([null, null, null, null, null, null]);
@@ -2664,39 +2670,155 @@ export default function App() {
     }
   };
 
-  const saveLineupAsPreset = async () => {
-    if (!lineupPresetName.trim()) {
-      alert("Please enter a name for the lineup preset.");
-      return;
+  const saveNamedLineup = async (
+    name: string,
+    lineupToSave: (string | null)[] = lineup,
+    liberoIdToSave: string = liberoId,
+    notes?: string,
+  ) => {
+    const cleanName = (name || "").trim();
+    if (!cleanName) {
+      showToast("Please enter a name for the lineup preset.", "warning");
+      return false;
     }
+    const cleanLineup =
+      Array.isArray(lineupToSave) && lineupToSave.length === 6
+        ? [...lineupToSave]
+        : [null, null, null, null, null, null];
+
     const updatedLineups = {
-      ...appData.savedLineups,
-      [lineupPresetName]: { lineup, liberoId },
+      ...(appData.savedLineups || {}),
+      [cleanName]: {
+        lineup: cleanLineup,
+        liberoId: liberoIdToSave || "",
+        updatedAt: new Date().toISOString(),
+        ...(notes ? { notes } : {}),
+      },
     };
-    try {
-      if (isFirebaseAvailable && user) {
+
+    const newAppData = { ...appData, savedLineups: updatedLineups };
+    writeLocalDb(newAppData);
+
+    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+      try {
         await setDoc(
           doc(db, `${publicPath}/${activeTeam}/settings/core`),
           { savedLineups: updatedLineups },
           { merge: true },
         );
-      } else if (!isFirebaseAvailable) {
-        writeLocalDb({ ...appData, savedLineups: updatedLineups });
+      } catch (e) {
+        console.warn("Firestore lineup preset sync deferred:", e);
       }
+    }
+    showToast(`Lineup "${cleanName}" saved successfully!`, "success");
+    return true;
+  };
+
+  const deleteNamedLineup = async (name: string) => {
+    const cleanName = (name || "").trim();
+    if (!cleanName || !appData.savedLineups?.[cleanName]) return;
+    const updatedLineups = { ...appData.savedLineups };
+    delete updatedLineups[cleanName];
+    const newAppData = { ...appData, savedLineups: updatedLineups };
+    writeLocalDb(newAppData);
+
+    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/settings/core`),
+          { savedLineups: updatedLineups },
+          { merge: true },
+        );
+      } catch (e) {
+        console.warn("Firestore lineup preset delete sync deferred:", e);
+      }
+    }
+    showToast(`Lineup preset "${cleanName}" deleted`, "info");
+  };
+
+  const renameNamedLineup = async (oldName: string, newName: string) => {
+    const cleanOld = (oldName || "").trim();
+    const cleanNew = (newName || "").trim();
+    if (!cleanOld || !cleanNew || cleanOld === cleanNew) return;
+    if (!appData.savedLineups?.[cleanOld]) return;
+
+    const preset = appData.savedLineups[cleanOld];
+    const updatedLineups = { ...appData.savedLineups };
+    delete updatedLineups[cleanOld];
+    updatedLineups[cleanNew] = {
+      ...preset,
+      updatedAt: new Date().toISOString(),
+    };
+    const newAppData = { ...appData, savedLineups: updatedLineups };
+    writeLocalDb(newAppData);
+
+    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${activeTeam}/settings/core`),
+          { savedLineups: updatedLineups },
+          { merge: true },
+        );
+      } catch (e) {
+        console.warn("Firestore lineup preset rename sync deferred:", e);
+      }
+    }
+    showToast(`Lineup renamed to "${cleanNew}"`, "success");
+  };
+
+  const loadNamedLineup = (
+    name: string,
+    targetCourt: "setup" | "inGame" | "betweenSets" = "setup",
+  ) => {
+    if (!name || !appData.savedLineups?.[name]) return;
+    const preset = appData.savedLineups[name];
+    const loadedLineup =
+      Array.isArray(preset.lineup) && preset.lineup.length === 6
+        ? [...preset.lineup]
+        : [null, null, null, null, null, null];
+    const loadedLibero = preset.liberoId || "";
+
+    const rosterIds = new Set(appData.roster.map((p) => p.id));
+    const missingCount = loadedLineup.filter((id) => id && !rosterIds.has(id)).length;
+    if (missingCount > 0) {
+      showToast(
+        `Note: ${missingCount} player(s) in "${name}" are not in the active roster`,
+        "warning",
+      );
+    }
+
+    if (targetCourt === "setup") {
+      setLineup(loadedLineup);
+      setLiberoId(loadedLibero);
+    } else if (targetCourt === "inGame") {
+      setTempInGameLineup(loadedLineup);
+      setTempInGameLibero(loadedLibero);
+    } else if (targetCourt === "betweenSets") {
+      setBetweenSetsModal((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          tempLineup: loadedLineup,
+          tempLibero: loadedLibero,
+        };
+      });
+    }
+    showToast(`Loaded lineup "${name}"`, "success");
+  };
+
+  const saveLineupAsPreset = async () => {
+    if (!lineupPresetName.trim()) {
+      showToast("Please enter a name for the lineup preset.", "warning");
+      return;
+    }
+    const saved = await saveNamedLineup(lineupPresetName, lineup, liberoId);
+    if (saved) {
       setLineupPresetName("");
-      alert(`Lineup saved as "${lineupPresetName}"`);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to save lineup");
     }
   };
 
-  const loadLineupPreset = (name) => {
-    if (name && appData.savedLineups?.[name]) {
-      const preset = appData.savedLineups[name];
-      setLineup(preset.lineup || [null, null, null, null, null, null]);
-      setLiberoId(preset.liberoId || "");
-    }
+  const loadLineupPreset = (name: string) => {
+    loadNamedLineup(name, "setup");
   };
 
   const handleOpponentNameChange = (e) => {
@@ -4888,6 +5010,38 @@ export default function App() {
         },
       ]);
     }
+    setView("stats");
+  };
+
+  const openMatchStatsFromHistory = (match: any) => {
+    if (!match) return;
+    const detail = getEventDetails(match);
+    if (match.type === "Practice") {
+      setStatsPath([
+        {
+          level: "season",
+          id: "practice",
+          name: "All Practices (Season)",
+        },
+        { level: "event", id: detail.id, name: detail.name },
+        {
+          level: "drill",
+          id: match.id,
+          name: match.title || "Drill Session",
+        },
+      ]);
+    } else {
+      setStatsPath([
+        {
+          level: "season",
+          id: "games",
+          name: "All Games (Season)",
+        },
+        { level: "event", id: detail.id, name: detail.name },
+        { level: "match", id: match.id, name: `vs ${match.opponent || "Opponent"}` },
+      ]);
+    }
+    setShowSeasonHistoryModal(false);
     setView("stats");
   };
 
@@ -8990,14 +9144,33 @@ export default function App() {
 
           <div className="w-full flex flex-col gap-4 sm:gap-6">
             {teamInfo.role !== "player" && (
-              <button
-                onClick={() => setIsRosterModalOpen(true)}
-                className="w-full bg-white text-slate-700 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)]"
-              >
-                <Users className="mr-2 sm:mr-3 text-slate-500" size={24} /> EDIT
-                ROSTER
-              </button>
+              <>
+                <button
+                  onClick={() => setIsRosterModalOpen(true)}
+                  className="w-full bg-white text-slate-700 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] cursor-pointer"
+                >
+                  <Users className="mr-2 sm:mr-3 text-slate-500" size={24} /> EDIT
+                  ROSTER
+                </button>
+                <button
+                  onClick={() => {
+                    setLineupsModalContext("setup");
+                    setIsLineupsModalOpen(true);
+                  }}
+                  className="w-full bg-white text-slate-700 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] cursor-pointer"
+                >
+                  <Bookmark className="mr-2 sm:mr-3 text-[#0033A0]" size={24} /> SAVED
+                  LINEUPS ({Object.keys(appData.savedLineups || {}).length})
+                </button>
+              </>
             )}
+            <button
+              onClick={() => setShowSeasonHistoryModal(true)}
+              className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:from-amber-400 hover:to-amber-500 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] border border-amber-300/40 cursor-pointer"
+            >
+              <Trophy className="mr-2 sm:mr-3 text-slate-950" size={24} />{" "}
+              SEASON HISTORY ({(appData.matches || []).filter((m) => m.type !== "Practice").length} GAMES)
+            </button>
             <button
               onClick={viewStatsFromMenu}
               className="w-full bg-white text-[#001b5e] p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)]"
@@ -9362,9 +9535,19 @@ export default function App() {
               </button>
               <button
                 onClick={() => setIsRosterModalOpen(true)}
-                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm cursor-pointer"
               >
                 <Users className="mr-1.5 sm:mr-2" size={16} /> ROSTER
+              </button>
+              <button
+                onClick={() => {
+                  setLineupsModalContext("setup");
+                  setIsLineupsModalOpen(true);
+                }}
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm cursor-pointer"
+                title="Manage Saved Lineup Presets"
+              >
+                <Bookmark className="mr-1.5 sm:mr-2" size={16} /> LINEUPS
               </button>
               <button
                 onClick={() => setView("menu")}
@@ -9663,18 +9846,29 @@ export default function App() {
 
             <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 sm:mb-4 gap-2">
-                <label className="block font-black text-slate-800 uppercase tracking-widest text-sm sm:text-base">
-                  UCC Lineup
-                </label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center space-x-1 sm:space-x-2 bg-slate-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <label className="block font-black text-slate-800 uppercase tracking-widest text-sm sm:text-base">
+                    {effectiveTeamName} Lineup
+                  </label>
+                  <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase">
+                    Starting 6
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <div className="flex items-center space-x-1 sm:space-x-2 bg-slate-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 shadow-sm flex-1 sm:flex-initial">
+                    <Bookmark size={14} className="text-[#0033A0] shrink-0" />
                     <select
-                      onChange={(e) => loadLineupPreset(e.target.value)}
-                      className="bg-transparent border-none text-slate-700 font-bold focus:ring-0 outline-none text-xs sm:text-sm pl-1"
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          loadLineupPreset(e.target.value);
+                          e.target.value = "";
+                        }
+                      }}
+                      className="bg-transparent border-none text-slate-700 font-bold focus:ring-0 outline-none text-xs sm:text-sm pl-1 cursor-pointer w-full sm:w-auto"
                       defaultValue=""
                     >
                       <option value="" disabled>
-                        Load Lineup...
+                        Load Lineup Preset...
                       </option>
                       {Object.keys(appData.savedLineups || {}).map((name) => (
                         <option key={name} value={name}>
@@ -9688,15 +9882,33 @@ export default function App() {
                       placeholder="Save As..."
                       value={lineupPresetName}
                       onChange={(e) => setLineupPresetName(e.target.value)}
-                      className="w-24 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-sm"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && lineupPresetName.trim()) {
+                          saveLineupAsPreset();
+                        }
+                      }}
+                      className="w-24 sm:w-28 bg-transparent border-none font-bold focus:ring-0 outline-none text-slate-700 placeholder-slate-400 text-xs sm:text-sm"
                     />
                     <button
+                      type="button"
                       onClick={saveLineupAsPreset}
-                      className="bg-[#0033A0] text-white px-2 py-1 rounded md:rounded-lg font-bold hover:bg-blue-800 transition-colors text-[10px] sm:text-xs uppercase tracking-widest"
+                      className="bg-[#0033A0] text-white px-2 py-1 rounded md:rounded-lg font-bold hover:bg-blue-800 transition-colors text-[10px] sm:text-xs uppercase tracking-widest cursor-pointer"
                     >
                       Save
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLineupsModalContext("setup");
+                      setIsLineupsModalOpen(true);
+                    }}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold px-2.5 py-1.5 rounded-lg sm:rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="Manage Saved Lineup Presets"
+                  >
+                    <Bookmark size={13} className="text-[#0033A0]" />
+                    <span>Lineups ({Object.keys(appData.savedLineups || {}).length})</span>
+                  </button>
                 </div>
               </div>
 
@@ -14566,37 +14778,43 @@ export default function App() {
                     placeholder="Save this lineup as preset name..."
                     value={betweenSetsPresetName}
                     onChange={(e) => setBetweenSetsPresetName(e.target.value)}
+                    onKeyDown={async (e) => {
+                      if (e.key === "Enter" && betweenSetsPresetName.trim()) {
+                        const success = await saveNamedLineup(
+                          betweenSetsPresetName,
+                          betweenSetsModal.tempLineup,
+                          betweenSetsModal.tempLibero,
+                        );
+                        if (success) setBetweenSetsPresetName("");
+                      }
+                    }}
                     className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-700 outline-none"
                   />
                   <button
                     type="button"
                     onClick={async () => {
-                      if (!betweenSetsPresetName.trim()) {
-                        showToast("Please enter a name for this preset", "warning");
-                        return;
-                      }
-                      const updated = {
-                        ...appData.savedLineups,
-                        [betweenSetsPresetName.trim()]: {
-                          lineup: betweenSetsModal.tempLineup,
-                          liberoId: betweenSetsModal.tempLibero,
-                        },
-                      };
-                      if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
-                        await setDoc(
-                          doc(db, `${publicPath}/${activeTeam}/settings/core`),
-                          { savedLineups: updated },
-                          { merge: true },
-                        ).catch(() => {});
-                      } else {
-                        writeLocalDb({ ...appData, savedLineups: updated });
-                      }
-                      showToast(`Preset "${betweenSetsPresetName.trim()}" saved!`, "success");
-                      setBetweenSetsPresetName("");
+                      const success = await saveNamedLineup(
+                        betweenSetsPresetName,
+                        betweenSetsModal.tempLineup,
+                        betweenSetsModal.tempLibero,
+                      );
+                      if (success) setBetweenSetsPresetName("");
                     }}
-                    className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-black text-xs rounded-lg uppercase tracking-wider transition-colors whitespace-nowrap cursor-pointer"
+                    className="px-3 py-1.5 bg-[#0033A0] hover:bg-blue-800 text-white font-black text-xs rounded-lg uppercase tracking-wider transition-colors whitespace-nowrap cursor-pointer shadow-xs"
                   >
                     Save Preset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLineupsModalContext("betweenSets");
+                      setIsLineupsModalOpen(true);
+                    }}
+                    className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-lg uppercase tracking-wider transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Manage Saved Lineup Presets"
+                  >
+                    <Bookmark size={12} className="text-[#0033A0]" />
+                    <span className="hidden sm:inline">Lineups</span>
                   </button>
                 </div>
 
@@ -14696,6 +14914,46 @@ export default function App() {
 
               {inGameLineupTab === "ucc" ? (
                 <>
+                  {/* Preset Quick Load / Save Bar */}
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                      <Bookmark size={14} className="text-[#0033A0] shrink-0" />
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            loadNamedLineup(e.target.value, "inGame");
+                            e.target.value = "";
+                          }
+                        }}
+                        defaultValue=""
+                        className="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-700 outline-none w-full cursor-pointer"
+                      >
+                        <option value="" disabled>
+                          Load Saved Lineup Preset...
+                        </option>
+                        {Object.keys(appData.savedLineups || {}).map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLineupsModalContext("inGame");
+                          setIsLineupsModalOpen(true);
+                        }}
+                        className="px-2.5 py-1.5 bg-[#0033A0] hover:bg-blue-800 text-white font-black text-[11px] rounded-lg uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer shadow-xs active:scale-95"
+                      >
+                        <Bookmark size={12} />
+                        <span>Lineups ({Object.keys(appData.savedLineups || {}).length})</span>
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Libero selector & Rotation Actions */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
                     <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
@@ -16810,6 +17068,16 @@ export default function App() {
                     </button>
                   </>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowSeasonHistoryModal(true)}
+                  className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95 ring-2 ring-amber-300/60"
+                  title="View Season History, Game Log, and Set Scores"
+                >
+                  <Trophy className="mr-1 sm:mr-1.5 shrink-0 text-slate-950" size={13} />
+                  <span>Season History</span>
+                </button>
 
                 <button
                   type="button"
@@ -20062,6 +20330,63 @@ export default function App() {
         {renderPlayerAccessModal()}
         {renderPlayerSecurity()}
         {renderInstallModal()}
+
+        <SavedLineupsModal
+          isOpen={isLineupsModalOpen}
+          onClose={() => setIsLineupsModalOpen(false)}
+          savedLineups={appData.savedLineups || {}}
+          roster={sortedRoster}
+          currentCourtLineup={
+            lineupsModalContext === "inGame"
+              ? (Array.isArray(tempInGameLineup) && tempInGameLineup.length === 6 ? tempInGameLineup : lineup)
+              : lineupsModalContext === "betweenSets"
+              ? (betweenSetsModal?.tempLineup || lineup)
+              : lineup
+          }
+          currentLiberoId={
+            lineupsModalContext === "inGame"
+              ? (tempInGameLibero || liberoId)
+              : lineupsModalContext === "betweenSets"
+              ? (betweenSetsModal?.tempLibero || liberoId)
+              : liberoId
+          }
+          onSaveLineup={(name, l, lib, notes) => saveNamedLineup(name, l, lib, notes)}
+          onDeleteLineup={(name) => deleteNamedLineup(name)}
+          onRenameLineup={(oldName, newName) => renameNamedLineup(oldName, newName)}
+          onLoadLineup={(name) => {
+            loadNamedLineup(name, lineupsModalContext);
+            setIsLineupsModalOpen(false);
+          }}
+          contextTitle={
+            lineupsModalContext === "inGame"
+              ? "In-Game Lineup Presets"
+              : lineupsModalContext === "betweenSets"
+              ? "Between-Sets Lineup Presets"
+              : "Saved Starting Lineups"
+          }
+        />
+
+        <SeasonHistoryModal
+          isOpen={showSeasonHistoryModal}
+          onClose={() => setShowSeasonHistoryModal(false)}
+          matches={appData.matches || []}
+          sets={appData.sets || []}
+          stats={appData.stats || []}
+          roster={appData.roster || []}
+          ourTeamName={effectiveTeamName}
+          onSelectMatch={openMatchStatsFromHistory}
+          onEditSetScore={(setObj, matchObj) => {
+            setSetScoreModalConfig({
+              isOpen: true,
+              set: setObj,
+              matchTitle: matchObj?.title || `vs ${matchObj?.opponent || "Opponent"}`,
+            });
+          }}
+          onStartNewMatch={() => {
+            setShowSeasonHistoryModal(false);
+            startSetup("League");
+          }}
+        />
 
         {/* Floating Persistent Return-to-Game Action Bar for Stats */}
         {((activeMatch && (activeMatch as any).isLive !== false) || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false)) && (
