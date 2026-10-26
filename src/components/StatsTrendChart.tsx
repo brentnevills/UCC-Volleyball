@@ -19,6 +19,8 @@ import {
   Trash2,
   Crosshair,
   Users,
+  User,
+  X,
 } from "lucide-react";
 
 export interface StatsTrendChartProps {
@@ -266,6 +268,9 @@ interface RallyPoint {
   runningBackAttacks?: number;
   runningFrontSetPct?: number;
   runningAttackErrors: number;
+  runningBlockedAttacks?: number;
+  runningPassSum?: number;
+  runningPassCount?: number;
   runningAces: number;
   runningServes: number;
   isRunLead?: boolean;
@@ -454,6 +459,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     });
     return map;
   }, [roster]);
+
+  const activePlayerInfo = selectedPlayerId !== "team" ? playerMap.get(String(selectedPlayerId)) : null;
 
   // Helper: Reconstruct Rally-by-Rally Points for a Set with Cumulative Metrics
   const buildSetRallies = (setObj: any, matchOpponentName: string): RallyPoint[] => {
@@ -669,6 +676,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           runningBackAttacks: cumulativeBackAttacks,
           runningFrontSetPct: runFrontSetPct,
           runningAttackErrors: cumulativeAttackErrors,
+          runningBlockedAttacks: cumulativeAttackBlocked,
+          runningPassSum: cumulativePassSum,
+          runningPassCount: cumulativePassCount,
           runningAces: cumulativeAces,
           runningServes: cumulativeServes,
         };
@@ -844,6 +854,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           runningBackAttacks: cumulativeBackAttacks,
           runningFrontSetPct: cumulativeAttacks > 0 ? cumulativeFrontAttacks / cumulativeAttacks : 0,
           runningAttackErrors: cumulativeAttackErrors,
+          runningBlockedAttacks: cumulativeAttackBlocked,
+          runningPassSum: cumulativePassSum,
+          runningPassCount: cumulativePassCount,
           runningAces: cumulativeAces,
           runningServes: cumulativeServes,
         });
@@ -868,11 +881,11 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       const desc = giveUcc ? `${teamName} Point (Rally)` : `${matchOpponentName} Point (Rally)`;
 
       const runKillPct = cumulativeAttacks > 0 ? cumulativeKills / cumulativeAttacks : 0;
-      const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors) / cumulativeAttacks : 0;
-      const runAcePct = cumulativeServes > 0 ? cumulativeAces / cumulativeServes : 0.08;
-      const runServeErrorPct = cumulativeServes > 0 ? cumulativeServeErrors / cumulativeServes : 0.06;
-      const runPassAvg = cumulativePassCount > 0 ? cumulativePassSum / cumulativePassCount : 2.15;
-      const runSideoutPct = curUcc + curOpp > 0 ? curUcc / (curUcc + curOpp) : 0.55;
+      const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors - cumulativeAttackBlocked) / cumulativeAttacks : 0;
+      const runAcePct = cumulativeServes > 0 ? cumulativeAces / cumulativeServes : 0;
+      const runServeErrorPct = cumulativeServes > 0 ? cumulativeServeErrors / cumulativeServes : 0;
+      const runPassAvg = cumulativePassCount > 0 ? cumulativePassSum / cumulativePassCount : 0;
+      const runSideoutPct = curUcc + curOpp > 0 ? curUcc / (curUcc + curOpp) : 0;
       const runEarnedPoints = cumulativeKills + cumulativeAces + cumulativeStuffBlocks;
       const runUnforcedErrors = cumulativeAttackErrors + cumulativeServeErrors;
 
@@ -892,6 +905,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         runningAcePct: runAcePct,
         runningServeErrorPct: runServeErrorPct,
         runningPassAvg: runPassAvg,
+        runningPassIndex: calculatePassingIndex(cumulativePassSum, cumulativePassCount),
+        runningTimesAced: cumulativeTimesAced,
         runningSideoutPct: runSideoutPct,
         runningEarnedPoints: runEarnedPoints,
         runningUnforcedErrors: runUnforcedErrors,
@@ -901,6 +916,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         runningBackAttacks: cumulativeBackAttacks,
         runningFrontSetPct: cumulativeAttacks > 0 ? cumulativeFrontAttacks / cumulativeAttacks : 0,
         runningAttackErrors: cumulativeAttackErrors,
+        runningBlockedAttacks: cumulativeAttackBlocked,
+        runningPassSum: cumulativePassSum,
+        runningPassCount: cumulativePassCount,
         runningAces: cumulativeAces,
         runningServes: cumulativeServes,
       });
@@ -956,7 +974,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     });
 
     return seasonRallies.map((r, i) => ({ ...r, rallyNum: i + 1 }));
-  }, [scope, targetMatch, targetMatchSets, selectedSetFilter, activeGroup, matches, sets, stats, playerMap, teamName]);
+  }, [scope, targetMatch, targetMatchSets, selectedSetFilter, activeGroup, matches, sets, stats, playerMap, teamName, selectedPlayerId]);
 
   // Detect Scoring Runs in Rally Data
   const scoringRuns = useMemo(() => {
@@ -1116,18 +1134,32 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         raw: {
           kills: r.runningKills || 0,
           attackErrors: r.runningAttackErrors || 0,
+          blockedAttacks: r.runningBlockedAttacks || 0,
           totalAttacks: r.runningAttacks || 0,
           frontAttacks: r.runningFrontAttacks || 0,
           backAttacks: r.runningBackAttacks || 0,
+          pass3: 0,
+          pass2: 0,
+          pass1: 0,
+          pass0: 0,
           aces: r.runningAces || 0,
+          serveErrors: r.runningServeErrorPct ? Math.round(r.runningServeErrorPct * (r.runningServes || 0)) : 0,
           totalServes: r.runningServes || 0,
+          passCount: r.runningPassCount || 0,
+          passSum: r.runningPassSum || 0,
+          timesAced: r.runningTimesAced || 0,
         },
         counts: {
-          kills: r.runningKills,
+          kills: r.runningKills || 0,
           attackErrors: r.runningAttackErrors || 0,
-          attacks: r.runningAttacks,
-          aces: r.runningAces,
-          serves: r.runningServes,
+          blockedAttacks: r.runningBlockedAttacks || 0,
+          attacks: r.runningAttacks || 0,
+          aces: r.runningAces || 0,
+          serveErrors: r.runningServeErrorPct ? Math.round(r.runningServeErrorPct * (r.runningServes || 0)) : 0,
+          serves: r.runningServes || 0,
+          passCount: r.runningPassCount || 0,
+          passSum: r.runningPassSum || 0,
+          timesAced: r.runningTimesAced || 0,
           pointsScored: r.scoreUcc,
           pointsAllowed: r.scoreOpp,
         },
@@ -1246,7 +1278,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       const outOfSystemPct = passCount > 0 ? (pass1 + pass0) / passCount : 0;
       const acePct = totalServes > 0 ? aces / totalServes : 0;
       const serveErrorPct = totalServes > 0 ? serveErrors / totalServes : 0;
-      const passAvg = passCount > 0 ? passSum / passCount : 2.0;
+      const passAvg = passCount > 0 ? passSum / passCount : 0;
       const passIndex = calculatePassingIndex(passSum, passCount);
       const sideoutPct = totalAttacks + totalServes > 0 ? pointsScored / (totalAttacks + totalServes) : 0;
 
@@ -1275,6 +1307,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         raw: {
           kills,
           attackErrors,
+          blockedAttacks,
           totalAttacks,
           frontAttacks,
           backAttacks,
@@ -1286,6 +1319,22 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           serveErrors,
           totalServes,
           passCount,
+          passSum,
+          timesAced,
+        },
+        counts: {
+          kills,
+          attackErrors,
+          blockedAttacks,
+          attacks: totalAttacks,
+          aces,
+          serveErrors,
+          serves: totalServes,
+          passCount,
+          passSum,
+          timesAced,
+          pointsScored,
+          pointsAllowed: pt.scoreOpp,
         },
       };
     });
@@ -1766,6 +1815,83 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
             ))}
           </select>
         </div>
+      </div>
+
+      {/* QUICK PLAYER SELECTOR STRIP */}
+      <div className="pt-3.5 pb-2 border-b border-slate-100 flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+            <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 shrink-0 flex items-center gap-1 mr-1">
+              <User size={13} className="text-indigo-600" />
+              Player:
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedPlayerId("team")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                selectedPlayerId === "team"
+                  ? "bg-slate-900 text-amber-300 shadow-xs ring-2 ring-slate-800"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+              }`}
+            >
+              Team Combined
+            </button>
+            {roster.map((p) => {
+              const isSelected = selectedPlayerId === String(p.id);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setSelectedPlayerId(isSelected ? "team" : String(p.id))}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                    isSelected
+                      ? "bg-indigo-600 text-white font-black shadow-sm ring-2 ring-indigo-300"
+                      : "bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/30 text-slate-700"
+                  }`}
+                  title={`Filter chart to #${p.number} ${p.name}`}
+                >
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-black ${
+                      isSelected ? "bg-indigo-800 text-amber-300" : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    #{p.number}
+                  </span>
+                  <span>{p.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {selectedPlayerId !== "team" && activePlayerInfo && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-indigo-50/90 border border-indigo-200/80 rounded-xl text-xs">
+            <div className="flex items-center gap-2">
+              <span className="h-5 w-5 rounded-full bg-indigo-600 text-amber-300 font-black flex items-center justify-center text-[10px] font-mono shadow-2xs">
+                #{activePlayerInfo.number}
+              </span>
+              <span className="text-slate-800 font-bold">
+                Isolating Individual Player:{" "}
+                <strong className="text-indigo-900 font-black text-sm">
+                  {activePlayerInfo.name}
+                </strong>
+              </span>
+              <span className="text-slate-400 hidden sm:inline">·</span>
+              <span className="text-indigo-700/80 text-[11px] font-semibold hidden sm:inline">
+                All progression lines & metric curves below reflect this player only
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedPlayerId("team")}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold text-[11px] transition-colors cursor-pointer shadow-2xs"
+              title="Return to Team Combined view"
+            >
+              <X size={12} />
+              <span>Reset to Team</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* TOURNAMENT / LEAGUE SUMMARY BAR (if active) */}
@@ -3501,7 +3627,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
               const att = lastPt.raw?.totalAttacks ?? lastPt.counts?.attacks ?? 0;
               const k = lastPt.raw?.kills ?? lastPt.counts?.kills ?? 0;
               const err = lastPt.raw?.attackErrors ?? lastPt.counts?.attackErrors ?? 0;
-              summaryVal = att > 0 ? (k - err) / att : 0;
+              const blk = lastPt.raw?.blockedAttacks ?? lastPt.counts?.blockedAttacks ?? 0;
+              summaryVal = att > 0 ? (k - err - blk) / att : 0;
             } else if (m.key === "swings") {
               summaryVal = lastPt.raw?.totalAttacks ?? lastPt.counts?.attacks ?? 0;
             } else if (m.key === "frontSetPct") {
@@ -3527,14 +3654,16 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
             if (m.key === "killPct" || m.key === "hittingEff") {
               let totK = 0;
               let totE = 0;
+              let totB = 0;
               let totA = 0;
               discreteSeriesData.forEach((d: any) => {
                 totK += d.counts?.kills || d.raw?.kills || 0;
                 totE += d.counts?.attackErrors || d.raw?.attackErrors || 0;
+                totB += d.counts?.blockedAttacks || d.raw?.blockedAttacks || 0;
                 totA += d.counts?.attacks || d.raw?.totalAttacks || 0;
               });
               if (m.key === "killPct") summaryVal = totA > 0 ? totK / totA : 0;
-              else summaryVal = totA > 0 ? (totK - totE) / totA : 0;
+              else summaryVal = totA > 0 ? (totK - totE - totB) / totA : 0;
             } else if (m.key === "swings") {
               let totSwings = 0;
               if (granularity === "by_rally") {
@@ -3604,10 +3733,18 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
               let totPassSum = 0;
               let totPassCount = 0;
               discreteSeriesData.forEach((d: any) => {
-                totPassSum += d.counts?.passSum || 0;
-                totPassCount += d.counts?.passCount || 0;
+                totPassSum += d.counts?.passSum || d.raw?.passSum || 0;
+                totPassCount += d.counts?.passCount || d.raw?.passCount || 0;
               });
               summaryVal = calculatePassingIndex(totPassSum, totPassCount);
+            } else if (m.key === "passAvg") {
+              let totPassSum = 0;
+              let totPassCount = 0;
+              discreteSeriesData.forEach((d: any) => {
+                totPassSum += d.counts?.passSum || d.raw?.passSum || 0;
+                totPassCount += d.counts?.passCount || d.raw?.passCount || 0;
+              });
+              summaryVal = totPassCount > 0 ? totPassSum / totPassCount : 0;
             } else {
               const values = discreteSeriesData.map((d) => d.values[m.key] || 0);
               summaryVal = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
