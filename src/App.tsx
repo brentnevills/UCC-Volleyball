@@ -6201,7 +6201,7 @@ export default function App() {
     const teamName = currentTeam
       ? currentTeam.name.replace(/\s+/g, "_")
       : "Team";
-    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Times Aced,Digs,Dig Touches,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked,Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
+    let csv = `UCC LANCERS (${teamName}) - ${currentNav.name.toUpperCase()}\nNumber,Name,Pass Avg,Passes,Times Aced,Digs,Dig Touches,Swings,Swings (Front),Swings (Back),Kills,Kill %,Att Errors,Att Blocked (Stf),Blocks,Blk Stuffs,Blk Late,Blk Net,Blk Used,Serves,Aces,Serve Errors,Serve +/-\n`;
 
     const allPlayers = Object.values(uccStats).filter((p) => {
       if (!showRetired && p.isRetired) return false;
@@ -6227,6 +6227,7 @@ export default function App() {
       attKill: 0,
       attErr: 0,
       attBlk: 0,
+      attErrStuffed: 0,
       blkCount: 0,
       blkStuff: 0,
       blkLate: 0,
@@ -6249,6 +6250,7 @@ export default function App() {
       teamTot.attKill += p.attKill || 0;
       teamTot.attErr += p.attErr || 0;
       teamTot.attBlk += p.attBlk || 0;
+      teamTot.attErrStuffed = (teamTot.attErrStuffed || 0) + (p.attErrStuffed || 0);
       teamTot.blkCount += p.blkCount || 0;
       teamTot.blkStuff += p.blkStuff || 0;
       teamTot.blkLate += p.blkLate || 0;
@@ -6277,6 +6279,7 @@ export default function App() {
       attKill: 0,
       attErr: 0,
       attBlk: 0,
+      attErrStuffed: 0,
       blkCount: 0,
       blkStuff: 0,
       blkLate: 0,
@@ -6309,6 +6312,7 @@ export default function App() {
       shownTot.attKill += p.attKill || 0;
       shownTot.attErr += p.attErr || 0;
       shownTot.attBlk += p.attBlk || 0;
+      shownTot.attErrStuffed = (shownTot.attErrStuffed || 0) + (p.attErrStuffed || 0);
       shownTot.blkCount += p.blkCount || 0;
       shownTot.blkStuff += p.blkStuff || 0;
       shownTot.blkLate += p.blkLate || 0;
@@ -6318,7 +6322,7 @@ export default function App() {
       shownTot.srvAce += p.srvAce || 0;
       shownTot.srvErr += p.srvErr || 0;
 
-      csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.passAced || 0},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
+      csv += `"${p.number || ""}","${p.name}",${passAvg},${p.passCount},${p.passAced || 0},${p.digCount},${p.digErr},${p.attCount},${p.attCountFront},${p.attCountBack},${p.attKill},${killPct},${p.attErr},"${p.attBlk}(${p.attErrStuffed || 0})",${blkTot},${p.blkStuff},${p.blkLate},${p.blkNet},${p.blkUsed},${srvTot},${p.srvAce},${p.srvErr},${srvPlusMinus}\n`;
     });
 
     if (hasHiddenPlayers) {
@@ -6332,7 +6336,7 @@ export default function App() {
           : "0.0%";
       const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
-      csv += `"","SHOWN PLAYERS (AVG & TOT)",${shownPassAvg},${shownTot.passCount},${shownTot.passAced || 0},${shownTot.digCount},${shownTot.digErr},${shownTot.attCount},${shownTot.attCountFront},${shownTot.attCountBack},${shownTot.attKill},${shownKillPct},${shownTot.attErr},${shownTot.attBlk},${shownBlkTot},${shownTot.blkStuff},${shownTot.blkLate},${shownTot.blkNet},${shownTot.blkUsed},${shownSrvTot},${shownTot.srvAce},${shownTot.srvErr},${shownSrvPlusMinus}\n`;
+      csv += `"","SHOWN PLAYERS (AVG & TOT)",${shownPassAvg},${shownTot.passCount},${shownTot.passAced || 0},${shownTot.digCount},${shownTot.digErr},${shownTot.attCount},${shownTot.attCountFront},${shownTot.attCountBack},${shownTot.attKill},${shownKillPct},${shownTot.attErr},"${shownTot.attBlk}(${shownTot.attErrStuffed || 0})",${shownBlkTot},${shownTot.blkStuff},${shownTot.blkLate},${shownTot.blkNet},${shownTot.blkUsed},${shownSrvTot},${shownTot.srvAce},${shownTot.srvErr},${shownSrvPlusMinus}\n`;
     }
 
     const totPassAvg =
@@ -6345,7 +6349,7 @@ export default function App() {
         : "0.0%";
     const totSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
 
-    csv += `"","TEAM TOTALS (WHOLE TEAM)",${totPassAvg},${teamTot.passCount},${teamTot.passAced || 0},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},${teamTot.attBlk},${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus}\n`;
+    csv += `"","TEAM TOTALS (WHOLE TEAM)",${totPassAvg},${teamTot.passCount},${teamTot.passAced || 0},${teamTot.digCount},${teamTot.digErr},${teamTot.attCount},${teamTot.attCountFront},${teamTot.attCountBack},${teamTot.attKill},${totKillPct},${teamTot.attErr},"${teamTot.attBlk}(${teamTot.attErrStuffed || 0})",${totBlkTot},${teamTot.blkStuff},${teamTot.blkLate},${teamTot.blkNet},${teamTot.blkUsed},${totSrvTot},${teamTot.srvAce},${teamTot.srvErr},${totSrvPlusMinus}\n`;
 
     csv +=
       "\nOPPONENT STATS\nID,Aces,Serve Errors,Serve +/-,Swings,Kills,Kill %,Pass Avg,Passes\n";
@@ -6423,7 +6427,7 @@ export default function App() {
         "Kills",
         "Kill %",
         "Att Errors",
-        "Att Blocked",
+        "Att Blocked (Stf)",
         "TOT Blocks",
         "(STF) Stuffs",
         "Blk Late",
@@ -6460,6 +6464,7 @@ export default function App() {
       attKill: 0,
       attErr: 0,
       attBlk: 0,
+      attErrStuffed: 0,
       blkCount: 0,
       blkStuff: 0,
       blkLate: 0,
@@ -6482,6 +6487,7 @@ export default function App() {
       teamTot.attKill += p.attKill || 0;
       teamTot.attErr += p.attErr || 0;
       teamTot.attBlk += p.attBlk || 0;
+      teamTot.attErrStuffed = (teamTot.attErrStuffed || 0) + (p.attErrStuffed || 0);
       teamTot.blkCount += p.blkCount || 0;
       teamTot.blkStuff += p.blkStuff || 0;
       teamTot.blkLate += p.blkLate || 0;
@@ -6511,6 +6517,7 @@ export default function App() {
       attKill: 0,
       attErr: 0,
       attBlk: 0,
+      attErrStuffed: 0,
       blkCount: 0,
       blkStuff: 0,
       blkLate: 0,
@@ -6543,6 +6550,7 @@ export default function App() {
       shownTot.attKill += p.attKill || 0;
       shownTot.attErr += p.attErr || 0;
       shownTot.attBlk += p.attBlk || 0;
+      shownTot.attErrStuffed = (shownTot.attErrStuffed || 0) + (p.attErrStuffed || 0);
       shownTot.blkCount += p.blkCount || 0;
       shownTot.blkStuff += p.blkStuff || 0;
       shownTot.blkLate += p.blkLate || 0;
@@ -6566,7 +6574,7 @@ export default function App() {
         p.attKill,
         killPct,
         p.attErr,
-        p.attBlk,
+        `${p.attBlk}(${p.attErrStuffed || 0})`,
         `${blkTot} (${p.blkStuff} STF)`,
         p.blkStuff,
         p.blkLate,
@@ -6616,7 +6624,7 @@ export default function App() {
         shownTot.attKill,
         shownKillPct,
         shownTot.attErr,
-        shownTot.attBlk,
+        `${shownTot.attBlk}(${shownTot.attErrStuffed || 0})`,
         `${shownBlkTot} (${shownTot.blkStuff} STF)`,
         shownTot.blkStuff,
         shownTot.blkLate,
@@ -6643,7 +6651,7 @@ export default function App() {
       teamTot.attKill,
       totKillPct,
       teamTot.attErr,
-      teamTot.attBlk,
+      `${teamTot.attBlk}(${teamTot.attErrStuffed || 0})`,
       `${totBlkTot} (${teamTot.blkStuff} STF)`,
       teamTot.blkStuff,
       teamTot.blkLate,
@@ -18888,7 +18896,7 @@ export default function App() {
                             SWINGS ▾
                             <br />
                             <span className="opacity-70 font-bold tracking-normal text-[8px] sm:text-[9px]">
-                              Tot(F/B) • FR Set%
+                              Tot(F/B) • K-E-Blk(Stf)
                             </span>
                           </th>
                           <th
@@ -19084,7 +19092,7 @@ export default function App() {
                             </span>{" "}
                             <span className="text-blue-300 mx-0.5">-</span>{" "}
                             <span className="text-amber-300 font-bold text-xs">
-                              {teamTot.attBlk}
+                              {teamTot.attBlk}({teamTot.attErrStuffed || 0})
                             </span>
                           </td>
                           {/* KILL % */}
@@ -19313,7 +19321,7 @@ export default function App() {
                               </span>{" "}
                               <span className="text-indigo-300 mx-0.5">-</span>{" "}
                               <span className="text-amber-300 font-bold text-xs">
-                                {shownTot.attBlk}
+                                {shownTot.attBlk}({shownTot.attErrStuffed || 0})
                               </span>
                             </td>
                             {/* KILL % */}
@@ -19597,7 +19605,7 @@ export default function App() {
                                       -
                                     </span>{" "}
                                     <span className="text-amber-600 font-bold text-xs">
-                                      {p.attBlk}
+                                      {p.attBlk}({p.attErrStuffed || 0})
                                     </span>
                                   </div>
                                 </td>
@@ -19852,7 +19860,7 @@ export default function App() {
                               </span>{" "}
                               <span className="text-indigo-300 mx-0.5">-</span>{" "}
                               <span className="text-amber-300 font-bold text-xs">
-                                {shownTot.attBlk}
+                                {shownTot.attBlk}({shownTot.attErrStuffed || 0})
                               </span>
                             </td>
                             {/* KILL % */}
@@ -20076,7 +20084,7 @@ export default function App() {
                             </span>{" "}
                             <span className="text-blue-300 mx-0.5">-</span>{" "}
                             <span className="text-amber-300 font-bold text-xs">
-                              {teamTot.attBlk}
+                              {teamTot.attBlk}({teamTot.attErrStuffed || 0})
                             </span>
                           </td>
                           {/* KILL % */}

@@ -663,7 +663,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                         {selectedPlayer.attErrOut} Out)
                         {(selectedPlayer.attBlk > 0 || selectedPlayer.attErrStuffed > 0) ? (
                           <span className="text-amber-600 font-bold ml-1">
-                            • {selectedPlayer.attBlk || selectedPlayer.attErrStuffed} Blk
+                            • {selectedPlayer.attBlk}({selectedPlayer.attErrStuffed || 0}) Blk
                           </span>
                         ) : null}
                       </span>
@@ -1124,7 +1124,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                       {selectedPlayer.attErrStuffed}
                     </span>
                     <span className="text-[10px] font-bold text-slate-500">
-                      Blocked for Point
+                      Terminal Opp Point
                     </span>
                   </div>
 
@@ -1141,16 +1141,19 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                     </span>
                   </div>
 
-                  {/* BLOCKED PLAY ON */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-700 block">
-                      Blocked (Play On)
+                  {/* TIMES BLOCKED (TOTAL) */}
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 block">
+                      Times Blocked
                     </span>
-                    <span className="text-2xl font-black text-slate-700 my-0.5 block">
+                    <span className="text-2xl font-black text-amber-700 my-0.5 block">
                       {selectedPlayer.attBlk}
+                      <span className="text-sm font-bold text-amber-600 ml-1">
+                        ({selectedPlayer.attErrStuffed || 0})
+                      </span>
                     </span>
                     <span className="text-[10px] font-bold text-slate-500">
-                      Touches / Re-sets
+                      Total (Stuffed)
                     </span>
                   </div>
                 </div>
