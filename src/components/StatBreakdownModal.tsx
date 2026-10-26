@@ -140,10 +140,12 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
     totalSwings > 0
       ? ((selectedPlayer.attErr / totalSwings) * 100).toFixed(1)
       : "0.0";
+  const attBlocked = selectedPlayer.attBlk || 0;
   const attEfficiency =
     totalSwings > 0
       ? (
-          ((selectedPlayer.attKill - selectedPlayer.attErr) / totalSwings) *
+          ((selectedPlayer.attKill - selectedPlayer.attErr - attBlocked) /
+            totalSwings) *
           100
         ).toFixed(1)
       : "0.0";
@@ -256,7 +258,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
       `Context: ${titleContext || "Season / Match"}`,
       `Net Point Differential: ${netImpact > 0 ? `+${netImpact}` : netImpact} (Points Won: ${pointsWon} | Errors: ${errorsGiven})`,
       `Serves: ${totalServes} (Aces: ${selectedPlayer.srvAce}, In-Play: ${selectedPlayer.srvCount}, Errs: ${selectedPlayer.srvErr} [Net: ${selectedPlayer.srvErrNet}, Wide: ${selectedPlayer.srvErrWide}, Long: ${selectedPlayer.srvErrLong}, Foot: ${selectedPlayer.srvErrFoot}])`,
-      `Attacks: ${totalSwings} swings (Kills: ${selectedPlayer.attKill} [${killPct}%], Errs: ${selectedPlayer.attErr} [${attEfficiency}% Eff.], Net: ${selectedPlayer.attErrNet}, Out: ${selectedPlayer.attErrOut}, Stuffed: ${selectedPlayer.attErrStuffed})`,
+      `Attacks: ${totalSwings} swings (Kills: ${selectedPlayer.attKill} [${killPct}%], Errs: ${selectedPlayer.attErr} [${attEfficiency}% Eff.], Net: ${selectedPlayer.attErrNet}, Out: ${selectedPlayer.attErrOut}, Blocked: ${selectedPlayer.attBlk || selectedPlayer.attErrStuffed || 0})`,
       `Blocks: ${selectedPlayer.blkStuff} Stuffs, ${selectedPlayer.blkCount} Touches, ${totalFaults} Faults (Late: ${selectedPlayer.blkLate}, Net: ${selectedPlayer.blkNet}, Used: ${selectedPlayer.blkUsed})`,
       `Passing: ${passAvg} Avg (${totalPasses} total | Perfect 3s: ${selectedPlayer.pass3}, Good 2s: ${selectedPlayer.pass2}, Poor 1s: ${selectedPlayer.pass1}, Error 0s: ${selectedPlayer.pass0})`,
       `Digs: ${selectedPlayer.digCount} Digs, ${selectedPlayer.digErr} Errs (${digSuccessPct}% Success)`,
@@ -657,6 +659,11 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                         Errors: {selectedPlayer.attErr} (
                         {selectedPlayer.attErrNet} Net,{" "}
                         {selectedPlayer.attErrOut} Out)
+                        {(selectedPlayer.attBlk > 0 || selectedPlayer.attErrStuffed > 0) ? (
+                          <span className="text-amber-600 font-bold ml-1">
+                            • {selectedPlayer.attBlk || selectedPlayer.attErrStuffed} Blk
+                          </span>
+                        ) : null}
                       </span>
                       <span className="text-red-700 font-bold">Details →</span>
                     </div>
@@ -1065,7 +1072,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                     {attEfficiency}%
                   </span>
                   <span className="text-[10px] text-purple-600 font-bold block mt-0.5">
-                    (K - E) / Swings
+                    (K - E - Blk) / Swings
                   </span>
                 </div>
               </div>

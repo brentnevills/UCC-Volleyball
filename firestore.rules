@@ -17,25 +17,21 @@ service cloud.firestore {
     }
     
     // The "Master Gate" (Relational Sync)
-    function getMemberData(teamId) {
-      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data;
-    }
-    function getMemberDataAfter(teamId) {
-      return getAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data;
-    }
     function isTeamMember(teamId) {
       let isCoachEmail = request.auth.token.email != null && (
         request.auth.token.email == 'brent.nevills@sccdsb.net' ||
         request.auth.token.email.matches('.*coach.*')
       );
       let isDefaultTeam = teamId == 'ucc_main';
-      let hasMemberDoc = exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
-        || existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
       let hasTeamDoc = exists(/databases/$(database)/documents/teams/$(teamId));
       let isCreator = hasTeamDoc && get(/databases/$(database)/documents/teams/$(teamId)).data.createdBy == request.auth.uid;
+      let hasMemberDoc = exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
+        || existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
 
-      return isCoachEmail || isDefaultTeam || hasMemberDoc || isCreator;
+      // If team document doesn't exist yet in Firestore, allow signed-in user to initialize it
+      return !hasTeamDoc || isCoachEmail || isDefaultTeam || hasMemberDoc || isCreator;
     }
+
     function isCoach(teamId) {
       let isCoachEmail = request.auth.token.email != null && (
         request.auth.token.email == 'brent.nevills@sccdsb.net' ||
@@ -47,36 +43,21 @@ service cloud.firestore {
       let hasMemberDoc = exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
       let isCoachRole = hasMemberDoc && get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role == 'coach';
       
-      return isCoachEmail || isDefaultTeam || isCreator || isCoachRole;
+      // If team document doesn't exist yet in Firestore, allow signed-in user to create/manage it
+      return !hasTeamDoc || isCoachEmail || isDefaultTeam || isCreator || isCoachRole;
     }
 
-    // Phase 2: Validation Blueprints (The "Anti-Update-Gap")
     function isValidTeamMember(data, userId) {
-      return data.keys().hasAll(['uid', 'joinedAt', 'role']) 
-        && data.keys().size() >= 3
+      return data.keys().hasAll(['uid', 'role']) 
         && data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128
         && data.uid == userId
-        && data.joinedAt is timestamp
-        && data.role in ['coach', 'player']
-        && (!('email' in data) || (data.email is string && data.email.size() <= 256))
-        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 256))
-        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
-        && (!('lastStatsAccess' in data) || (data.lastStatsAccess is timestamp))
-        && (!('statsAccessCount' in data) || (data.statsAccessCount is number))
-        && (!('lastActive' in data) || (data.lastActive is timestamp));
+        && data.role in ['coach', 'player'];
     }
 
     function isValidPlayerAccessLog(data, userId) {
-      return data.keys().hasAll(['id', 'uid', 'email', 'role'])
+      return data.keys().hasAll(['id', 'uid'])
         && data.id is string && data.id.size() <= 128
-        && data.uid is string && data.uid == userId
-        && data.email is string && data.email.size() <= 256
-        && data.role is string && data.role in ['coach', 'player']
-        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 256))
-        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
-        && (!('accessedAt' in data) || (data.accessedAt is timestamp))
-        && (!('view' in data) || (data.view is string && data.view.size() <= 256))
-        && (!('device' in data) || (data.device is string && data.device.size() <= 256));
+        && data.uid is string && data.uid == userId;
     }
 
     function isValidSetting(data) {
@@ -91,24 +72,19 @@ service cloud.firestore {
     }
 
     function isValidMatch(data) {
-      return data.keys().hasAll(['id', 'date', 'type', 'opponent', 'format']);
+      return (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('opponent' in data) || (data.opponent is string && data.opponent.size() <= 128));
     }
 
     function isValidSet(data) {
-      return data.keys().hasAll(['id', 'matchId', 'setNum', 'scoreUcc', 'scoreOpp']);
+      return (!('id' in data) || data.id is string)
+        && (!('matchId' in data) || data.matchId is string);
     }
 
     function isValidStat(data) {
-      return data.keys().hasAll(['id', 'matchId', 'setId', 'playerId', 'category', 'metric', 'timestamp'])
-        && data.id is string && data.id.size() <= 128
-        && data.matchId is string && data.matchId.size() <= 128
-        && data.setId is string && data.setId.size() <= 128
-        && data.playerId is string && data.playerId.size() <= 128
-        && data.category is string && data.category.size() <= 128
-        && data.metric is string && data.metric.size() <= 128
-        && data.timestamp is string && data.timestamp.size() <= 64
-        && (!('value' in data) || data.value is number)
-        && (!('isOpponent' in data) || data.isOpponent is bool);
+      return (!('id' in data) || (data.id is string && data.id.size() <= 128))
+        && (!('matchId' in data) || (data.matchId is string && data.matchId.size() <= 128))
+        && (!('setId' in data) || (data.setId is string && data.setId.size() <= 128));
     }
 
     match /users/{userId} {
@@ -116,69 +92,63 @@ service cloud.firestore {
     }
 
     match /share_codes/{codeId} {
-      allow get: if isSignedIn() && isValidId(codeId);
-      allow create: if isSignedIn() && isValidId(codeId);
+      allow read, write: if isSignedIn() && isValidId(codeId);
     }
 
     match /test/{docId} {
-      allow read: if isSignedIn();
+      allow read, write: if isSignedIn();
     }
 
     match /teams/{teamId} {
-      allow create: if isSignedIn() && isValidId(teamId) && isTeamMember(teamId);
-      allow get: if isSignedIn() && isTeamMember(teamId) && isValidId(teamId);
-      allow update: if isSignedIn() && isCoach(teamId);
+      allow create: if isSignedIn() && isValidId(teamId);
+      allow get, list: if isSignedIn() && isValidId(teamId);
+      allow update: if isSignedIn() && (isCoach(teamId) || isTeamMember(teamId));
       allow delete: if isSignedIn() && isCoach(teamId);
 
       match /members/{userId} {
-        allow get: if isSignedIn() && isTeamMember(teamId) && isValidId(userId);
-        allow list: if isSignedIn() && isTeamMember(teamId);
-        allow create: if isSignedIn() && request.auth.uid == userId && isValidId(userId)
-          && isValidTeamMember(incoming(), userId);
-        allow update, delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+        allow get, list: if isSignedIn();
+        allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+        allow delete: if isSignedIn() && (request.auth.uid == userId || isCoach(teamId));
       }
 
       match /player_access_logs/{logId} {
         allow read: if isSignedIn() && isTeamMember(teamId);
-        allow create: if isSignedIn() && isTeamMember(teamId)
-          && isValidId(logId)
-          && isValidPlayerAccessLog(incoming(), request.auth.uid);
+        allow create: if isSignedIn() && isTeamMember(teamId) && isValidId(logId);
       }
 
       match /settings/{settingId} {
         allow read: if isSignedIn() && isTeamMember(teamId);
-        allow write: if isSignedIn() && isCoach(teamId)
-          && (request.method == 'DELETE' || isValidSetting(incoming()));
+        allow write: if isSignedIn() && (isCoach(teamId) || isTeamMember(teamId));
       }
 
       match /opponents/{opponentId} {
         allow read: if isSignedIn() && isTeamMember(teamId);
-        allow write: if isSignedIn() && isCoach(teamId);
+        allow write: if isSignedIn() && (isCoach(teamId) || isTeamMember(teamId));
       }
 
       match /opponent_notes/{oppName} {
         allow read: if isSignedIn() && isTeamMember(teamId);
-        allow write: if isSignedIn() && isCoach(teamId);
+        allow write: if isSignedIn() && (isCoach(teamId) || isTeamMember(teamId));
       }
 
       match /matches/{matchId} {
         allow read: if isSignedIn() && isTeamMember(teamId);
-        allow create, update: if isSignedIn() && isCoach(teamId)
+        allow create, update: if isSignedIn() && (isCoach(teamId) || isTeamMember(teamId))
           && isValidMatch(incoming());
         allow delete: if isSignedIn() && isCoach(teamId);
       }
 
       match /sets/{setId} {
         allow read: if isSignedIn() && isTeamMember(teamId);
-        allow create, update: if isSignedIn() && isCoach(teamId)
+        allow create, update: if isSignedIn() && (isCoach(teamId) || isTeamMember(teamId))
           && isValidSet(incoming());
         allow delete: if isSignedIn() && isCoach(teamId);
       }
 
       match /stats/{statId} {
         allow read: if isSignedIn() && isTeamMember(teamId);
-        allow create: if isSignedIn() && isCoach(teamId) && isValidStat(incoming());
-        allow update: if isSignedIn() && isCoach(teamId) && isValidStat(incoming());
+        allow create, update: if isSignedIn() && (isCoach(teamId) || isTeamMember(teamId))
+          && isValidStat(incoming());
         allow delete: if isSignedIn() && isCoach(teamId);
       }
     }

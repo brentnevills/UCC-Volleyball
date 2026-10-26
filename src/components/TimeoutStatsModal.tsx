@@ -668,9 +668,9 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
     }).length;
     teamAcedCount = Math.max(teamAcedCount, oppAcesInScope);
 
-    // Attack calculations (Dont count blocked attacks in error stats)
+    // Attack calculations (Include blocked attacks in swing efficiency)
     const killPct = totalAttacks > 0 ? (kills / totalAttacks) * 100 : 0;
-    const hittingEff = totalAttacks > 0 ? (kills - unforcedAttackErrors) / totalAttacks : 0;
+    const hittingEff = totalAttacks > 0 ? (kills - unforcedAttackErrors - (blockedAttacks || 0)) / totalAttacks : 0;
 
     // Serving calculations
     const servePlusMinus = aces - serveErrors;
@@ -731,7 +731,7 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
       .map((p) => {
         const kPct = p.totalAttacks > 0 ? (p.kills / p.totalAttacks) * 100 : 0;
         const eff =
-          p.totalAttacks > 0 ? (p.kills - p.unforcedErrors) / p.totalAttacks : 0;
+          p.totalAttacks > 0 ? (p.kills - p.unforcedErrors - (p.blockedAttacks || 0)) / p.totalAttacks : 0;
         const frInfo = frDistMap.get(String(p.id));
         const teamFrontWhileInFront = frInfo ? frInfo.teamFrontSwingsWhileInFront : (p.frontAttacks || 0);
         const frSetDistPct = frInfo ? frInfo.frontRowSetDistPct : 0;
@@ -769,7 +769,7 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
       const pUnforcedErr = pAtt?.unforcedErrors || 0;
       const pBlocked = pAtt?.blockedAttacks || 0;
       const pAttacks = pAtt?.totalAttacks || 0;
-      const pEff = pAttacks > 0 ? (pKills - pUnforcedErr) / pAttacks : 0;
+      const pEff = pAttacks > 0 ? (pKills - pUnforcedErr - (pBlocked || 0)) / pAttacks : 0;
 
       const pPassCount = pPass?.attempts || 0;
       const pPassAvg = pPassCount > 0 ? pPass.sum / pPassCount : null;

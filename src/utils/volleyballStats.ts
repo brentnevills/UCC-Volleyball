@@ -53,18 +53,22 @@ export const isAttackKill = (met: string): boolean => {
 
 export const isAttackError = (met: string): boolean => {
   const m = (met || "").toLowerCase();
+  const isBlocked = m.includes("stuff") || m.includes("stuffed") || m.includes("blocked");
+  if (isBlocked) return false;
   return (
     m.includes("error") ||
     m.includes("err") ||
     m.includes("out") ||
     m.includes("net") ||
-    m.includes("stuff") ||
-    m.includes("stuffed") ||
     m.includes("antenna") ||
     m.includes("fault") ||
-    m.includes("miss") ||
-    m.includes("blocked")
+    m.includes("miss")
   );
+};
+
+export const isAttackBlocked = (met: string): boolean => {
+  const m = (met || "").toLowerCase();
+  return m.includes("stuff") || m.includes("stuffed") || m.includes("blocked");
 };
 
 export const isFrontRowAttack = (st: any): boolean => {
@@ -75,6 +79,7 @@ export const isFrontRowAttack = (st: any): boolean => {
     cat.includes("att") ||
     (cat === "error" && (met.includes("att") || isAttackError(met))) ||
     isAttackKill(met) ||
+    isAttackBlocked(met) ||
     [
       "swing",
       "swing front",

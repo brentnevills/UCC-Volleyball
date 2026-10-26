@@ -163,13 +163,15 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
           }
         }
         if (s.metric === "Kill") p.attKill += 1;
-        if (["Out", "Net", "Out/Net", "Stuffed"].includes(s.metric)) {
+        if (["Out", "Net", "Out/Net"].includes(s.metric)) {
           p.attErr += 1;
           if (s.metric === "Net") p.attErrNet += 1;
-          else if (s.metric === "Stuffed") p.attErrStuffed += 1;
           else p.attErrOut += 1;
         }
-        if (s.metric === "Blocked" || s.metric === "Stuffed") p.attBlk += 1;
+        if (s.metric === "Blocked" || s.metric === "Stuffed") {
+          p.attBlk += 1;
+          if (s.metric === "Stuffed") p.attErrStuffed += 1;
+        }
       } else if (s.category === "Serve") {
         if (s.metric === "Attempt") p.srvCount += 1;
         if (s.metric === "Ace") p.srvAce += 1;
@@ -306,7 +308,7 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
     practiceStats.players.forEach((p) => {
       const passAvg = p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "0.00";
       const killPct = p.attCount > 0 ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%" : "0.0%";
-      const hitEff = p.attCount > 0 ? ((p.attKill - p.attErr) / p.attCount).toFixed(3) : ".000";
+      const hitEff = p.attCount > 0 ? ((p.attKill - p.attErr - (p.attBlk || 0)) / p.attCount).toFixed(3) : ".000";
       const srvTot = p.srvCount + p.srvAce + p.srvErr;
       const srvPlusMinus = p.srvAce - p.srvErr;
       csv += `"${p.number}","${p.name}",${passAvg},${p.passCount},${p.p3},${p.p2},${p.p1},${p.p0},${p.attCount},${p.attFront},${p.attBack},${p.attKill},${killPct},${p.attErr},${p.attBlk},${hitEff},${srvTot},${p.srvAce},${p.srvErr},${p.srvCount},${srvPlusMinus},${p.digCount},${p.digErr},${p.blkStuff},${p.blkTouch},${p.blkFault}\n`;
@@ -325,7 +327,7 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
   const totals = practiceStats.totals;
   const totPassAvg = totals && totals.passCount > 0 ? (totals.passSum / totals.passCount).toFixed(2) : "0.00";
   const totKillPct = totals && totals.attCount > 0 ? ((totals.attKill / totals.attCount) * 100).toFixed(1) + "%" : "0.0%";
-  const totHitEff = totals && totals.attCount > 0 ? ((totals.attKill - totals.attErr) / totals.attCount).toFixed(3) : ".000";
+  const totHitEff = totals && totals.attCount > 0 ? ((totals.attKill - totals.attErr - (totals.attBlk || 0)) / totals.attCount).toFixed(3) : ".000";
   const totSrvTot = totals ? totals.srvCount + totals.srvAce + totals.srvErr : 0;
   const totSrvPlusMinus = totals ? totals.srvAce - totals.srvErr : 0;
 
@@ -585,7 +587,7 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
               {filteredPlayers.map((p, idx) => {
                 const passAvg = p.passCount > 0 ? (p.passSum / p.passCount).toFixed(2) : "-";
                 const killPct = p.attCount > 0 ? ((p.attKill / p.attCount) * 100).toFixed(1) + "%" : "0.0%";
-                const hitEff = p.attCount > 0 ? ((p.attKill - p.attErr) / p.attCount).toFixed(3) : ".000";
+                const hitEff = p.attCount > 0 ? ((p.attKill - p.attErr - (p.attBlk || 0)) / p.attCount).toFixed(3) : ".000";
                 const srvTot = p.srvCount + p.srvAce + p.srvErr;
                 const srvPlusMinus = p.srvAce - p.srvErr;
 

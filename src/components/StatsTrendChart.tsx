@@ -219,18 +219,22 @@ export const isAttackKillMetric = (met: string): boolean => {
 
 export const isAttackErrorMetric = (met: string): boolean => {
   const m = (met || "").toLowerCase();
+  const isBlocked = m.includes("stuff") || m.includes("stuffed") || m.includes("blocked");
+  if (isBlocked) return false;
   return (
     m.includes("error") ||
     m.includes("err") ||
     m.includes("out") ||
     m.includes("net") ||
-    m.includes("stuff") ||
-    m.includes("stuffed") ||
     m.includes("antenna") ||
     m.includes("fault") ||
-    m.includes("miss") ||
-    m.includes("blocked")
+    m.includes("miss")
   );
+};
+
+export const isAttackBlockedMetric = (met: string): boolean => {
+  const m = (met || "").toLowerCase();
+  return m.includes("stuff") || m.includes("stuffed") || m.includes("blocked");
 };
 
 interface RallyPoint {
@@ -472,6 +476,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       let cumulativeBackAttacks = 0;
       let cumulativeKills = 0;
       let cumulativeAttackErrors = 0;
+      let cumulativeAttackBlocked = 0;
       let cumulativeServes = 0;
       let cumulativeAces = 0;
       let cumulativeServeErrors = 0;
@@ -539,7 +544,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           const met = (st.metric || "").toLowerCase();
           const val = Number(st.value) || 1;
 
-          if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
+          if (cat === "attack" || cat.includes("att") || isAttackKillMetric(met) || isAttackBlockedMetric(met) || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
             cumulativeAttacks += val;
             const isFront = st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
             if (isFront) cumulativeFrontAttacks += val;
@@ -547,6 +552,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
             if (isAttackKillMetric(met)) {
               cumulativeKills += val;
+            } else if (isAttackBlockedMetric(met)) {
+              cumulativeAttackBlocked += val;
             } else if (isAttackErrorMetric(met)) {
               cumulativeAttackErrors += val;
             }
@@ -604,6 +611,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
             if (isAttackKillMetric(met)) {
               eventType = "kill";
               eventDescription = `Kill by #${pNum} ${pName}`;
+            } else if (isAttackBlockedMetric(met)) {
+              eventType = "neutral";
+              eventDescription = `Attack Blocked (#${pNum} ${pName})`;
             } else if (isAttackErrorMetric(met)) {
               eventType = "error";
               eventDescription = `Attack Error (${nearbyStat.metric || "Err"}) by #${pNum} ${pName}`;
@@ -621,7 +631,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         }
 
         const runKillPct = cumulativeAttacks > 0 ? cumulativeKills / cumulativeAttacks : 0;
-        const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors) / cumulativeAttacks : 0;
+        const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors - cumulativeAttackBlocked) / cumulativeAttacks : 0;
         const runAcePct = cumulativeServes > 0 ? cumulativeAces / cumulativeServes : 0;
         const runServeErrorPct = cumulativeServes > 0 ? cumulativeServeErrors / cumulativeServes : 0;
         const runPassAvg = cumulativePassCount > 0 ? cumulativePassSum / cumulativePassCount : 0;
@@ -693,6 +703,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     let cumulativeBackAttacks = 0;
     let cumulativeKills = 0;
     let cumulativeAttackErrors = 0;
+    let cumulativeAttackBlocked = 0;
     let cumulativeServes = 0;
     let cumulativeAces = 0;
     let cumulativeServeErrors = 0;
@@ -723,7 +734,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           eventType = "error";
           desc = `Service Ace by ${matchOpponentName || "Opponent"} (Aced)`;
         }
-      } else if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
+      } else if (cat === "attack" || cat.includes("att") || isAttackKillMetric(met) || isAttackBlockedMetric(met) || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
         cumulativeAttacks += val;
         const isFront = st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
         if (isFront) cumulativeFrontAttacks += val;
@@ -734,6 +745,13 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           pointAwardedTo = "ucc";
           eventType = "kill";
           desc = `Kill by #${pNum} ${pName}`;
+        } else if (isAttackBlockedMetric(met)) {
+          cumulativeAttackBlocked += val;
+          if (met.includes("stuff") || met.includes("stuffed")) {
+            pointAwardedTo = "opp";
+            eventType = "point";
+            desc = `Attack Stuffed / Blocked (${st.metric || "Blocked"}) by Opponent`;
+          }
         } else if (isAttackErrorMetric(met)) {
           cumulativeAttackErrors += val;
           pointAwardedTo = "opp";
@@ -789,7 +807,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         }
 
         const runKillPct = cumulativeAttacks > 0 ? cumulativeKills / cumulativeAttacks : 0;
-        const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors) / cumulativeAttacks : 0;
+        const runEff = cumulativeAttacks > 0 ? (cumulativeKills - cumulativeAttackErrors - cumulativeAttackBlocked) / cumulativeAttacks : 0;
         const runAcePct = cumulativeServes > 0 ? cumulativeAces / cumulativeServes : 0;
         const runServeErrorPct = cumulativeServes > 0 ? cumulativeServeErrors / cumulativeServes : 0;
         const runPassAvg = cumulativePassCount > 0 ? cumulativePassSum / cumulativePassCount : 0;
@@ -1147,6 +1165,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
       let kills = 0;
       let attackErrors = 0;
+      let blockedAttacks = 0;
       let totalAttacks = 0;
       let frontAttacks = 0;
       let backAttacks = 0;
@@ -1167,7 +1186,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         const met = (st.metric || "").toLowerCase();
         const val = Number(st.value) || 1;
 
-        if (cat === "attack" || cat.includes("att") || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
+        if (cat === "attack" || cat.includes("att") || isAttackKillMetric(met) || isAttackBlockedMetric(met) || (cat === "error" && (met.includes("att") || isAttackErrorMetric(met)))) {
           totalAttacks += val;
           const isFront = st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
           if (isFront) frontAttacks += val;
@@ -1176,6 +1195,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           if (isAttackKillMetric(met)) {
             kills += val;
             pointsScored += val;
+          } else if (isAttackBlockedMetric(met)) {
+            blockedAttacks += val;
           } else if (isAttackErrorMetric(met)) {
             attackErrors += val;
           }
@@ -1219,7 +1240,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       }
 
       const killPct = totalAttacks > 0 ? kills / totalAttacks : 0;
-      const hittingEff = totalAttacks > 0 ? (kills - attackErrors) / totalAttacks : 0;
+      const hittingEff = totalAttacks > 0 ? (kills - attackErrors - blockedAttacks) / totalAttacks : 0;
       const frontSetPct = totalAttacks > 0 ? frontAttacks / totalAttacks : 0;
       const inSystemPct = passCount > 0 ? (pass3 + pass2) / passCount : 0;
       const outOfSystemPct = passCount > 0 ? (pass1 + pass0) / passCount : 0;
@@ -1426,7 +1447,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       .filter((p) => p.totalSwings > 0)
       .map((p) => {
         const killPct = p.totalSwings > 0 ? (p.kills / p.totalSwings) * 100 : 0;
-        const efficiency = p.totalSwings > 0 ? (p.kills - p.errors) / p.totalSwings : 0;
+        const efficiency = p.totalSwings > 0 ? (p.kills - p.errors - (p.blocked || 0)) / p.totalSwings : 0;
         const frInfo = frDistMap.get(p.id);
         const teamFrontWhileInFront = frInfo ? frInfo.teamFrontSwingsWhileInFront : (p.frontSwings || 0);
         const frontSetDistPct = frInfo ? frInfo.frontRowSetDistPct : 0;
@@ -1441,7 +1462,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
       .sort((a, b) => b.totalSwings - a.totalSwings);
 
     const teamKillPct = teamTotalSwings > 0 ? (teamKills / teamTotalSwings) * 100 : 0;
-    const teamEfficiency = teamTotalSwings > 0 ? (teamKills - teamErrors) / teamTotalSwings : 0;
+    const teamEfficiency = teamTotalSwings > 0 ? (teamKills - teamErrors - (teamBlocked || 0)) / teamTotalSwings : 0;
     const teamFrontPct = teamTotalSwings > 0 ? (teamFrontSwings / teamTotalSwings) * 100 : 0;
     const teamBackPct = teamTotalSwings > 0 ? (teamBackSwings / teamTotalSwings) * 100 : 0;
 

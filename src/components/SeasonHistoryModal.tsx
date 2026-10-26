@@ -20,6 +20,7 @@ import {
   Award,
   Play,
   RotateCcw,
+  Upload,
 } from "lucide-react";
 
 export interface SeasonHistoryModalProps {
@@ -33,6 +34,8 @@ export interface SeasonHistoryModalProps {
   onSelectMatch: (match: any) => void;
   onEditSetScore?: (set: any, match: any) => void;
   onStartNewMatch?: () => void;
+  onSyncWithCloud?: () => void;
+  isSyncingWithCloud?: boolean;
 }
 
 export const SeasonHistoryModal: React.FC<SeasonHistoryModalProps> = ({
@@ -46,6 +49,8 @@ export const SeasonHistoryModal: React.FC<SeasonHistoryModalProps> = ({
   onSelectMatch,
   onEditSetScore,
   onStartNewMatch,
+  onSyncWithCloud,
+  isSyncingWithCloud = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterOutcome, setFilterOutcome] = useState<"all" | "wins" | "losses" | "tournaments" | "scrimmages">("all");
@@ -345,6 +350,18 @@ export const SeasonHistoryModal: React.FC<SeasonHistoryModalProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {onSyncWithCloud && (
+              <button
+                type="button"
+                onClick={onSyncWithCloud}
+                disabled={isSyncingWithCloud}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
+                title="Upload all offline games, sets, and stats to the cloud"
+              >
+                <Upload size={14} className={isSyncingWithCloud ? "animate-bounce" : ""} />
+                <span>{isSyncingWithCloud ? "Syncing..." : "Sync to Cloud"}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={copySeasonReport}

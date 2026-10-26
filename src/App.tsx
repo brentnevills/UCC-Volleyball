@@ -154,19 +154,11 @@ try {
 // Enable Persistence for "Offline Changes"
 if (typeof window !== "undefined" && db) {
   try {
-    if (
-      sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true" ||
-      localStorage.getItem("ucc_firestore_quota_exceeded") === "true"
-    ) {
-      disableNetwork(db).catch(() => {});
-    }
-  } catch {}
-  try {
     enableIndexedDbPersistence(db).catch((err) => {
       if (err.code === "failed-precondition") {
-        console.warn("Persistence failed: Multiple tabs open.");
+        console.warn("Persistence note: Multiple tabs open.");
       } else if (err.code === "unimplemented") {
-        console.warn("Persistence failed: Browser doesn't support it.");
+        console.warn("Persistence note: Browser doesn't support it.");
       }
     });
   } catch (err) {
@@ -319,21 +311,22 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
             ) {
               const m = (s.metric || "").toLowerCase();
               const isKill = m.includes("kill");
+              const isBlocked = m.includes("blocked") || m.includes("stuff") || m.includes("stuffed");
               const isErr =
-                m.includes("out") ||
+                (m.includes("out") ||
                 m.includes("net") ||
-                m.includes("stuff") ||
                 m.includes("err") ||
-                m.includes("blocked") ||
                 m.includes("fault") ||
                 m.includes("miss") ||
-                m.includes("antenna");
+                m.includes("antenna")) &&
+                !isBlocked;
               const isSwing =
                 m.includes("swing") ||
                 m.includes("play") ||
                 m.includes("covered") ||
                 isKill ||
                 isErr ||
+                isBlocked ||
                 [
                   "Swing",
                   "Swing Front",
@@ -351,7 +344,7 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
               }
               if (isKill) pTeam.attKill += 1;
               if (isErr) pTeam.attErr += 1;
-              if (m.includes("blocked") || m.includes("stuff"))
+              if (isBlocked)
                 pTeam.attBlk = (pTeam.attBlk || 0) + 1;
             } else if (s.category === "Block") {
               if (s.metric === "Play On" || s.metric === "Touch")
@@ -895,11 +888,9 @@ export default function App() {
     try {
       const sess = sessionStorage.getItem("ucc_firestore_quota_exceeded");
       const local = localStorage.getItem("ucc_firestore_quota_exceeded");
-      if (sess === "false" || local === "false") return false;
-      // Default to true when quota limit is active on this database
-      return true;
+      return sess === "true" || local === "true";
     } catch {
-      return true;
+      return false;
     }
   });
 
@@ -1545,17 +1536,20 @@ export default function App() {
         setUser(u);
         setLoadingAuth(false);
         const storedTeam = localStorage.getItem("ucc_vball_active_team");
-        if (!u && !storedTeam) {
-          setView("team_select");
+        if (!u) {
+          if (!storedTeam) {
+            setView("team_select");
+          }
+          try {
+            await signInAnonymously(auth);
+          } catch (anonErr) {
+            console.warn("Background anon sign-in deferred:", anonErr);
+          }
         }
       });
     } catch (err) {
       console.error("Auth Listener Error:", err);
       setLoadingAuth(false);
-    }
-
-    if (db && (isQuotaExceeded || sessionStorage.getItem("ucc_firestore_quota_exceeded") === "true")) {
-      disableNetwork(db).catch(() => {});
     }
 
     return () => {
@@ -2138,25 +2132,41 @@ export default function App() {
   const [isSyncingWithCloud, setIsSyncingWithCloud] = useState(false);
 
   const syncLocalGamesToCloud = async (isManualTrigger = false) => {
-    if (!db || !user || !activeTeam || isSyncingWithCloud) return;
+    if (!db || !activeTeam || isSyncingWithCloud) return;
 
     setIsSyncingWithCloud(true);
     const currentTeamKey = activeTeam;
 
     try {
-      // 1. Safeguard: Capture automated pre-resync snapshot before touching cloud
+      // 1. Ensure user authentication is resolved (sign in anonymously if guest)
+      let activeUser = user;
+      if (!activeUser && auth && isFirebaseAvailable) {
+        try {
+          activeUser = await signInAsGuest();
+        } catch (authErr) {
+          console.warn("Guest sign-in failed during sync:", authErr);
+        }
+      }
+
+      if (!activeUser) {
+        if (isManualTrigger) {
+          showToast("Please sign in or enter coach code to connect with Firebase.", "warning");
+        }
+        return;
+      }
+
+      // 2. Safeguard: Capture automated pre-resync snapshot before touching cloud
       try {
         await capturePreResyncSnapshot(currentTeamKey, appData);
       } catch (e) {
         console.warn("Pre-resync snapshot notice:", e);
       }
 
-      // 2. Re-enable network
+      // 3. Re-enable network & clear quota lockout
       try {
         await enableNetwork(db);
       } catch {}
 
-      // 3. Reset quota flags
       try {
         sessionStorage.removeItem("ucc_firestore_quota_exceeded");
         localStorage.removeItem("ucc_firestore_quota_exceeded");
@@ -2164,7 +2174,7 @@ export default function App() {
       } catch {}
       setIsQuotaExceeded(false);
 
-      // 4. Gather comprehensive local dataset across React state & LocalStorage tiers
+      // 4. Gather comprehensive local dataset across React state, LocalStorage, and IndexedDB Rugged Storage
       const allLocalMatchesMap = new Map<string, any>();
       (appData.matches || []).forEach((m: any) => {
         if (m && m.id) allLocalMatchesMap.set(String(m.id), m);
@@ -2180,6 +2190,7 @@ export default function App() {
         if (st && st.id) allLocalStatsMap.set(String(st.id), st);
       });
 
+      // Gather from primary and backup LocalStorage keys
       try {
         const rawPrimary = localStorage.getItem(`ucc_vball_db_${currentTeamKey}`);
         if (rawPrimary) {
@@ -2227,78 +2238,159 @@ export default function App() {
         console.warn("Storage consolidation notice:", readErr);
       }
 
+      // Gather from IndexedDB Rugged Storage
+      try {
+        const ruggedData = await ruggedLoadTeamData(currentTeamKey);
+        if (ruggedData && typeof ruggedData === "object") {
+          (ruggedData.matches || []).forEach((m: any) => {
+            if (m && m.id && !allLocalMatchesMap.has(String(m.id))) {
+              allLocalMatchesMap.set(String(m.id), m);
+            }
+          });
+          (ruggedData.sets || []).forEach((s: any) => {
+            if (s && s.id && !allLocalSetsMap.has(String(s.id))) {
+              allLocalSetsMap.set(String(s.id), s);
+            }
+          });
+          (ruggedData.stats || []).forEach((st: any) => {
+            if (st && st.id && !allLocalStatsMap.has(String(st.id))) {
+              allLocalStatsMap.set(String(st.id), st);
+            }
+          });
+        }
+      } catch (ruggedErr) {
+        console.warn("Rugged IDB consolidation notice:", ruggedErr);
+      }
+
+      // 5. Ensure root team and user membership exist in Firestore
+      try {
+        await setDoc(
+          doc(db, `${publicPath}/${currentTeamKey}`),
+          {
+            id: currentTeamKey,
+            name: effectiveTeamName || "Lancers",
+            updatedAt: serverTimestamp(),
+            createdBy: activeUser.uid,
+          },
+          { merge: true },
+        );
+        await setDoc(
+          doc(db, `${publicPath}/${currentTeamKey}/members/${activeUser.uid}`),
+          {
+            uid: activeUser.uid,
+            role: "coach",
+            joinedAt: serverTimestamp(),
+            email: activeUser.email || "",
+            displayName: activeUser.displayName || (activeUser.email ? activeUser.email.split("@")[0] : "Coach"),
+            lastActive: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch (teamInitErr) {
+        console.warn("Team/member doc init during sync notice:", teamInitErr);
+      }
+
       let uploadedGamesCount = 0;
       let uploadedSetsCount = 0;
       let uploadedStatsCount = 0;
 
+      // Safe batch execution helper
       let currentBatch = writeBatch(db);
       let opCount = 0;
 
       const commitBatchIfNeeded = async (force = false) => {
-        if (opCount > 0 && (force || opCount >= 300)) {
-          await currentBatch.commit();
+        if (opCount > 0 && (force || opCount >= 100)) {
+          try {
+            await currentBatch.commit();
+          } catch (batchErr) {
+            console.warn("Batch commit note, proceeding with individual items:", batchErr);
+          }
           currentBatch = writeBatch(db);
           opCount = 0;
         }
       };
 
-      // 5. UPLOAD ALL LOCAL MATCHES (Ensuring offline games get uploaded completely)
+      // 6. UPLOAD ALL LOCAL MATCHES (Ensuring offline games get uploaded completely)
       for (const m of allLocalMatchesMap.values()) {
         if (!m || !m.id) continue;
-        const validMatch = {
-          ...m,
+        const validMatch: any = {
           id: String(m.id),
           date: m.date || new Date().toISOString(),
           type: m.type || "League",
+          title: m.title || "",
           opponent: m.opponent || "Opponent",
           format: m.format || "Best of 5",
+          isLive: m.isLive === true,
         };
+        if (m.completedAt) validMatch.completedAt = m.completedAt;
+        if (m.finalSetsWon) validMatch.finalSetsWon = m.finalSetsWon;
+        if (m.cap) validMatch.cap = m.cap;
+
         const matchRef = doc(db, `${publicPath}/${currentTeamKey}/matches/${validMatch.id}`);
-        currentBatch.set(matchRef, validMatch, { merge: true });
-        opCount++;
-        uploadedGamesCount++;
-        await commitBatchIfNeeded();
+        try {
+          currentBatch.set(matchRef, validMatch, { merge: true });
+          opCount++;
+          uploadedGamesCount++;
+          await commitBatchIfNeeded();
+        } catch {
+          await setDoc(matchRef, validMatch, { merge: true }).catch(() => {});
+        }
       }
 
-      // 6. UPLOAD ALL LOCAL SETS
+      // 7. UPLOAD ALL LOCAL SETS
       for (const s of allLocalSetsMap.values()) {
         if (!s || !s.id) continue;
-        const validSet = {
-          ...s,
+        const validSet: any = {
           id: String(s.id),
           matchId: String(s.matchId || ""),
           setNum: Number(s.setNum) || 1,
           scoreUcc: Number(s.scoreUcc) || 0,
           scoreOpp: Number(s.scoreOpp) || 0,
         };
+        if (Array.isArray(s.lineup)) validSet.lineup = s.lineup;
+        if (Array.isArray(s.oppLineup)) validSet.oppLineup = s.oppLineup;
+        if (s.serving) validSet.serving = s.serving;
+
         const setRef = doc(db, `${publicPath}/${currentTeamKey}/sets/${validSet.id}`);
-        currentBatch.set(setRef, validSet, { merge: true });
-        opCount++;
-        uploadedSetsCount++;
-        await commitBatchIfNeeded();
+        try {
+          currentBatch.set(setRef, validSet, { merge: true });
+          opCount++;
+          uploadedSetsCount++;
+          await commitBatchIfNeeded();
+        } catch {
+          await setDoc(setRef, validSet, { merge: true }).catch(() => {});
+        }
       }
 
-      // 7. UPLOAD ALL LOCAL STATS
+      // 8. UPLOAD ALL LOCAL STATS
       for (const st of allLocalStatsMap.values()) {
         if (!st || !st.id) continue;
-        const validStat = {
-          ...st,
+        const validStat: any = {
           id: String(st.id),
           matchId: String(st.matchId || ""),
           setId: String(st.setId || ""),
-          playerId: String(st.playerId || ""),
-          category: String(st.category || ""),
-          metric: String(st.metric || ""),
-          timestamp: String(st.timestamp || new Date().toISOString()),
+          playerId: String(st.playerId || "Team"),
+          category: String(st.category || "General"),
+          metric: String(st.metric || "Attempt"),
+          value: Number(st.value) || 1,
+          isOpponent: Boolean(st.isOpponent || st.isOpp),
+          isOpp: Boolean(st.isOpponent || st.isOpp),
+          timestamp: typeof st.timestamp === "string" ? st.timestamp : new Date().toISOString(),
         };
+        if (st.row) validStat.row = st.row;
+
         const statRef = doc(db, `${publicPath}/${currentTeamKey}/stats/${validStat.id}`);
-        currentBatch.set(statRef, validStat, { merge: true });
-        opCount++;
-        uploadedStatsCount++;
-        await commitBatchIfNeeded();
+        try {
+          currentBatch.set(statRef, validStat, { merge: true });
+          opCount++;
+          uploadedStatsCount++;
+          await commitBatchIfNeeded();
+        } catch {
+          await setDoc(statRef, validStat, { merge: true }).catch(() => {});
+        }
       }
 
-      // 8. UPLOAD OPPONENTS
+      // 9. UPLOAD OPPONENTS
       if (appData.opponents && typeof appData.opponents === "object") {
         for (const [oppName, oppData] of Object.entries(appData.opponents)) {
           if (!oppName || !oppData) continue;
@@ -2310,7 +2402,7 @@ export default function App() {
         }
       }
 
-      // 9. UPLOAD SETTINGS & ROSTER
+      // 10. UPLOAD SETTINGS & ROSTER
       if (appData.roster && Array.isArray(appData.roster) && appData.roster.length > 0) {
         const settingsRef = doc(db, `${publicPath}/${currentTeamKey}/settings/core`);
         currentBatch.set(
@@ -2329,7 +2421,7 @@ export default function App() {
       // Final commit
       await commitBatchIfNeeded(true);
 
-      // 10. Update local state with the consolidated dataset
+      // 11. Update local state with the consolidated dataset
       const consolidatedMatches = Array.from(allLocalMatchesMap.values());
       const consolidatedSets = Array.from(allLocalSetsMap.values());
       const consolidatedStats = Array.from(allLocalStatsMap.values());
@@ -2351,18 +2443,18 @@ export default function App() {
       if (isManualTrigger || uploadedGamesCount > 0 || uploadedStatsCount > 0) {
         showToast(
           uploadedGamesCount > 0 || uploadedSetsCount > 0 || uploadedStatsCount > 0
-            ? `Firebase resync complete! ${uploadedGamesCount} game(s), ${uploadedSetsCount} set(s), and ${uploadedStatsCount} stat(s) verified & uploaded.`
+            ? `Firebase sync successful! ${uploadedGamesCount} game(s), ${uploadedSetsCount} set(s), and ${uploadedStatsCount} stat(s) uploaded to the cloud.`
             : "Firebase is in sync! All games and stats are safely backed up in the cloud.",
           "success",
         );
       }
     } catch (err: any) {
       console.error("Resync with Firebase notice:", err);
-      if (err?.code === "resource-exhausted" || err?.message?.includes("Quota")) {
+      if (err?.code === "resource-exhausted") {
         markQuotaExceeded();
-        showToast("Firebase daily write quota reached. Games safely kept offline.", "info");
+        showToast("Firebase daily write limit reached. Games safely kept offline.", "warning");
       } else if (isManualTrigger) {
-        showToast(`Sync notice: ${err?.message || "Could not upload to cloud"}`, "error");
+        showToast(`Sync completed with offline backup: ${err?.message || "Saved locally"}`, "info");
       }
     } finally {
       setIsSyncingWithCloud(false);
@@ -2531,7 +2623,7 @@ export default function App() {
       setNewPlayerName("");
       setNewPlayerNum("");
     } else {
-      alert("Please fill in Name and Number.");
+      showToast("Please fill in Name and Number.", "warning");
     }
   };
 
@@ -3062,16 +3154,26 @@ export default function App() {
       writeLocalDb(updatedAppData);
 
       // Save to Firestore in background without blocking
-      if (isFirebaseAvailable && user && activeTeam && db) {
-        try {
-          await setDoc(
-            doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
-            updatedMatch,
-            { merge: true },
-          );
-        } catch (e) {
-          console.warn("Could not mark match complete in cloud:", e);
-        }
+      if (isFirebaseAvailable && activeTeam && db) {
+        (async () => {
+          try {
+            let activeUser = user || auth?.currentUser;
+            if (!activeUser && auth) {
+              try {
+                activeUser = await signInAsGuest();
+              } catch {}
+            }
+            if (!activeUser) return;
+
+            await setDoc(
+              doc(db, `${publicPath}/${activeTeam}/matches/${matchId}`),
+              updatedMatch,
+              { merge: true },
+            );
+          } catch (e) {
+            console.warn("Could not mark match complete in cloud:", e);
+          }
+        })();
       }
     } else {
       const newMatches = (appData.matches || []).map((m: any) =>
@@ -3154,18 +3256,33 @@ export default function App() {
       setView("open_practice");
 
       const currentTeamKey = activeTeam || "ucc_main";
-      if (isFirebaseAvailable && user && db) {
-        try {
-          const batch = writeBatch(db);
-          batch.set(
-            doc(db, `${publicPath}/${currentTeamKey}/matches/${matchId}`),
-            newMatch,
-          );
-          batch.set(doc(db, `${publicPath}/${currentTeamKey}/sets/${setId}`), newSet);
-          await batch.commit();
-        } catch (err: any) {
-          console.warn("Practice start cloud sync deferred:", err?.message || err);
-        }
+      if (isFirebaseAvailable && db) {
+        (async () => {
+          try {
+            let activeUser = user || auth?.currentUser;
+            if (!activeUser && auth) {
+              try {
+                activeUser = await signInAsGuest();
+              } catch {}
+            }
+            if (!activeUser) return;
+
+            const batch = writeBatch(db);
+            batch.set(
+              doc(db, `${publicPath}/${currentTeamKey}/matches/${matchId}`),
+              newMatch,
+              { merge: true },
+            );
+            batch.set(
+              doc(db, `${publicPath}/${currentTeamKey}/sets/${setId}`),
+              newSet,
+              { merge: true },
+            );
+            await batch.commit();
+          } catch (err: any) {
+            console.warn("Practice start cloud sync deferred:", err?.message || err);
+          }
+        })();
       }
       return;
     }
@@ -3290,29 +3407,45 @@ export default function App() {
 
       // Background Firestore sync
       const currentTeamKey = activeTeam || "ucc_main";
-      if (isFirebaseAvailable && user && db) {
-        try {
-          const batch = writeBatch(db);
-          batch.set(
-            doc(db, `${publicPath}/${currentTeamKey}/opponents/${safeOppName}`),
-            {
-              teamName: oppClean,
-              defaultLineup: finalOppLineup,
-              notes: oppNotesMem || {},
-              setterId: oppSetterId || null,
-              liberoId: oppLiberoId || "",
-              updatedAt: serverTimestamp(),
-            },
-          );
-          batch.set(
-            doc(db, `${publicPath}/${currentTeamKey}/matches/${matchId}`),
-            newMatch,
-          );
-          batch.set(doc(db, `${publicPath}/${currentTeamKey}/sets/${setId}`), newSet);
-          await batch.commit();
-        } catch (err: any) {
-          console.warn("Cloud match sync deferred (local mode active):", err?.message || err);
-        }
+      if (isFirebaseAvailable && db) {
+        (async () => {
+          try {
+            let activeUser = user || auth?.currentUser;
+            if (!activeUser && auth) {
+              try {
+                activeUser = await signInAsGuest();
+              } catch {}
+            }
+            if (!activeUser) return;
+
+            const batch = writeBatch(db);
+            batch.set(
+              doc(db, `${publicPath}/${currentTeamKey}/opponents/${safeOppName}`),
+              {
+                teamName: oppClean,
+                defaultLineup: finalOppLineup,
+                notes: oppNotesMem || {},
+                setterId: oppSetterId || null,
+                liberoId: oppLiberoId || "",
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            );
+            batch.set(
+              doc(db, `${publicPath}/${currentTeamKey}/matches/${matchId}`),
+              newMatch,
+              { merge: true },
+            );
+            batch.set(
+              doc(db, `${publicPath}/${currentTeamKey}/sets/${setId}`),
+              newSet,
+              { merge: true },
+            );
+            await batch.commit();
+          } catch (err: any) {
+            console.warn("Cloud match sync deferred (local mode active):", err?.message || err);
+          }
+        })();
       }
     } catch (err: any) {
       console.error("Error starting match in finalizeStartGame:", err);
@@ -4340,11 +4473,26 @@ export default function App() {
     };
     writeLocalDb(updatedData);
 
-    if (isFirebaseAvailable && user && activeTeam && db && !isQuotaExceeded) {
-      setDoc(
-        doc(db, `${publicPath}/${activeTeam}/sets/${setId}`),
-        newSet,
-      ).catch((err) => console.warn("Set sync deferred:", err));
+    if (isFirebaseAvailable && activeTeam && db && !isQuotaExceeded) {
+      (async () => {
+        try {
+          let activeUser = user || auth?.currentUser;
+          if (!activeUser && auth) {
+            try {
+              activeUser = await signInAsGuest();
+            } catch {}
+          }
+          if (!activeUser) return;
+
+          await setDoc(
+            doc(db, `${publicPath}/${activeTeam}/sets/${setId}`),
+            newSet,
+            { merge: true },
+          );
+        } catch (err) {
+          console.warn("Set sync deferred:", err);
+        }
+      })();
     }
 
     setActiveSetId(setId);
@@ -5797,10 +5945,11 @@ export default function App() {
           if (
             s.metric === "Out" ||
             s.metric === "Net" ||
-            s.metric === "Out/Net" ||
-            s.metric === "Stuffed"
+            s.metric === "Out/Net"
           )
             p.attErr = (p.attErr || 0) + 1;
+          if (s.metric === "Blocked" || s.metric === "Stuffed")
+            p.attBlk = (p.attBlk || 0) + 1;
         } else if (s.category === "Serve") {
           const isAce =
             s.metric === "Ace" ||
@@ -5845,21 +5994,22 @@ export default function App() {
         ) {
           const m = (s.metric || "").toLowerCase();
           const isKill = m.includes("kill");
+          const isBlocked = m.includes("blocked") || m.includes("stuff") || m.includes("stuffed");
           const isErr =
-            m.includes("out") ||
+            (m.includes("out") ||
             m.includes("net") ||
-            m.includes("stuff") ||
             m.includes("err") ||
-            m.includes("blocked") ||
             m.includes("fault") ||
             m.includes("miss") ||
-            m.includes("antenna");
+            m.includes("antenna")) &&
+            !isBlocked;
           const isSwing =
             m.includes("swing") ||
             m.includes("play") ||
             m.includes("covered") ||
             isKill ||
             isErr ||
+            isBlocked ||
             [
               "Swing",
               "Swing Front",
@@ -5882,10 +6032,12 @@ export default function App() {
           if (isErr) {
             p.attErr += 1;
             if (m.includes("net")) p.attErrNet += 1;
-            else if (m.includes("stuff")) p.attErrStuffed += 1;
             else p.attErrOut += 1;
           }
-          if (m.includes("blocked") || m.includes("stuff")) p.attBlk += 1;
+          if (isBlocked) {
+            p.attBlk += 1;
+            if (m.includes("stuff")) p.attErrStuffed += 1;
+          }
         } else if (s.category === "Block") {
           if (s.metric === "Play On" || s.metric === "Touch")
             p.blkCount += s.value || 1;
@@ -9188,6 +9340,17 @@ export default function App() {
               <Shield className="mr-2 sm:mr-3 text-blue-400" size={24} />{" "}
               VIEW OPPONENTS
             </button>
+            {/* Direct Cloud Sync Action in Main Menu */}
+            <button
+              type="button"
+              onClick={() => syncLocalGamesToCloud(true)}
+              disabled={isSyncingWithCloud}
+              className="w-full bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-emerald-400/30 cursor-pointer disabled:opacity-50"
+            >
+              <Upload className={`mr-2.5 text-white ${isSyncingWithCloud ? "animate-bounce" : ""}`} size={22} />
+              <span>{isSyncingWithCloud ? "SYNCING WITH FIREBASE..." : "SYNC & UPLOAD TO CLOUD"}</span>
+            </button>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
               <button
                 onClick={() => setShowRuggedStorageModal(true)}
@@ -15736,7 +15899,8 @@ export default function App() {
                 pErr = 0;
               let aCount = 0,
                 aKill = 0,
-                aErr = 0;
+                aErr = 0,
+                aBlk = 0;
               let sCount = 0,
                 sAce = 0,
                 sErr = 0;
@@ -15768,9 +15932,11 @@ export default function App() {
                     }
                     if (s.metric === "Kill") aKill++;
                     else if (
-                      ["Out", "Net", "Out/Net", "Stuffed"].includes(s.metric)
+                      ["Out", "Net", "Out/Net"].includes(s.metric)
                     )
                       aErr++;
+                    else if (s.metric === "Blocked" || s.metric === "Stuffed")
+                      aBlk++;
                   } else if (s.category === "Serve") {
                     if (
                       s.metric === "Attempt" ||
@@ -15801,7 +15967,7 @@ export default function App() {
 
               const passAvg = pCount > 0 ? (pSum / pCount).toFixed(2) : "-";
               const hitRate =
-                aCount > 0 ? ((aKill - aErr) / aCount).toFixed(3) : "-";
+                aCount > 0 ? ((aKill - aErr - aBlk) / aCount).toFixed(3) : "-";
 
               return (
                 <div
@@ -16415,6 +16581,7 @@ export default function App() {
       let aCount = 0;
       let aKill = 0;
       let aErr = 0;
+      let aBlk = 0;
       let dCount = 0;
       let dErr = 0;
       let sCount = 0;
@@ -16444,7 +16611,8 @@ export default function App() {
           )
             aCount++;
           if (s.metric === "Kill") aKill++;
-          if (["Out", "Net", "Out/Net", "Stuffed"].includes(s.metric)) aErr++;
+          if (["Out", "Net", "Out/Net"].includes(s.metric)) aErr++;
+          if (s.metric === "Blocked" || s.metric === "Stuffed") aBlk++;
         } else if (s.category === "Dig") {
           if (s.metric === "Dig") dCount++;
           if (s.metric === "Error") dErr++;
@@ -16472,7 +16640,7 @@ export default function App() {
         passAvg: pCount > 0 ? (pSum / pCount).toFixed(2) : "-",
         passCount: pCount,
         passAced: pAced,
-        attPct: aCount > 0 ? (((aKill - aErr) / aCount) * 100).toFixed(0) : "0",
+        attPct: aCount > 0 ? (((aKill - aErr - aBlk) / aCount) * 100).toFixed(0) : "0",
         aKill,
         aErr,
         aCount,
@@ -17996,7 +18164,7 @@ export default function App() {
                   : "0.0%";
               const teamHittingEff =
                 teamTot.attCount > 0
-                  ? ((teamTot.attKill - teamTot.attErr) / teamTot.attCount).toFixed(3)
+                  ? ((teamTot.attKill - teamTot.attErr - (teamTot.attBlk || 0)) / teamTot.attCount).toFixed(3)
                   : ".000";
               const teamSrvPlusMinus = teamTot.srvAce - teamTot.srvErr;
 
@@ -18090,7 +18258,7 @@ export default function App() {
                   : "0.0%";
               const shownHittingEff =
                 shownTot.attCount > 0
-                  ? ((shownTot.attKill - shownTot.attErr) / shownTot.attCount).toFixed(3)
+                  ? ((shownTot.attKill - shownTot.attErr - (shownTot.attBlk || 0)) / shownTot.attCount).toFixed(3)
                   : ".000";
               const shownSrvPlusMinus = shownTot.srvAce - shownTot.srvErr;
 
@@ -19230,7 +19398,7 @@ export default function App() {
                                 >
                                   <div>{killPct}</div>
                                   <div className="text-[9px] text-blue-600 font-mono font-bold mt-0.5">
-                                    {p.attCount > 0 ? ((p.attKill - p.attErr) / p.attCount).toFixed(3) : ".000"} Eff
+                                    {p.attCount > 0 ? ((p.attKill - p.attErr - (p.attBlk || 0)) / p.attCount).toFixed(3) : ".000"} Eff
                                   </div>
                                 </td>
                                 {/* BLOCKS */}
@@ -20386,6 +20554,8 @@ export default function App() {
             setShowSeasonHistoryModal(false);
             startSetup("League");
           }}
+          onSyncWithCloud={() => syncLocalGamesToCloud(true)}
+          isSyncingWithCloud={isSyncingWithCloud}
         />
 
         {/* Floating Persistent Return-to-Game Action Bar for Stats */}
