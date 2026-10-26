@@ -159,10 +159,10 @@ export const StatSpreadsheetEditor: React.FC<StatSpreadsheetEditorProps> = ({
         else colKey = "pass2";
       } else if (s.category === "Dig") {
         if (s.metric === "Dig") colKey = "digCount";
-        else if (s.metric === "Error") colKey = "digErr";
+        else if (s.metric === "Error" || s.metric === "Ball Handling Error" || s.metric === "BHE" || (s.metric && s.metric.toLowerCase().includes("handling"))) colKey = "digErr";
       } else if (s.category === "Attack") {
         if (s.metric === "Kill") colKey = "attKill";
-        else if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Error") colKey = "attErr";
+        else if (s.metric === "Out" || s.metric === "Net" || s.metric === "Out/Net" || s.metric === "Error" || s.metric === "Ball Handling Error" || s.metric === "BHE" || (s.metric && s.metric.toLowerCase().includes("handling"))) colKey = "attErr";
         else if (s.metric === "Blocked" || s.metric === "Stuffed") colKey = "attBlk";
         else colKey = "attInPlay";
       } else if (s.category === "Block") {

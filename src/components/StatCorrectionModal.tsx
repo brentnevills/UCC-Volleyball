@@ -204,7 +204,7 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
       if (s.category === "Attack") {
         swings++;
         if (s.metric === "Kill") kills++;
-        else if (["Out", "Net", "Stuffed"].includes(s.metric)) attackErrors++;
+        else if (["Out", "Net", "Stuffed", "Ball Handling Error", "BHE"].includes(s.metric) || (s.metric && s.metric.toLowerCase().includes("handling"))) attackErrors++;
       } else if (s.category === "Serve") {
         if (s.metric === "Ace") aces++;
         else if (typeof s.metric === "string" && s.metric.startsWith("Miss")) serveErrors++;
@@ -600,6 +600,7 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                       <option value="Net">Net</option>
                       <option value="Blocked">Blocked</option>
                       <option value="Stuffed">Stuffed</option>
+                      <option value="Ball Handling Error">Ball Handling Error (BHE)</option>
                     </select>
                     <select
                       value={newRow}
@@ -631,7 +632,8 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                     className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold text-slate-800"
                   >
                     <option value="Dig">Successful Dig</option>
-                    <option value="Error">Dig Error</option>
+                    <option value="Error">Dig Error (Touch)</option>
+                    <option value="Ball Handling Error">Ball Handling Error (BHE)</option>
                   </select>
                 ) : (
                   <select
@@ -918,6 +920,7 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                               <option value="Net">Net</option>
                               <option value="Blocked">Blocked</option>
                               <option value="Stuffed">Stuffed</option>
+                              <option value="Ball Handling Error">Ball Handling Error (BHE)</option>
                             </select>
                             <select
                               value={editRow}
@@ -928,6 +931,16 @@ export const StatCorrectionModal: React.FC<StatCorrectionModalProps> = ({
                               <option value="Back">Back</option>
                             </select>
                           </div>
+                        ) : editCategory === "Dig" ? (
+                          <select
+                            value={editMetric}
+                            onChange={(e) => setEditMetric(e.target.value)}
+                            className="w-full bg-white border border-slate-300 rounded p-1.5 text-xs font-bold"
+                          >
+                            <option value="Dig">Successful Dig</option>
+                            <option value="Error">Dig Error (Touch)</option>
+                            <option value="Ball Handling Error">Ball Handling Error (BHE)</option>
+                          </select>
                         ) : (
                           <input
                             type="text"

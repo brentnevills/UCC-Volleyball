@@ -62,7 +62,11 @@ export const isAttackError = (met: string): boolean => {
     m.includes("net") ||
     m.includes("antenna") ||
     m.includes("fault") ||
-    m.includes("miss")
+    m.includes("miss") ||
+    m.includes("handling") ||
+    m.includes("bhe") ||
+    m.includes("lift") ||
+    m.includes("double")
   );
 };
 
@@ -90,7 +94,10 @@ export const isFrontRowAttack = (st: any): boolean => {
       "out/net",
       "blocked",
       "stuffed",
-    ].includes(met);
+      "ball handling error",
+      "bhe",
+    ].includes(met) ||
+    met.includes("handling");
   if (!isSwing) return false;
   return st.row === "Front" || met.includes("front") || (!st.row && st.row !== "Back");
 };

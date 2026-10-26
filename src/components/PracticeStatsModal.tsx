@@ -148,7 +148,10 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
             "Net",
             "Out/Net",
             "Kill",
-          ].includes(s.metric)
+            "Ball Handling Error",
+            "BHE",
+          ].includes(s.metric) ||
+          (s.metric && s.metric.toLowerCase().includes("handling"))
         ) {
           p.attCount += 1;
           if (s.row === "Front" || s.metric === "Swing Front") {
@@ -163,9 +166,10 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
           }
         }
         if (s.metric === "Kill") p.attKill += 1;
-        if (["Out", "Net", "Out/Net"].includes(s.metric)) {
+        if (["Out", "Net", "Out/Net", "Ball Handling Error", "BHE"].includes(s.metric) || (s.metric && s.metric.toLowerCase().includes("handling"))) {
           p.attErr += 1;
           if (s.metric === "Net") p.attErrNet += 1;
+          else if (s.metric === "Ball Handling Error" || s.metric === "BHE" || s.metric.toLowerCase().includes("handling")) p.attErrBhe = (p.attErrBhe || 0) + 1;
           else p.attErrOut += 1;
         }
         if (s.metric === "Blocked" || s.metric === "Stuffed") {
@@ -186,7 +190,12 @@ export const PracticeStatsModal: React.FC<PracticeStatsModalProps> = ({
         }
       } else if (s.category === "Dig") {
         if (s.metric === "Dig") p.digCount += 1;
-        if (s.metric === "Error") p.digErr += 1;
+        if (s.metric === "Error" || s.metric === "Ball Handling Error" || s.metric === "BHE" || (s.metric && s.metric.toLowerCase().includes("handling"))) {
+          p.digErr += 1;
+          if (s.metric === "Ball Handling Error" || s.metric === "BHE" || s.metric.toLowerCase().includes("handling")) {
+            p.digBhe = (p.digBhe || 0) + 1;
+          }
+        }
       } else if (s.category === "Block") {
         if (s.metric === "Play On" || s.metric === "Touch") {
           p.blkTouch += Number(s.value || 1);

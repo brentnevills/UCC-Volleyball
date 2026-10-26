@@ -299,13 +299,13 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
               }
             } else if (s.category === "Dig") {
               if (s.metric === "Dig") pTeam.digCount += 1;
-              if (s.metric === "Error") pTeam.digErr += 1;
+              if (s.metric === "Error" || s.metric === "Ball Handling Error" || s.metric === "BHE" || (s.metric && s.metric.toLowerCase().includes("handling"))) pTeam.digErr += 1;
             } else if (
               s.category === "Attack" ||
               (s.category === "Error" &&
                 (s.metric?.toLowerCase().includes("att") ||
                   s.metric?.toLowerCase().includes("hit") ||
-                  ["out", "net", "stuff", "stuffed", "blocked", "err"].some((k) =>
+                  ["out", "net", "stuff", "stuffed", "blocked", "err", "handling", "bhe"].some((k) =>
                     s.metric?.toLowerCase().includes(k),
                   )))
             ) {
@@ -318,7 +318,9 @@ const CareerStatsModal = ({ playerName, myTeams, onClose }) => {
                 m.includes("err") ||
                 m.includes("fault") ||
                 m.includes("miss") ||
-                m.includes("antenna")) &&
+                m.includes("antenna") ||
+                m.includes("handling") ||
+                m.includes("bhe")) &&
                 !isBlocked;
               const isSwing =
                 m.includes("swing") ||
@@ -4055,9 +4057,14 @@ export default function App() {
         if (metric === "Kill") {
           pointAwardedTo = "ucc";
           pointReason = "Kill";
-        } else if (["Out", "Net", "Stuffed", "Error"].includes(metric)) {
+        } else if (["Out", "Net", "Stuffed", "Error", "Ball Handling Error", "BHE"].includes(metric) || (metric && metric.toLowerCase().includes("handling"))) {
           pointAwardedTo = "opp";
-          pointReason = `Attack ${metric}`;
+          pointReason = `Attack ${metric === "Ball Handling Error" || metric === "BHE" ? "Ball Handling Error" : metric}`;
+        }
+      } else if (category === "Dig") {
+        if (["Ball Handling Error", "BHE"].includes(metric) || (metric && metric.toLowerCase().includes("handling"))) {
+          pointAwardedTo = "opp";
+          pointReason = "Dig Ball Handling Error";
         }
       } else if (category === "Block") {
         if (metric === "Stuff") {
@@ -4131,9 +4138,14 @@ export default function App() {
         if (metric === "Kill") {
           pointAwardedTo = "opp";
           pointReason = "Opponent Kill";
-        } else if (["Out", "Net", "Stuffed", "Error"].includes(metric)) {
+        } else if (["Out", "Net", "Stuffed", "Error", "Ball Handling Error", "BHE"].includes(metric) || (metric && metric.toLowerCase().includes("handling"))) {
           pointAwardedTo = "ucc";
-          pointReason = `Opponent Attack ${metric}`;
+          pointReason = `Opponent Attack ${metric === "Ball Handling Error" || metric === "BHE" ? "Ball Handling Error" : metric}`;
+        }
+      } else if (category === "Dig") {
+        if (["Ball Handling Error", "BHE"].includes(metric) || (metric && metric.toLowerCase().includes("handling"))) {
+          pointAwardedTo = "ucc";
+          pointReason = "Opponent Dig Ball Handling Error";
         }
       } else if (category === "Block") {
         if (metric === "Stuff") {
@@ -5886,6 +5898,7 @@ export default function App() {
         attErrNet: 0,
         attErrOut: 0,
         attErrStuffed: 0,
+        attErrBhe: 0,
         blkCount: 0,
         blkStuff: 0,
         blkLate: 0,
@@ -5901,6 +5914,7 @@ export default function App() {
         srvErrOther: 0,
         digCount: 0,
         digErr: 0,
+        digBhe: 0,
       };
     });
 
@@ -5982,13 +5996,18 @@ export default function App() {
           }
         } else if (s.category === "Dig") {
           if (s.metric === "Dig") p.digCount += 1;
-          if (s.metric === "Error") p.digErr += 1;
+          if (s.metric === "Error" || s.metric === "Ball Handling Error" || s.metric === "BHE" || (s.metric && s.metric.toLowerCase().includes("handling"))) {
+            p.digErr += 1;
+            if (s.metric === "Ball Handling Error" || s.metric === "BHE" || (s.metric && s.metric.toLowerCase().includes("handling"))) {
+              p.digBhe = (p.digBhe || 0) + 1;
+            }
+          }
         } else if (
           s.category === "Attack" ||
           (s.category === "Error" &&
             (s.metric?.toLowerCase().includes("att") ||
               s.metric?.toLowerCase().includes("hit") ||
-              ["out", "net", "stuff", "stuffed", "blocked", "err"].some((k) =>
+              ["out", "net", "stuff", "stuffed", "blocked", "err", "handling", "bhe"].some((k) =>
                 s.metric?.toLowerCase().includes(k),
               )))
         ) {
@@ -6001,7 +6020,9 @@ export default function App() {
             m.includes("err") ||
             m.includes("fault") ||
             m.includes("miss") ||
-            m.includes("antenna")) &&
+            m.includes("antenna") ||
+            m.includes("handling") ||
+            m.includes("bhe")) &&
             !isBlocked;
           const isSwing =
             m.includes("swing") ||
@@ -6020,7 +6041,10 @@ export default function App() {
               "Net",
               "Out/Net",
               "Kill",
-            ].includes(s.metric);
+              "Ball Handling Error",
+              "BHE",
+            ].includes(s.metric) ||
+            m.includes("handling");
 
           if (isSwing) {
             p.attCount += 1;
@@ -6032,6 +6056,7 @@ export default function App() {
           if (isErr) {
             p.attErr += 1;
             if (m.includes("net")) p.attErrNet += 1;
+            else if (m.includes("handling") || m.includes("bhe")) p.attErrBhe = (p.attErrBhe || 0) + 1;
             else p.attErrOut += 1;
           }
           if (isBlocked) {
@@ -6108,6 +6133,10 @@ export default function App() {
       acc.attCountBack = (acc.attCountBack || 0) + (p.attCountBack || 0);
       acc.attKill = (acc.attKill || 0) + (p.attKill || 0);
       acc.attErr = (acc.attErr || 0) + (p.attErr || 0);
+      acc.attErrNet = (acc.attErrNet || 0) + (p.attErrNet || 0);
+      acc.attErrOut = (acc.attErrOut || 0) + (p.attErrOut || 0);
+      acc.attErrStuffed = (acc.attErrStuffed || 0) + (p.attErrStuffed || 0);
+      acc.attErrBhe = (acc.attErrBhe || 0) + (p.attErrBhe || 0);
       acc.attBlk = (acc.attBlk || 0) + (p.attBlk || 0);
       acc.blkStuff = (acc.blkStuff || 0) + (p.blkStuff || 0);
       acc.blkLate = (acc.blkLate || 0) + (p.blkLate || 0);
@@ -6119,6 +6148,7 @@ export default function App() {
       acc.srvCount = (acc.srvCount || 0) + (p.srvCount || 0);
       acc.digCount = (acc.digCount || 0) + (p.digCount || 0);
       acc.digErr = (acc.digErr || 0) + (p.digErr || 0);
+      acc.digBhe = (acc.digBhe || 0) + (p.digBhe || 0);
       return acc;
     }, {
       id: "team_total",
@@ -6135,6 +6165,10 @@ export default function App() {
       attCountBack: 0,
       attKill: 0,
       attErr: 0,
+      attErrNet: 0,
+      attErrOut: 0,
+      attErrStuffed: 0,
+      attErrBhe: 0,
       attBlk: 0,
       blkStuff: 0,
       blkLate: 0,
@@ -6146,6 +6180,7 @@ export default function App() {
       srvCount: 0,
       digCount: 0,
       digErr: 0,
+      digBhe: 0,
     });
 
     const oppAcesAgainstUs = filteredStats.filter((s: any) =>
@@ -9632,6 +9667,72 @@ export default function App() {
         {renderPlayerAccessModal()}
         {renderPlayerSecurity()}
         {renderInstallModal()}
+
+        <SavedLineupsModal
+          isOpen={isLineupsModalOpen}
+          onClose={() => setIsLineupsModalOpen(false)}
+          savedLineups={appData.savedLineups || {}}
+          roster={sortedRoster}
+          currentCourtLineup={lineup}
+          currentLiberoId={liberoId}
+          onSaveLineup={(name, l, lib, notes) => saveNamedLineup(name, l, lib, notes)}
+          onDeleteLineup={(name) => deleteNamedLineup(name)}
+          onRenameLineup={(oldName, newName) => renameNamedLineup(oldName, newName)}
+          onLoadLineup={(name) => {
+            loadNamedLineup(name, lineupsModalContext);
+            setIsLineupsModalOpen(false);
+          }}
+          contextTitle={
+            lineupsModalContext === "inGame"
+              ? "In-Game Lineup Presets"
+              : lineupsModalContext === "betweenSets"
+              ? "Between-Sets Lineup Presets"
+              : "Saved Starting Lineups"
+          }
+        />
+
+        <SeasonHistoryModal
+          isOpen={showSeasonHistoryModal}
+          onClose={() => setShowSeasonHistoryModal(false)}
+          matches={appData.matches || []}
+          sets={appData.sets || []}
+          stats={appData.stats || []}
+          roster={appData.roster || []}
+          ourTeamName={effectiveTeamName}
+          onSelectMatch={openMatchStatsFromHistory}
+          onEditSetScore={(setObj, matchObj) => {
+            setSetScoreModalConfig({
+              isOpen: true,
+              set: setObj,
+              matchTitle: matchObj?.title || `vs ${matchObj?.opponent || "Opponent"}`,
+            });
+          }}
+          onStartNewMatch={() => {
+            setShowSeasonHistoryModal(false);
+            startSetup("League");
+          }}
+          onSyncWithCloud={() => syncLocalGamesToCloud(true)}
+          isSyncingWithCloud={isSyncingWithCloud}
+        />
+
+        <SetScoreEditModal
+          isOpen={setScoreModalConfig.isOpen}
+          onClose={() =>
+            setSetScoreModalConfig((prev) => ({ ...prev, isOpen: false }))
+          }
+          set={setScoreModalConfig.set}
+          matchTitle={setScoreModalConfig.matchTitle}
+          ourTeamName={effectiveTeamName}
+          opponentName={
+            (setScoreModalConfig.set &&
+              appData.matches.find(
+                (m) => m.id === setScoreModalConfig.set.matchId,
+              )?.opponent) ||
+            opponentName ||
+            "Opponent"
+          }
+          onSave={handleSaveSetScore}
+        />
         </div>
       </div>
     );
@@ -11863,7 +11964,7 @@ export default function App() {
                       ERRORS{" "}
                       <span className="h-px bg-slate-200 flex-1 ml-2"></span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <button
                         onClick={() => {
                           handleGameStat(
@@ -11873,7 +11974,7 @@ export default function App() {
                           );
                           setStatPrompt(null);
                         }}
-                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
+                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-xs sm:text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase cursor-pointer"
                       >
                         <span className="text-xl mb-1">↗️</span>Out
                       </button>
@@ -11886,9 +11987,9 @@ export default function App() {
                           );
                           setStatPrompt(null);
                         }}
-                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
+                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-xs sm:text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase cursor-pointer"
                       >
-                        Net
+                        <span className="text-xl mb-1">🕸️</span>Net
                       </button>
                       <button
                         onClick={() => {
@@ -11899,15 +12000,31 @@ export default function App() {
                           );
                           setStatPrompt(null);
                         }}
-                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
+                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-xs sm:text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase cursor-pointer"
                       >
-                        Stuffed
+                        <span className="text-xl mb-1">🧱</span>Stuffed
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleGameStat(
+                            statPrompt.playerId,
+                            statPrompt.type,
+                            "Ball Handling Error",
+                          );
+                          setStatPrompt(null);
+                        }}
+                        className="bg-rose-100/90 text-rose-800 p-3 rounded-xl font-black text-xs sm:text-sm border border-rose-300 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase cursor-pointer leading-tight"
+                        title="Attack Ball Handling Error (Lift, Throw, Double touch on attack)"
+                      >
+                        <span className="text-xl mb-1">✋</span>
+                        <span>BHE</span>
+                        <span className="text-[9px] font-bold opacity-75">(Handling)</span>
                       </button>
                     </div>
                   </div>
                 )}
                 {statPrompt.type === "Dig" && (
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       onClick={() => {
                         handleGameStat(
@@ -11917,7 +12034,7 @@ export default function App() {
                         );
                         setStatPrompt(null);
                       }}
-                      className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20"
+                      className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-base sm:text-xl shadow-sm active:scale-95 border-t border-white/20 cursor-pointer flex flex-col items-center justify-center"
                     >
                       DIG
                     </button>
@@ -11930,9 +12047,25 @@ export default function App() {
                         );
                         setStatPrompt(null);
                       }}
-                      className="bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center"
+                      className="bg-slate-200 text-slate-700 p-4 rounded-xl font-black text-xs sm:text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex flex-col items-center justify-center cursor-pointer"
                     >
-                      TOUCH
+                      <span>TOUCH</span>
+                      <span className="text-[9px] font-bold opacity-75">(Play On)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleGameStat(
+                          statPrompt.playerId,
+                          statPrompt.type,
+                          "Ball Handling Error",
+                        );
+                        setStatPrompt(null);
+                      }}
+                      className="bg-rose-100 text-rose-800 p-4 rounded-xl font-black text-xs sm:text-sm uppercase shadow-sm border border-rose-300 active:scale-95 flex flex-col items-center justify-center cursor-pointer leading-tight"
+                      title="Dig Ball Handling Error (Double contact, lift, illegal contact on dig - Point Opponent)"
+                    >
+                      <span>BHE</span>
+                      <span className="text-[9px] font-bold opacity-75">(Point Opp)</span>
                     </button>
                   </div>
                 )}
@@ -12261,12 +12394,12 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+                <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                   <button
                     onClick={() =>
                       recordStatAndCheckPoint(selectedPlayerId, "Dig", "Dig")
                     }
-                    className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-lg sm:text-xl shadow-sm active:scale-95 border-t border-white/20"
+                    className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-base sm:text-xl shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
                   >
                     DIG
                   </button>
@@ -12278,9 +12411,24 @@ export default function App() {
                         "Error",
                       )
                     }
-                    className="bg-slate-200 text-slate-600 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm shadow-sm active:scale-95 border border-slate-300 uppercase"
+                    className="bg-slate-200 text-slate-700 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm shadow-sm active:scale-95 border border-slate-300 uppercase cursor-pointer flex flex-col items-center justify-center"
                   >
-                    Touch
+                    <span>Touch</span>
+                    <span className="text-[8px] sm:text-[9px] opacity-75">(Play On)</span>
+                  </button>
+                  <button
+                    onClick={() =>
+                      recordStatAndCheckPoint(
+                        selectedPlayerId,
+                        "Dig",
+                        "Ball Handling Error",
+                      )
+                    }
+                    className="bg-rose-100 text-rose-700 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm shadow-sm active:scale-95 border border-rose-300 uppercase cursor-pointer flex flex-col items-center justify-center leading-tight"
+                    title="Dig Ball Handling Error (Double contact, lift, illegal contact on dig - Point Opponent)"
+                  >
+                    <span>BHE</span>
+                    <span className="text-[8px] sm:text-[9px] opacity-75">(Point Opp)</span>
                   </button>
                 </div>
 
@@ -12289,7 +12437,7 @@ export default function App() {
                         <Crosshair size={12} className="mr-1 text-red-500" />{" "}
                         Attack
                       </h4>
-                      <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                      <div className="grid grid-cols-6 gap-1.5 sm:gap-2">
                         <button
                           onClick={() =>
                             recordStatAndCheckPoint(
@@ -12298,7 +12446,7 @@ export default function App() {
                               "Kill",
                             )
                           }
-                          className="col-span-2 bg-gradient-to-b from-green-500 to-green-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 border-t border-white/20"
+                          className="col-span-3 bg-gradient-to-b from-green-500 to-green-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
                         >
                           KILL
                         </button>
@@ -12310,7 +12458,7 @@ export default function App() {
                               "Swing",
                             )
                           }
-                          className="col-span-2 bg-gradient-to-b from-slate-600 to-slate-700 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 border-t border-white/20"
+                          className="col-span-3 bg-gradient-to-b from-slate-600 to-slate-700 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
                         >
                           SWING
                         </button>
@@ -12322,7 +12470,7 @@ export default function App() {
                               "Out",
                             )
                           }
-                          className="col-span-1 bg-slate-100 text-slate-600 py-2 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-slate-200 active:scale-95 uppercase tracking-wider"
+                          className="col-span-1 bg-slate-100 text-slate-600 py-2 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-slate-200 active:scale-95 uppercase tracking-wider cursor-pointer"
                         >
                           Out
                         </button>
@@ -12334,9 +12482,25 @@ export default function App() {
                               "Net",
                             )
                           }
-                          className="col-span-1 bg-slate-100 text-slate-600 py-2 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-slate-200 active:scale-95 uppercase tracking-wider"
+                          className="col-span-1 bg-slate-100 text-slate-600 py-2 sm:py-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm border border-slate-200 active:scale-95 uppercase tracking-wider cursor-pointer"
                         >
                           Net
+                        </button>
+                        <button
+                          onClick={() => {
+                            recordStatAndCheckPoint(
+                              selectedPlayerId,
+                              "Attack",
+                              "Ball Handling Error",
+                            );
+                          }}
+                          className="col-span-2 bg-rose-100 text-rose-700 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm border border-rose-300 active:scale-95 uppercase tracking-wider cursor-pointer flex flex-col items-center justify-center leading-tight"
+                          title="Attack Ball Handling Error (Lift, Throw, Double touch - Point Opponent)"
+                        >
+                          <span>BHE</span>
+                          <span className="text-[8px] sm:text-[9px] opacity-75">
+                            (Handling)
+                          </span>
                         </button>
                         <button
                           onClick={() => {
@@ -12346,10 +12510,10 @@ export default function App() {
                               "Blocked",
                             );
                           }}
-                          className="bg-gradient-to-b from-amber-500 to-amber-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-white/20 shadow-sm active:scale-95 uppercase tracking-wider flex flex-col items-center justify-center leading-tight"
+                          className="col-span-1 bg-gradient-to-b from-amber-500 to-amber-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-bold text-[9px] sm:text-xs border border-white/20 shadow-sm active:scale-95 uppercase tracking-wider flex flex-col items-center justify-center leading-tight cursor-pointer"
                         >
-                          <span className="text-xs sm:text-sm">BLOCKED</span>
-                          <span className="text-[8px] sm:text-[9px] opacity-75">
+                          <span className="text-[10px] sm:text-xs">BLOCKED</span>
+                          <span className="text-[8px] opacity-75">
                             (Play On)
                           </span>
                         </button>
@@ -12361,10 +12525,10 @@ export default function App() {
                               "Stuffed",
                             );
                           }}
-                          className="bg-gradient-to-b from-red-500 to-red-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-bold text-[10px] sm:text-xs border border-white/20 shadow-sm active:scale-95 uppercase tracking-wider flex flex-col items-center justify-center leading-tight"
+                          className="col-span-1 bg-gradient-to-b from-red-500 to-red-600 text-white py-2.5 sm:py-4 rounded-lg sm:rounded-xl font-bold text-[9px] sm:text-xs border border-white/20 shadow-sm active:scale-95 uppercase tracking-wider flex flex-col items-center justify-center leading-tight cursor-pointer"
                         >
-                          <span className="text-xs sm:text-sm">STUFFED</span>
-                          <span className="text-[8px] sm:text-[9px] opacity-75">
+                          <span className="text-[10px] sm:text-xs">STUFFED</span>
+                          <span className="text-[8px] opacity-75">
                             (Point)
                           </span>
                         </button>
@@ -12578,7 +12742,7 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 sm:gap-2">
                       <button
                         onClick={() =>
                           recordOppStatAndCheckPoint(
@@ -12589,7 +12753,7 @@ export default function App() {
                         }
                         className="bg-slate-200 text-slate-700 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95 uppercase tracking-widest border border-slate-300"
                       >
-                        Attack Out
+                        Out
                       </button>
                       <button
                         onClick={() =>
@@ -12601,7 +12765,21 @@ export default function App() {
                         }
                         className="bg-slate-200 text-slate-700 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95 uppercase tracking-widest border border-slate-300"
                       >
-                        Attack Net
+                        Net
+                      </button>
+                      <button
+                        onClick={() =>
+                          recordOppStatAndCheckPoint(
+                            selectedOppId,
+                            "Attack",
+                            "Ball Handling Error",
+                          )
+                        }
+                        className="bg-rose-100 text-rose-800 py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-xs sm:text-sm shadow-sm active:scale-95 uppercase tracking-widest border border-rose-300 flex flex-col items-center justify-center leading-tight cursor-pointer"
+                        title="Opponent Attack Ball Handling Error (Point Lancers)"
+                      >
+                        <span>BHE</span>
+                        <span className="text-[8px] font-bold opacity-75">(Point UCC)</span>
                       </button>
                       <button
                         onClick={() =>
@@ -12629,7 +12807,7 @@ export default function App() {
                         className="bg-gradient-to-b from-red-500 to-red-600 text-white py-2 sm:py-3 rounded-lg sm:rounded-xl font-black text-[10px] sm:text-xs shadow-sm active:scale-95 uppercase tracking-widest border border-white/20 flex flex-col items-center justify-center leading-tight"
                       >
                         <span className="text-xs sm:text-sm">STUFFED</span>
-                        <span className="text-[8px] sm:text-[9px] opacity-75">
+                        <span className="text-[8px] opacity-75">
                           (Point)
                         </span>
                       </button>
@@ -16255,7 +16433,7 @@ export default function App() {
                       ERRORS{" "}
                       <span className="h-px bg-slate-200 flex-1 ml-2"></span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <button
                         onClick={() => {
                           handlePracticeStat(
@@ -16265,7 +16443,7 @@ export default function App() {
                           );
                           setPracticeStatPrompt(null);
                         }}
-                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
+                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-xs sm:text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase cursor-pointer"
                       >
                         <span className="text-xl mb-1">↗️</span>Out
                       </button>
@@ -16278,9 +16456,9 @@ export default function App() {
                           );
                           setPracticeStatPrompt(null);
                         }}
-                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
+                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-xs sm:text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase cursor-pointer"
                       >
-                        Net
+                        <span className="text-xl mb-1">🕸️</span>Net
                       </button>
                       <button
                         onClick={() => {
@@ -16291,15 +16469,31 @@ export default function App() {
                           );
                           setPracticeStatPrompt(null);
                         }}
-                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase"
+                        className="bg-red-50 text-red-600 p-3 rounded-xl font-bold text-xs sm:text-sm border border-red-100 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase cursor-pointer"
                       >
-                        Stuffed
+                        <span className="text-xl mb-1">🧱</span>Stuffed
+                      </button>
+                      <button
+                        onClick={() => {
+                          handlePracticeStat(
+                            practiceStatPrompt.playerId,
+                            practiceStatPrompt.type,
+                            "Ball Handling Error",
+                          );
+                          setPracticeStatPrompt(null);
+                        }}
+                        className="bg-rose-100/90 text-rose-800 p-3 rounded-xl font-black text-xs sm:text-sm border border-rose-300 shadow-sm active:scale-95 flex flex-col items-center justify-center uppercase cursor-pointer leading-tight"
+                        title="Practice Attack Ball Handling Error (Lift, Throw, Double touch)"
+                      >
+                        <span className="text-xl mb-1">✋</span>
+                        <span>BHE</span>
+                        <span className="text-[9px] font-bold opacity-75">(Handling)</span>
                       </button>
                     </div>
                   </div>
                 )}
                 {practiceStatPrompt.type === "Dig" && (
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       onClick={() => {
                         handlePracticeStat(
@@ -16309,7 +16503,7 @@ export default function App() {
                         );
                         setPracticeStatPrompt(null);
                       }}
-                      className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-xl shadow-sm active:scale-95 border-t border-white/20"
+                      className="bg-gradient-to-b from-blue-500 to-blue-600 text-white p-4 rounded-xl font-black text-base sm:text-xl shadow-sm active:scale-95 border-t border-white/20 cursor-pointer flex flex-col items-center justify-center"
                     >
                       DIG
                     </button>
@@ -16322,9 +16516,25 @@ export default function App() {
                         );
                         setPracticeStatPrompt(null);
                       }}
-                      className="bg-slate-200 text-slate-600 p-4 rounded-xl font-black text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex items-center justify-center"
+                      className="bg-slate-200 text-slate-700 p-4 rounded-xl font-black text-xs sm:text-sm uppercase shadow-sm border border-slate-300 active:scale-95 flex flex-col items-center justify-center cursor-pointer"
                     >
-                      TOUCH
+                      <span>TOUCH</span>
+                      <span className="text-[9px] font-bold opacity-75">(Play On)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handlePracticeStat(
+                          practiceStatPrompt.playerId,
+                          practiceStatPrompt.type,
+                          "Ball Handling Error",
+                        );
+                        setPracticeStatPrompt(null);
+                      }}
+                      className="bg-rose-100 text-rose-800 p-4 rounded-xl font-black text-xs sm:text-sm uppercase shadow-sm border border-rose-300 active:scale-95 flex flex-col items-center justify-center cursor-pointer leading-tight"
+                      title="Practice Dig Ball Handling Error (Double touch, lift, illegal contact on dig)"
+                    >
+                      <span>BHE</span>
+                      <span className="text-[9px] font-bold opacity-75">(Handling)</span>
                     </button>
                   </div>
                 )}
@@ -18080,6 +18290,7 @@ export default function App() {
                   acc.passAced += p.passAced || 0;
                   acc.digCount += p.digCount || 0;
                   acc.digErr += p.digErr || 0;
+                  acc.digBhe = (acc.digBhe || 0) + (p.digBhe || 0);
                   acc.attCount += p.attCount || 0;
                   acc.attCountFront += p.attCountFront || 0;
                   acc.attCountBack += p.attCountBack || 0;
@@ -18088,6 +18299,7 @@ export default function App() {
                   acc.attErrNet += p.attErrNet || 0;
                   acc.attErrOut += p.attErrOut || 0;
                   acc.attErrStuffed += p.attErrStuffed || 0;
+                  acc.attErrBhe = (acc.attErrBhe || 0) + (p.attErrBhe || 0);
                   acc.attBlk += p.attBlk || 0;
                   acc.blkCount += p.blkCount || 0;
                   acc.blkStuff += p.blkStuff || 0;
@@ -18117,6 +18329,7 @@ export default function App() {
                   passAced: 0,
                   digCount: 0,
                   digErr: 0,
+                  digBhe: 0,
                   attCount: 0,
                   attCountFront: 0,
                   attCountBack: 0,
@@ -18125,6 +18338,7 @@ export default function App() {
                   attErrNet: 0,
                   attErrOut: 0,
                   attErrStuffed: 0,
+                  attErrBhe: 0,
                   attBlk: 0,
                   blkCount: 0,
                   blkStuff: 0,
@@ -18180,6 +18394,7 @@ export default function App() {
                   acc.passAced += p.passAced || 0;
                   acc.digCount += p.digCount || 0;
                   acc.digErr += p.digErr || 0;
+                  acc.digBhe = (acc.digBhe || 0) + (p.digBhe || 0);
                   acc.attCount += p.attCount || 0;
                   acc.attCountFront += p.attCountFront || 0;
                   acc.attCountBack += p.attCountBack || 0;
@@ -18188,6 +18403,7 @@ export default function App() {
                   acc.attErrNet += p.attErrNet || 0;
                   acc.attErrOut += p.attErrOut || 0;
                   acc.attErrStuffed += p.attErrStuffed || 0;
+                  acc.attErrBhe = (acc.attErrBhe || 0) + (p.attErrBhe || 0);
                   acc.attBlk += p.attBlk || 0;
                   acc.blkCount += p.blkCount || 0;
                   acc.blkStuff += p.blkStuff || 0;
@@ -18217,6 +18433,7 @@ export default function App() {
                   passAced: 0,
                   digCount: 0,
                   digErr: 0,
+                  digBhe: 0,
                   attCount: 0,
                   attCountFront: 0,
                   attCountBack: 0,
@@ -18225,6 +18442,7 @@ export default function App() {
                   attErrNet: 0,
                   attErrOut: 0,
                   attErrStuffed: 0,
+                  attErrBhe: 0,
                   attBlk: 0,
                   blkCount: 0,
                   blkStuff: 0,

@@ -46,6 +46,7 @@ export interface PlayerBreakdownStats {
   attErrNet: number;
   attErrOut: number;
   attErrStuffed: number;
+  attErrBhe?: number;
   attBlk: number;
   // Blocking
   blkCount: number;
@@ -65,6 +66,7 @@ export interface PlayerBreakdownStats {
   // Digs
   digCount: number;
   digErr: number;
+  digBhe?: number;
 }
 
 interface StatBreakdownModalProps {
@@ -1086,7 +1088,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   </h4>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                   {/* NET */}
                   <div className="bg-red-50/60 border border-red-200 rounded-xl p-3 text-center">
                     <span className="text-[10px] font-black uppercase tracking-wider text-red-800 block">
@@ -1123,6 +1125,19 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                     </span>
                     <span className="text-[10px] font-bold text-slate-500">
                       Blocked for Point
+                    </span>
+                  </div>
+
+                  {/* BALL HANDLING ERROR (BHE) */}
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-center">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-800 block">
+                      Attack BHE
+                    </span>
+                    <span className="text-2xl font-black text-purple-700 my-0.5 block">
+                      {selectedPlayer.attErrBhe || 0}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-500">
+                      Lift / Illegal Touch
                     </span>
                   </div>
 
@@ -1563,7 +1578,7 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                   <TrendingUp size={16} className="text-teal-600" />
                   Defense Performance
                 </h4>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 flex items-center justify-between">
                     <div>
                       <span className="text-xs font-black text-blue-900 uppercase tracking-wider block">
@@ -1578,17 +1593,31 @@ export const StatBreakdownModal: React.FC<StatBreakdownModalProps> = ({
                     </span>
                   </div>
 
-                  <div className="bg-red-50/70 border border-red-200 rounded-xl p-3.5 flex items-center justify-between">
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 flex items-center justify-between">
                     <div>
-                      <span className="text-xs font-black text-red-900 uppercase tracking-wider block">
-                        Dig Errors
+                      <span className="text-xs font-black text-amber-900 uppercase tracking-wider block">
+                        Dig Touches / Errors
                       </span>
                       <span className="text-[10px] text-slate-500 font-medium">
-                        Direct point to opponent
+                        Unplayable errant touches
                       </span>
                     </div>
-                    <span className="text-2xl font-black text-red-600">
-                      {selectedPlayer.digErr}
+                    <span className="text-2xl font-black text-amber-600">
+                      {Math.max(0, selectedPlayer.digErr - (selectedPlayer.digBhe || 0))}
+                    </span>
+                  </div>
+
+                  <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3.5 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-black text-purple-900 uppercase tracking-wider block">
+                        Dig BHE
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        Double contact / Lift
+                      </span>
+                    </div>
+                    <span className="text-2xl font-black text-purple-700">
+                      {selectedPlayer.digBhe || 0}
                     </span>
                   </div>
                 </div>
