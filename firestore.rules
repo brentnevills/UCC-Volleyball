@@ -17,11 +17,17 @@ service cloud.firestore {
     }
     
     // The "Master Gate" (Relational Sync)
-    function isTeamMember(teamId) {
-      let isCoachEmail = request.auth.token.email != null && (
+    function isCoachEmail() {
+      return request.auth.token.email != null && (
+        request.auth.token.email == 'brentnevills@gmail.com' ||
         request.auth.token.email == 'brent.nevills@sccdsb.net' ||
-        request.auth.token.email.matches('.*coach.*')
+        request.auth.token.email.matches('.*coach.*') ||
+        request.auth.token.email.matches('.*nevills.*')
       );
+    }
+
+    function isTeamMember(teamId) {
+      let isCoach = isCoachEmail();
       let isDefaultTeam = teamId == 'ucc_main';
       let hasTeamDoc = exists(/databases/$(database)/documents/teams/$(teamId));
       let isCreator = hasTeamDoc && get(/databases/$(database)/documents/teams/$(teamId)).data.createdBy == request.auth.uid;
@@ -29,14 +35,11 @@ service cloud.firestore {
         || existsAfter(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
 
       // If team document doesn't exist yet in Firestore, allow signed-in user to initialize it
-      return !hasTeamDoc || isCoachEmail || isDefaultTeam || hasMemberDoc || isCreator;
+      return !hasTeamDoc || isCoach || isDefaultTeam || hasMemberDoc || isCreator;
     }
 
     function isCoach(teamId) {
-      let isCoachEmail = request.auth.token.email != null && (
-        request.auth.token.email == 'brent.nevills@sccdsb.net' ||
-        request.auth.token.email.matches('.*coach.*')
-      );
+      let isCoachUser = isCoachEmail();
       let isDefaultTeam = teamId == 'ucc_main';
       let hasTeamDoc = exists(/databases/$(database)/documents/teams/$(teamId));
       let isCreator = hasTeamDoc && get(/databases/$(database)/documents/teams/$(teamId)).data.createdBy == request.auth.uid;
@@ -44,7 +47,7 @@ service cloud.firestore {
       let isCoachRole = hasMemberDoc && get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid)).data.role == 'coach';
       
       // If team document doesn't exist yet in Firestore, allow signed-in user to create/manage it
-      return !hasTeamDoc || isCoachEmail || isDefaultTeam || isCreator || isCoachRole;
+      return !hasTeamDoc || isCoachUser || isDefaultTeam || isCreator || isCoachRole;
     }
 
     function isValidTeamMember(data, userId) {
@@ -96,7 +99,8 @@ service cloud.firestore {
     }
 
     match /test/{docId} {
-      allow read, write: if isSignedIn();
+      allow read: if true;
+      allow write: if isSignedIn();
     }
 
     match /teams/{teamId} {

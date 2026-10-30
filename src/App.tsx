@@ -166,6 +166,19 @@ if (typeof window !== "undefined" && db) {
   }
 }
 
+// Validate Connection to Firestore on boot
+async function testConnection() {
+  if (!db) return;
+  try {
+    await getDocFromServer(doc(db, "test", "connection"));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("the client is offline")) {
+      console.error("Please check your Firebase configuration.");
+    }
+  }
+}
+testConnection();
+
 const publicPath = `teams`;
 
 const APP_LOGO_SRC = `${import.meta.env.BASE_URL}lancer-logo.png`;
@@ -1118,13 +1131,32 @@ export default function App() {
           );
           const isCreator = teamDoc.exists() && teamDoc.data()?.createdBy === res.user.uid;
           const isMemberCoach = memberDoc.exists() && memberDoc.data()?.role === "coach";
+          const isCoachEmailMatch =
+            res.user.email === "brentnevills@gmail.com" ||
+            res.user.email === "brent.nevills@sccdsb.net" ||
+            (!!res.user.email && /nevills|coach/i.test(res.user.email));
 
-          if (isCreator || isMemberCoach) {
+          if (isCreator || isMemberCoach || isCoachEmailMatch) {
             localStorage.setItem(`ucc_team_role_${activeTeam}`, "coach");
             localStorage.setItem("ucc_current_role", "coach");
             localStorage.setItem(`ucc_coach_unlocked_${activeTeam}`, "true");
+            try {
+              await setDoc(
+                doc(db, `${publicPath}/${activeTeam}/members/${res.user.uid}`),
+                {
+                  uid: res.user.uid,
+                  role: "coach",
+                  email: res.user.email || "",
+                  displayName: res.user.displayName || (res.user.email ? res.user.email.split("@")[0] : "Coach"),
+                  lastActive: serverTimestamp(),
+                },
+                { merge: true },
+              );
+            } catch (memberWriteErr) {
+              console.warn("Member role sync notice:", memberWriteErr);
+            }
             setCoachLoginMsg({
-              text: `Recognized Coach Account (${res.user.email})! Access granted.`,
+              text: `Recognized Coach Account (${res.user.email})! Coach access activated.`,
               isError: false,
             });
             setTimeout(() => {
@@ -1538,7 +1570,18 @@ export default function App() {
         setUser(u);
         setLoadingAuth(false);
         const storedTeam = localStorage.getItem("ucc_vball_active_team");
-        if (!u) {
+        if (u) {
+          const isCoach =
+            u.email === "brentnevills@gmail.com" ||
+            u.email === "brent.nevills@sccdsb.net" ||
+            (!!u.email && /nevills|coach/i.test(u.email));
+          if (isCoach) {
+            const teamKey = storedTeam || "ucc_main";
+            localStorage.setItem(`ucc_team_role_${teamKey}`, "coach");
+            localStorage.setItem("ucc_current_role", "coach");
+            localStorage.setItem(`ucc_coach_unlocked_${teamKey}`, "true");
+          }
+        } else {
           if (!storedTeam) {
             setView("team_select");
           }
@@ -2140,19 +2183,22 @@ export default function App() {
     const currentTeamKey = activeTeam;
 
     try {
-      // 1. Ensure user authentication is resolved (sign in anonymously if guest)
-      let activeUser = user;
-      if (!activeUser && auth && isFirebaseAvailable) {
+      // 1. Ensure user authentication is resolved
+      let activeUser = auth?.currentUser || user;
+      if (!auth?.currentUser && auth && isFirebaseAvailable) {
         try {
-          activeUser = await signInAsGuest();
+          const anonRes = await signInAnonymously(auth);
+          activeUser = anonRes.user;
+          setUser(anonRes.user);
         } catch (authErr) {
-          console.warn("Guest sign-in failed during sync:", authErr);
+          console.warn("Guest sign-in notice during sync:", authErr);
         }
       }
 
-      if (!activeUser) {
+      if (!auth?.currentUser) {
         if (isManualTrigger) {
-          showToast("Please sign in or enter coach code to connect with Firebase.", "warning");
+          showToast("Please sign in with your Coach Google Account to sync games to Firebase.", "warning");
+          setShowCoachLoginModal(true);
         }
         return;
       }
