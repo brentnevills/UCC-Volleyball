@@ -655,7 +655,7 @@ export default function App() {
   };
 
   const [view, setView] = useState(() =>
-    localStorage.getItem("ucc_vball_active_team") ? "menu" : "team_select",
+    localStorage.getItem("ucc_vball_active_team") ? "menu" : "menu",
   );
   const [user, setUser] = useState(null);
   const currentUser = user;
@@ -667,9 +667,16 @@ export default function App() {
   }, [user]);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [authTimeoutReached, setAuthTimeoutReached] = useState(false);
-  const [myTeams, setMyTeams] = useState([]);
+  const [myTeams, setMyTeams] = useState([
+    {
+      id: "ucc_main",
+      name: "UCC Lancers",
+      color: "from-[#0044cc] to-[#001b5e]",
+      role: "coach",
+    },
+  ]);
   const [activeTeam, setActiveTeam] = useState(
-    () => localStorage.getItem("ucc_vball_active_team") || null,
+    () => localStorage.getItem("ucc_vball_active_team") || "ucc_main",
   );
 
   // Master Cloud Data State (Scoped to activeTeam)
@@ -1615,7 +1622,14 @@ export default function App() {
           }
         }
       } catch (e) {}
-      setMyTeams([]);
+      setMyTeams([
+        {
+          id: "ucc_main",
+          name: "UCC Lancers",
+          color: "from-[#0044cc] to-[#001b5e]",
+          role: "coach",
+        },
+      ]);
       return;
     }
     // Load locally cached teams immediately so user isn't locked out during quota limit
@@ -1930,9 +1944,11 @@ export default function App() {
       setActiveSetId(null);
     }
 
-    if (!isFirebaseAvailable || !user || !db || isQuotaExceeded) {
+    if (!isFirebaseAvailable || !db || isQuotaExceeded) {
       return;
     }
+
+    const targetTeam = activeTeam || "ucc_main";
 
     let unsubSettings = () => {};
     let unsubOpponents = () => {};
@@ -1954,15 +1970,15 @@ export default function App() {
       console.warn(`Firebase ${source} listener notice:`, err?.message || err);
     };
 
-    // 2. Scoped Firebase Listeners with safe error / quota resilience
+    // 2. Scoped Firebase Listeners with real-time multi-device synchronization
     unsubSettings = onSnapshot(
-      doc(db, `${publicPath}/${activeTeam}/settings/core`),
+      doc(db, `${publicPath}/${targetTeam}/settings/core`),
       (d) => {
         if (d.exists()) {
           setAppData((prev) => {
             const next = { ...prev, ...d.data() };
             try {
-              localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
+              localStorage.setItem(`ucc_vball_db_${targetTeam}`, JSON.stringify(next));
             } catch {}
             return next;
           });
@@ -1972,7 +1988,7 @@ export default function App() {
     );
 
     unsubOpponents = onSnapshot(
-      collection(db, `${publicPath}/${activeTeam}/opponents`),
+      collection(db, `${publicPath}/${targetTeam}/opponents`),
       (snap) => {
         const opps: any = {};
         snap.forEach((d) => {
@@ -1981,7 +1997,7 @@ export default function App() {
         setAppData((prev) => {
           const next = { ...prev, opponents: opps };
           try {
-            localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
+            localStorage.setItem(`ucc_vball_db_${targetTeam}`, JSON.stringify(next));
           } catch {}
           return next;
         });
@@ -1990,28 +2006,27 @@ export default function App() {
     );
 
     unsubMatches = onSnapshot(
-      collection(db, `${publicPath}/${activeTeam}/matches`),
+      collection(db, `${publicPath}/${targetTeam}/matches`),
       (snap) => {
         const arr: any[] = [];
         snap.forEach((d) => arr.push(d.data()));
         setAppData((prev) => {
           const remoteMap = new Map(arr.map((m: any) => [m.id, m]));
           const localMatches = Array.isArray(prev.matches) ? prev.matches : [];
-          // Preserve all local matches, merging remote fields without losing local offline completion
+          // Merge remote live updates into local state
           const mergedLocal = localMatches.map((localM: any) => {
             const remoteM = remoteMap.get(localM.id);
             if (!remoteM) return localM;
             remoteMap.delete(localM.id);
-            // If local match was completed offline or has more sets/scores, preserve local state
-            if (localM.completedAt && !remoteM.completedAt) {
-              return { ...remoteM, ...localM };
+            if (localM.completedAt && !remoteM.completedAt && !remoteM.isLive) {
+              return { ...remoteM, completedAt: localM.completedAt };
             }
-            return { ...remoteM, ...localM };
+            return { ...localM, ...remoteM };
           });
           const allMatches = [...mergedLocal, ...Array.from(remoteMap.values())];
           const next = { ...prev, matches: allMatches };
           try {
-            localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
+            localStorage.setItem(`ucc_vball_db_${targetTeam}`, JSON.stringify(next));
           } catch {}
           return next;
         });
@@ -2020,7 +2035,7 @@ export default function App() {
     );
 
     unsubSets = onSnapshot(
-      collection(db, `${publicPath}/${activeTeam}/sets`),
+      collection(db, `${publicPath}/${targetTeam}/sets`),
       (snap) => {
         const arr: any[] = [];
         snap.forEach((d) => arr.push(d.data()));
@@ -2031,14 +2046,19 @@ export default function App() {
             const remoteS = remoteMap.get(localS.id);
             if (!remoteS) return localS;
             remoteMap.delete(localS.id);
+            const localPoints = Array.isArray(localS?.pointHistory) ? localS.pointHistory.length : 0;
+            const remotePoints = Array.isArray(remoteS?.pointHistory) ? remoteS.pointHistory.length : 0;
             const localTotal = (localS?.scoreUcc || 0) + (localS?.scoreOpp || 0);
             const remoteTotal = (remoteS?.scoreUcc || 0) + (remoteS?.scoreOpp || 0);
-            return localTotal >= remoteTotal ? { ...remoteS, ...localS } : { ...localS, ...remoteS };
+            if (remotePoints >= localPoints || remoteTotal >= localTotal) {
+              return { ...localS, ...remoteS };
+            }
+            return { ...remoteS, ...localS };
           });
           const allSets = [...mergedSets, ...Array.from(remoteMap.values())];
           const next = { ...prev, sets: allSets };
           try {
-            localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
+            localStorage.setItem(`ucc_vball_db_${targetTeam}`, JSON.stringify(next));
           } catch {}
           return next;
         });
@@ -2047,7 +2067,7 @@ export default function App() {
     );
 
     unsubStats = onSnapshot(
-      collection(db, `${publicPath}/${activeTeam}/stats`),
+      collection(db, `${publicPath}/${targetTeam}/stats`),
       (snap) => {
         const arr: any[] = [];
         snap.forEach((d) => arr.push(d.data()));
@@ -2056,7 +2076,7 @@ export default function App() {
           const localOnlyStats = (prev.stats || []).filter((s: any) => !remoteStatIds.has(s.id));
           const next = { ...prev, stats: [...arr, ...localOnlyStats] };
           try {
-            localStorage.setItem(`ucc_vball_db_${activeTeam}`, JSON.stringify(next));
+            localStorage.setItem(`ucc_vball_db_${targetTeam}`, JSON.stringify(next));
           } catch {}
           return next;
         });
@@ -2071,7 +2091,7 @@ export default function App() {
       unsubSets();
       unsubStats();
     };
-  }, [user, activeTeam, isQuotaExceeded]);
+  }, [activeTeam, isQuotaExceeded]);
 
   useEffect(() => {
     // Detect standalone mode (already installed)
@@ -2116,43 +2136,104 @@ export default function App() {
     };
   }, []);
 
+  // Real-time synchronization of active game session & live score across devices
   useEffect(() => {
+    // If we're on the game screen, ensure activeMatch is bound to the latest live match
+    if (view === "game" && (!activeMatch || (activeMatch as any).isLive === false)) {
+      const liveMatches = (appData.matches || []).filter((m: any) => m.isLive === true);
+      if (liveMatches.length > 0) {
+        const latestLive = liveMatches[liveMatches.length - 1];
+        setActiveMatch(latestLive);
+        setOpponentName(latestLive.opponent || "Opponent");
+        setMatchFormat(latestLive.format || "Best of 5");
+      }
+    }
+
     if (!activeSetId) {
-      lastLoadedSetIdRef.current = null;
+      if (activeMatch) {
+        const matchSets = (appData.sets || [])
+          .filter((s: any) => s.matchId === activeMatch.id)
+          .sort((a: any, b: any) => (a.setNum || 1) - (b.setNum || 1));
+        if (matchSets.length > 0) {
+          const latestSet = matchSets[matchSets.length - 1];
+          setActiveSetId(latestSet.id);
+          setCurrentSetNum(latestSet.setNum || 1);
+        }
+      }
       return;
     }
-    // Only load set data into working component state when switching to a different set or on initial load!
-    if (lastLoadedSetIdRef.current !== activeSetId && (appData.sets || []).length > 0) {
-      const currentSet = appData.sets.find((s) => s.id === activeSetId);
-      if (currentSet) {
-        lastLoadedSetIdRef.current = activeSetId;
-        setScore({
-          ucc: currentSet.scoreUcc || 0,
-          opp: currentSet.scoreOpp || 0,
-        });
-        if (
-          currentSet.lineup &&
-          Array.isArray(currentSet.lineup) &&
-          currentSet.lineup.length === 6
-        ) {
-          setLineup(currentSet.lineup);
+
+    const currentSet = (appData.sets || []).find((s: any) => s.id === activeSetId);
+    if (!currentSet) {
+      if (activeMatch) {
+        const matchSets = (appData.sets || [])
+          .filter((s: any) => s.matchId === activeMatch.id)
+          .sort((a: any, b: any) => (a.setNum || 1) - (b.setNum || 1));
+        if (matchSets.length > 0) {
+          const latestSet = matchSets[matchSets.length - 1];
+          if (latestSet.id !== activeSetId) {
+            setActiveSetId(latestSet.id);
+            setCurrentSetNum(latestSet.setNum || 1);
+          }
         }
-        if (
-          currentSet.oppLineup &&
-          Array.isArray(currentSet.oppLineup) &&
-          currentSet.oppLineup.length === 6
-        ) {
-          setOppLineup(currentSet.oppLineup);
-        }
-        if (currentSet.serving) {
-          setServing(currentSet.serving);
-        }
-        if (currentSet.rallyPhase) {
-          setRallyPhase(currentSet.rallyPhase);
+      }
+      return;
+    }
+
+    // Auto-advance to a newer set if another device started the next set
+    if (activeMatch) {
+      const matchSets = (appData.sets || [])
+        .filter((s: any) => s.matchId === activeMatch.id)
+        .sort((a: any, b: any) => (a.setNum || 1) - (b.setNum || 1));
+      if (matchSets.length > 0) {
+        const latestSet = matchSets[matchSets.length - 1];
+        if (latestSet.id !== activeSetId && (latestSet.setNum || 1) > (currentSet.setNum || 1)) {
+          setActiveSetId(latestSet.id);
+          setCurrentSetNum(latestSet.setNum || 1);
+          setScore({ ucc: latestSet.scoreUcc || 0, opp: latestSet.scoreOpp || 0 });
+          if (Array.isArray(latestSet.lineup) && latestSet.lineup.length === 6) setLineup(latestSet.lineup);
+          if (Array.isArray(latestSet.oppLineup) && latestSet.oppLineup.length === 6) setOppLineup(latestSet.oppLineup);
+          if (latestSet.serving) setServing(latestSet.serving);
+          if (latestSet.rallyPhase) setRallyPhase(latestSet.rallyPhase);
+          lastLoadedSetIdRef.current = latestSet.id;
+          return;
         }
       }
     }
-  }, [activeSetId, appData.sets]);
+
+    // Live update scores, serving, rally phase, and rotation from other device
+    const targetUcc = typeof currentSet.scoreUcc === "number" ? currentSet.scoreUcc : 0;
+    const targetOpp = typeof currentSet.scoreOpp === "number" ? currentSet.scoreOpp : 0;
+    if (score.ucc !== targetUcc || score.opp !== targetOpp) {
+      setScore({ ucc: targetUcc, opp: targetOpp });
+    }
+
+    if (currentSet.serving && currentSet.serving !== serving) {
+      setServing(currentSet.serving);
+    }
+
+    if (currentSet.rallyPhase && currentSet.rallyPhase !== rallyPhase) {
+      setRallyPhase(currentSet.rallyPhase);
+    }
+
+    if (
+      Array.isArray(currentSet.lineup) &&
+      currentSet.lineup.length === 6 &&
+      JSON.stringify(currentSet.lineup) !== JSON.stringify(lineup)
+    ) {
+      setLineup(currentSet.lineup);
+    }
+
+    if (
+      Array.isArray(currentSet.oppLineup) &&
+      currentSet.oppLineup.length === 6 &&
+      JSON.stringify(currentSet.oppLineup) !== JSON.stringify(oppLineup)
+    ) {
+      setOppLineup(currentSet.oppLineup);
+    }
+
+    lastLoadedSetIdRef.current = activeSetId;
+  }, [activeSetId, activeMatch, appData.sets, appData.matches, view]);
 
   useEffect(() => {
     if (setWinnerModal) {
@@ -3134,8 +3215,25 @@ export default function App() {
 
     setActiveMatch(latestMatch);
     setActiveSetId(latestSet ? latestSet.id : null);
+    setCurrentSetNum(latestSet ? (latestSet.setNum || 1) : 1);
     setOpponentName(latestMatch.opponent);
     setMatchFormat(latestMatch.format);
+
+    if (latestSet) {
+      setScore({ ucc: latestSet.scoreUcc || 0, opp: latestSet.scoreOpp || 0 });
+      if (Array.isArray(latestSet.lineup) && latestSet.lineup.length === 6) {
+        setLineup(latestSet.lineup);
+      }
+      if (Array.isArray(latestSet.oppLineup) && latestSet.oppLineup.length === 6) {
+        setOppLineup(latestSet.oppLineup);
+      }
+      if (latestSet.serving) {
+        setServing(latestSet.serving);
+      }
+      if (latestSet.rallyPhase) {
+        setRallyPhase(latestSet.rallyPhase);
+      }
+    }
 
     if (appData.opponents[latestMatch.opponent]) {
       const opp = appData.opponents[latestMatch.opponent];
@@ -9335,6 +9433,44 @@ export default function App() {
             )}
           </div>
 
+          {/* Real-time Multi-Device Live Match Banner */}
+          {(() => {
+            const liveMatch = (appData.matches || []).find((m: any) => m.isLive === true);
+            if (!liveMatch) return null;
+            const matchSets = (appData.sets || [])
+              .filter((s: any) => s.matchId === liveMatch.id)
+              .sort((a: any, b: any) => (a.setNum || 1) - (b.setNum || 1));
+            const activeSet = matchSets[matchSets.length - 1];
+            return (
+              <div className="w-full mb-6 p-4 sm:p-5 rounded-2xl sm:rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-700 to-emerald-800 text-white shadow-2xl border-2 border-emerald-400/50 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-3 text-center sm:text-left">
+                  <div className="relative flex h-4 w-4 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-4 w-4 bg-red-500"></span>
+                  </div>
+                  <div>
+                    <div className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-emerald-200 flex items-center justify-center sm:justify-start gap-1.5">
+                      <span>GAME LIVE ON COURT</span>
+                      <span>•</span>
+                      <span>{liveMatch.opponent || "Opponent"}</span>
+                    </div>
+                    <div className="text-xl sm:text-2xl font-black tracking-wide drop-shadow-sm">
+                      Set {activeSet?.setNum || 1}: {effectiveTeamName} {activeSet?.scoreUcc ?? 0} — {activeSet?.scoreOpp ?? 0} {liveMatch.opponent || "Opponent"}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={confirmJoinLiveMatch}
+                  className="w-full sm:w-auto px-6 py-3.5 bg-white hover:bg-emerald-50 text-emerald-900 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm uppercase tracking-widest shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Activity size={18} className="text-emerald-700 animate-bounce" />
+                  <span>WATCH / JOIN LIVE GAME</span>
+                </button>
+              </div>
+            );
+          })()}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
             {teamInfo.role !== "player" && (
               <>
@@ -10680,7 +10816,20 @@ export default function App() {
   }
 
   if (view === "game") {
-    if (!activeMatch || (activeMatch as any).isLive === false) {
+    let currentLiveMatch = activeMatch;
+    if (!currentLiveMatch || (currentLiveMatch as any).isLive === false) {
+      const foundLive = (appData.matches || []).find((m: any) => m.isLive === true);
+      if (foundLive) {
+        currentLiveMatch = foundLive;
+        if (!activeMatch || activeMatch.id !== foundLive.id) {
+          setActiveMatch(foundLive);
+          setOpponentName(foundLive.opponent || "Opponent");
+          setMatchFormat(foundLive.format || "Best of 5");
+        }
+      }
+    }
+
+    if (!currentLiveMatch || (currentLiveMatch as any).isLive === false) {
       setTimeout(() => setView("menu"), 0);
       return (
         <div className="fixed inset-0 bg-slate-900 flex items-center justify-center p-6 text-white font-sans z-50">
