@@ -1611,34 +1611,77 @@ export default function App() {
   }, []); // Run on initial mount only! Do not tear down on view changes!
 
   useEffect(() => {
+    // Helper to merge teams without losing any previously created or joined team
+    const mergeTeams = (incoming: any[], current: any[]) => {
+      const map = new Map<string, any>();
+      // 1. Guarantee default UCC Lancers team is always present
+      map.set("ucc_main", {
+        id: "ucc_main",
+        name: "UCC Lancers",
+        color: "from-[#0044cc] to-[#001b5e]",
+        role: "coach",
+      });
+      // 2. Add any previously stored guest teams
+      try {
+        const guestCached = localStorage.getItem("ucc_vball_guest_teams");
+        if (guestCached) {
+          const parsed = JSON.parse(guestCached);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((t) => {
+              if (t && t.id) map.set(t.id, { ...map.get(t.id), ...t });
+            });
+          }
+        }
+      } catch (e) {}
+      // 3. Add existing state teams
+      if (Array.isArray(current)) {
+        current.forEach((t) => {
+          if (t && t.id) map.set(t.id, { ...map.get(t.id), ...t });
+        });
+      }
+      // 4. Add incoming teams
+      if (Array.isArray(incoming)) {
+        incoming.forEach((t) => {
+          if (t && t.id) map.set(t.id, { ...map.get(t.id), ...t });
+        });
+      }
+      return Array.from(map.values());
+    };
+
     if (!user) {
       try {
         const guestCached = localStorage.getItem("ucc_vball_guest_teams");
         if (guestCached) {
           const parsed = JSON.parse(guestCached);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            setMyTeams(parsed);
+            setMyTeams((prev) => mergeTeams(parsed, prev));
             return;
           }
         }
       } catch (e) {}
-      setMyTeams([
-        {
-          id: "ucc_main",
-          name: "UCC Lancers",
-          color: "from-[#0044cc] to-[#001b5e]",
-          role: "coach",
-        },
-      ]);
+      setMyTeams((prev) =>
+        mergeTeams(
+          [
+            {
+              id: "ucc_main",
+              name: "UCC Lancers",
+              color: "from-[#0044cc] to-[#001b5e]",
+              role: "coach",
+            },
+          ],
+          prev,
+        ),
+      );
       return;
     }
-    // Load locally cached teams immediately so user isn't locked out during quota limit
+
+    // Load locally cached teams immediately so user isn't locked out
     try {
       const cached = localStorage.getItem(`ucc_vball_my_teams_${user.uid}`);
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setMyTeams(parsed);
+          setMyTeams((prev) => mergeTeams(parsed, prev));
         }
       }
     } catch (e) {}
@@ -1653,10 +1696,14 @@ export default function App() {
         (docSnap) => {
           if (docSnap.exists() && docSnap.data().teams) {
             const teams = docSnap.data().teams;
-            setMyTeams(teams);
-            try {
-              localStorage.setItem(`ucc_vball_my_teams_${user.uid}`, JSON.stringify(teams));
-            } catch (e) {}
+            setMyTeams((prev) => {
+              const combined = mergeTeams(teams, prev);
+              try {
+                localStorage.setItem(`ucc_vball_my_teams_${user.uid}`, JSON.stringify(combined));
+                localStorage.setItem("ucc_vball_guest_teams", JSON.stringify(combined));
+              } catch (e) {}
+              return combined;
+            });
           }
         },
         (err) => {
@@ -2676,20 +2723,35 @@ export default function App() {
 
   const rotateUCC = () => {
     let nextL: string[] = [];
+    let promptLiberoOut = false;
+    pushToHistory();
     setLineup((prev) => {
       let newLineup = [...prev.slice(1), prev[0]];
-      // If libero rotates to the front row (indices 1, 2, 3 correspond to positions 2, 3, 4)
+      // If libero rotates to the front row (indices 1, 2, 3 correspond to Pos 2, 3, 4)
       if (
         liberoId &&
         (newLineup[1] === liberoId ||
           newLineup[2] === liberoId ||
           newLineup[3] === liberoId)
       ) {
-        if (liberoSwappedOutId) {
-          const idx = newLineup.indexOf(liberoId);
-          if (idx !== -1) {
-            newLineup[idx] = liberoSwappedOutId;
+        const libFrontIdx = newLineup.indexOf(liberoId);
+        if (libFrontIdx !== -1) {
+          if (liberoSwappedOutId && !newLineup.includes(liberoSwappedOutId)) {
+            newLineup[libFrontIdx] = liberoSwappedOutId;
             setLiberoSwappedOutId(null);
+            showToast("Libero automatically subbed out to bench as rotation reached front row", "info");
+          } else {
+            // Find an available bench player to take front row slot
+            const benchPlayer = sortedRoster.find(
+              (p) => (showRetired || !p.isRetired) && !newLineup.includes(p.id) && p.id !== liberoId,
+            );
+            if (benchPlayer) {
+              newLineup[libFrontIdx] = benchPlayer.id;
+              setLiberoSwappedOutId(null);
+              showToast(`Libero auto-subbed out for #${benchPlayer.number} ${benchPlayer.name}`, "info");
+            } else {
+              promptLiberoOut = true;
+            }
           }
         }
       }
@@ -2699,11 +2761,29 @@ export default function App() {
     if (nextL.length > 0) {
       updateSetState({ lineup: nextL });
     }
+    if (promptLiberoOut) {
+      setLiberoPromptPlayerId(liberoId);
+      setShowLiberoOutModal(true);
+    }
   };
   const rotateOpp = () => {
     let nextL: string[] = [];
+    pushToHistory();
     setOppLineup((prev) => {
       const newLineup = [...prev.slice(1), prev[0]];
+      // If opp libero rotates to front row
+      if (
+        oppLiberoId &&
+        (newLineup[1] === oppLiberoId ||
+          newLineup[2] === oppLiberoId ||
+          newLineup[3] === oppLiberoId)
+      ) {
+        const oppLibIdx = newLineup.indexOf(oppLiberoId);
+        if (oppLibIdx !== -1 && oppLiberoSwappedOutId && !newLineup.includes(oppLiberoSwappedOutId)) {
+          newLineup[oppLibIdx] = oppLiberoSwappedOutId;
+          setOppLiberoSwappedOutId(null);
+        }
+      }
       nextL = newLineup;
       return newLineup;
     });
@@ -11133,6 +11213,24 @@ export default function App() {
                 Show Court
               </button>
               <button
+                type="button"
+                onClick={() => {
+                  if (!viewOppStats) {
+                    rotateUCC();
+                    showToast(`${effectiveTeamName} rotated 1 position clockwise`, "info");
+                  } else {
+                    rotateOpp();
+                    showToast(`${opponentName} rotated 1 position clockwise`, "info");
+                  }
+                }}
+                className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1 border border-indigo-200 shadow-xs transition-all active:scale-95 cursor-pointer"
+                title={`Rotate ${!viewOppStats ? effectiveTeamName : opponentName} 1 position clockwise`}
+              >
+                <ArrowRightLeft size={13} className="text-indigo-600" />
+                <span className="hidden sm:inline">Rotate</span>
+                <span className="sm:hidden">Rot</span>
+              </button>
+              <button
                 onClick={() => {
                   setReportOpponentName(opponentName);
                   setShowOpponentReportModal(true);
@@ -11297,8 +11395,32 @@ export default function App() {
                 >
                   <X size={20} />
                 </button>
-                <div className="text-center font-black uppercase text-slate-500 mb-2 tracking-widest text-sm shrink-0">
-                  Court Positioning
+                <div className="flex items-center justify-center gap-2 mb-2 shrink-0 flex-wrap">
+                  <span className="text-center font-black uppercase text-slate-500 tracking-widest text-xs">
+                    Court Positioning
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      rotateUCC();
+                      showToast(`${effectiveTeamName} rotation shifted CW`, "info");
+                    }}
+                    className="px-2.5 py-1 bg-[#0033A0] hover:bg-blue-700 text-white rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs transition-all active:scale-95 cursor-pointer"
+                    title={`Rotate ${effectiveTeamName} 1 position clockwise`}
+                  >
+                    <ArrowRightLeft size={11} /> Rotate {effectiveTeamName}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      rotateOpp();
+                      showToast(`${opponentName} rotation shifted CW`, "info");
+                    }}
+                    className="px-2.5 py-1 bg-slate-700 hover:bg-slate-800 text-white rounded-lg text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs transition-all active:scale-95 cursor-pointer"
+                    title={`Rotate ${opponentName} 1 position clockwise`}
+                  >
+                    <ArrowRightLeft size={11} /> Rotate Opp
+                  </button>
                 </div>
                 {/* COURT CONTAINER */}
                 <div className="w-full flex-1 bg-[#c28e60] p-2 sm:p-4 shadow-[0_0_30px_rgba(0,0,0,0.5)] relative rounded-xl sm:rounded-3xl flex flex-col border-4 sm:border-[8px] border-slate-800 mx-auto min-h-0 min-w-0 max-w-[500px]">
