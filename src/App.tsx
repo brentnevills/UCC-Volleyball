@@ -841,12 +841,29 @@ export default function App() {
   const [showPlayerFilterModal, setShowPlayerFilterModal] = useState(false);
   const [showPracticeStats, setShowPracticeStats] = useState(false);
   const [showStatCorrectionModal, setShowStatCorrectionModal] = useState(false);
-  const [customTeamName, setCustomTeamName] = useState<string>(
-    () => localStorage.getItem("ucc_vball_custom_team_name") || "Lancers",
-  );
+  const [customTeamName, setCustomTeamName] = useState<string>(() => {
+    const saved = localStorage.getItem("ucc_vball_custom_team_name");
+    if (!saved || saved === "Joined Team" || saved.toLowerCase().includes("joined")) return "Lancers";
+    return saved;
+  });
+  // Our team name is Lancers, not any joined team
   const effectiveTeamName =
-    myTeams.find((t) => t.id === activeTeam)?.name || customTeamName || "Lancers";
+    customTeamName &&
+    customTeamName !== "Joined Team" &&
+    !customTeamName.toLowerCase().includes("joined")
+      ? customTeamName
+      : "Lancers";
   const activeTeamProfile = myTeams.find((t) => t.id === activeTeam);
+
+  // Cloud teams discovered from database
+  const [cloudTeams, setCloudTeams] = useState<{ id: string; name: string }[]>(() => {
+    try {
+      const cached = localStorage.getItem("ucc_vball_cloud_teams_cache");
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const [rolePreviewMode, setRolePreviewMode] = useState<"coach" | "player" | null>(null);
 
@@ -944,6 +961,43 @@ export default function App() {
       window.removeEventListener("ucc-quota-exceeded", handleQuotaExceededEvent);
     };
   }, []);
+
+  useEffect(() => {
+    if (!db || !isFirebaseAvailable || isQuotaExceeded) return;
+    let isMounted = true;
+    const fetchCloudTeams = async () => {
+      try {
+        const snap = await getDocs(collection(db, publicPath));
+        if (!isMounted) return;
+        const list: { id: string; name: string }[] = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          const tName = data?.name || data?.teamName;
+          if (tName && typeof tName === "string" && tName.trim().length > 0) {
+            list.push({ id: d.id, name: tName.trim() });
+          }
+        });
+        if (list.length > 0 && isMounted) {
+          setCloudTeams((prev) => {
+            const map = new Map<string, { id: string; name: string }>();
+            prev.forEach((t) => map.set(t.id, t));
+            list.forEach((t) => map.set(t.id, t));
+            const merged = Array.from(map.values());
+            try {
+              localStorage.setItem("ucc_vball_cloud_teams_cache", JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+        }
+      } catch (e) {
+        console.warn("Cloud teams query notice:", e);
+      }
+    };
+    fetchCloudTeams();
+    return () => {
+      isMounted = false;
+    };
+  }, [isFirebaseAvailable, isQuotaExceeded]);
 
   const [showRuggedStorageModal, setShowRuggedStorageModal] = useState(false);
   const [showRollingSnapshotsModal, setShowRollingSnapshotsModal] = useState(false);
@@ -2034,24 +2088,6 @@ export default function App() {
       (err) => handleQuotaErr("settings", err),
     );
 
-    unsubOpponents = onSnapshot(
-      collection(db, `${publicPath}/${targetTeam}/opponents`),
-      (snap) => {
-        const opps: any = {};
-        snap.forEach((d) => {
-          opps[d.id] = d.data();
-        });
-        setAppData((prev) => {
-          const next = { ...prev, opponents: opps };
-          try {
-            localStorage.setItem(`ucc_vball_db_${targetTeam}`, JSON.stringify(next));
-          } catch {}
-          return next;
-        });
-      },
-      (err) => handleQuotaErr("opponents", err),
-    );
-
     unsubMatches = onSnapshot(
       collection(db, `${publicPath}/${targetTeam}/matches`),
       (snap) => {
@@ -2131,12 +2167,31 @@ export default function App() {
       (err) => handleQuotaErr("stats", err),
     );
 
+    // Load opponents last (hydrates scouting and opponent dossier data after core match and stat streams)
+    unsubOpponents = onSnapshot(
+      collection(db, `${publicPath}/${targetTeam}/opponents`),
+      (snap) => {
+        const opps: any = {};
+        snap.forEach((d) => {
+          opps[d.id] = d.data();
+        });
+        setAppData((prev) => {
+          const next = { ...prev, opponents: opps };
+          try {
+            localStorage.setItem(`ucc_vball_db_${targetTeam}`, JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      },
+      (err) => handleQuotaErr("opponents", err),
+    );
+
     return () => {
       unsubSettings();
-      unsubOpponents();
       unsubMatches();
       unsubSets();
       unsubStats();
+      unsubOpponents();
     };
   }, [activeTeam, isQuotaExceeded]);
 
@@ -3122,11 +3177,15 @@ export default function App() {
     loadNamedLineup(name, "setup");
   };
 
-  const handleOpponentNameChange = (e) => {
-    const val = e.target.value.replace(/\//g, "-");
+  const handleOpponentNameChange = (e: any) => {
+    const rawVal = typeof e === "string" ? e : (e?.target?.value || "");
+    const val = rawVal.replace(/\//g, "-");
     setOpponentName(val);
-    const existingKey = Object.keys(appData.opponents).find(
-      (o) => o.toLowerCase() === val.toLowerCase(),
+    const existingKey = Object.keys(appData.opponents || {}).find(
+      (o) =>
+        o.toLowerCase() === val.toLowerCase() ||
+        (appData.opponents[o]?.teamName &&
+          appData.opponents[o].teamName.toLowerCase() === val.toLowerCase()),
     );
     if (existingKey) {
       const opp = appData.opponents[existingKey];
@@ -7257,14 +7316,19 @@ export default function App() {
       }
 
       // 2. Fetch metadata that we now have access to read
-      let tName = "Joined Team";
+      let tName = `Opponent (${code.substring(0, 6).toUpperCase()})`;
       if (db && isFirebaseAvailable) {
         try {
           const snap = await getDoc(
             doc(db, `${publicPath}/${teamId}/settings/core`),
           );
-          if (snap.exists() && snap.data().teamName) {
-            tName = snap.data().teamName;
+          if (snap.exists() && (snap.data().teamName || snap.data().name)) {
+            tName = snap.data().teamName || snap.data().name;
+          } else {
+            const rootSnap = await getDoc(doc(db, `${publicPath}/${teamId}`));
+            if (rootSnap.exists() && (rootSnap.data().name || rootSnap.data().teamName)) {
+              tName = rootSnap.data().name || rootSnap.data().teamName;
+            }
           }
         } catch (e) {}
       }
@@ -8937,6 +9001,8 @@ export default function App() {
         stats={appData.stats}
         opponents={appData.opponents || oppNotesMem || {}}
         oppNotesMem={oppNotesMem}
+        cloudTeams={cloudTeams}
+        myTeams={myTeams}
         effectiveTeamName={effectiveTeamName}
         ourTeamName={effectiveTeamName}
         onSaveOpponentNote={async (oppName, playerId, note) => {
@@ -10016,9 +10082,76 @@ export default function App() {
           .map((m) => m.title),
       ),
     ];
-    const oppNames = Object.keys(appData.opponents).filter(
-      (n) => n.toLowerCase() !== "practice",
-    );
+    const oppNames = (() => {
+      const set = new Set<string>();
+      const ourNames = new Set([
+        "ucc",
+        "ucc lancers",
+        "lancers",
+        "ucc dancers",
+        effectiveTeamName.toLowerCase().trim(),
+      ]);
+
+      // 1. Matches played previously across active team and cloud
+      (appData.matches || []).forEach((m) => {
+        if (m?.opponent) {
+          const oppClean = m.opponent.trim();
+          if (
+            oppClean &&
+            oppClean.toLowerCase() !== "practice" &&
+            !ourNames.has(oppClean.toLowerCase())
+          ) {
+            set.add(oppClean);
+          }
+        }
+      });
+
+      // 2. All teams from cloud (myTeams & cloudTeams)
+      (myTeams || []).forEach((t) => {
+        if (t?.name) {
+          const tName = t.name.trim();
+          if (
+            tName &&
+            tName.toLowerCase() !== "joined team" &&
+            !tName.toLowerCase().includes("joined team") &&
+            !ourNames.has(tName.toLowerCase())
+          ) {
+            set.add(tName);
+          }
+        }
+      });
+
+      (cloudTeams || []).forEach((t) => {
+        if (t?.name) {
+          const tName = t.name.trim();
+          if (
+            tName &&
+            tName.toLowerCase() !== "joined team" &&
+            !tName.toLowerCase().includes("joined team") &&
+            !ourNames.has(tName.toLowerCase())
+          ) {
+            set.add(tName);
+          }
+        }
+      });
+
+      // 3. Saved opponent profiles loaded from cloud
+      Object.keys(appData.opponents || {}).forEach((n) => {
+        const oppObj = appData.opponents[n];
+        const dispName =
+          typeof oppObj === "object" && oppObj?.teamName ? oppObj.teamName : n;
+        const clean = dispName.trim();
+        if (
+          clean &&
+          clean.toLowerCase() !== "practice" &&
+          !ourNames.has(clean.toLowerCase())
+        ) {
+          set.add(clean);
+        }
+      });
+
+      return Array.from(set).sort((a, b) => a.localeCompare(b));
+    })();
 
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col items-center justify-start">
@@ -10198,17 +10331,16 @@ export default function App() {
                       <select
                         className="w-full sm:w-1/2 p-3 sm:p-4 bg-white rounded-xl sm:rounded-2xl border border-slate-200 font-bold text-base sm:text-lg text-[#0033A0] focus:ring-2 focus:ring-[#0033A0] outline-none cursor-pointer"
                         value={
-                          Object.keys(appData.opponents).find(
-                            (o) =>
-                              o.toLowerCase() === opponentName.toLowerCase(),
+                          oppNames.find(
+                            (o) => o.toLowerCase() === opponentName.toLowerCase(),
                           ) || ""
                         }
-                        onChange={(e) => handleOpponentNameChange(e)}
+                        onChange={(e) => handleOpponentNameChange(e.target.value)}
                       >
-                        <option value="">-- Select Previous --</option>
+                        <option value="">-- Select Previous Opponent ({oppNames.length}) --</option>
                         {oppNames.map((o) => (
                           <option key={o} value={o}>
-                            {appData.opponents[o]?.teamName || o}
+                            {appData.opponents?.[o]?.teamName || o}
                           </option>
                         ))}
                       </select>
@@ -10218,7 +10350,7 @@ export default function App() {
                       value={opponentName}
                       onChange={handleOpponentNameChange}
                       placeholder={
-                        oppNames.length > 0 ? "Or type new..." : "Enter name..."
+                        oppNames.length > 0 ? "Or type new..." : "Enter opponent name..."
                       }
                     />
                   </div>

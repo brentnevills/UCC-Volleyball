@@ -24,6 +24,8 @@ export interface OpponentReportModalProps {
   stats?: any[];
   opponents?: Record<string, any>;
   oppNotesMem?: Record<string, any>;
+  cloudTeams?: { id: string; name: string }[];
+  myTeams?: any[];
   effectiveTeamName?: string;
   ourTeamName?: string;
   initialOpponent?: string;
@@ -40,6 +42,8 @@ export const OpponentReportModal: React.FC<OpponentReportModalProps> = ({
   stats = [],
   opponents,
   oppNotesMem,
+  cloudTeams = [],
+  myTeams = [],
   effectiveTeamName,
   ourTeamName,
   initialOpponent = "",
@@ -55,29 +59,57 @@ export const OpponentReportModal: React.FC<OpponentReportModalProps> = ({
   const [newOppInput, setNewOppInput] = useState("");
   const [showAddOppInput, setShowAddOppInput] = useState(false);
 
-  // Collect all unique opponent names from matches, opponents map, and custom inputs
+  // Collect all unique opponent names from matches, opponents map, cloud teams, and custom inputs
   const opponentList = useMemo(() => {
     const set = new Set<string>();
-    if (effectiveInitOpp && effectiveInitOpp.toLowerCase() !== "practice") {
+    const ourNames = new Set([
+      "ucc",
+      "ucc lancers",
+      "lancers",
+      "ucc dancers",
+      effectiveOurTeam.toLowerCase().trim(),
+    ]);
+
+    if (effectiveInitOpp && effectiveInitOpp.toLowerCase() !== "practice" && !ourNames.has(effectiveInitOpp.toLowerCase())) {
       set.add(effectiveInitOpp);
     }
     matches.forEach((m) => {
       if (m.opponent && m.opponent.trim().toLowerCase() !== "practice") {
-        set.add(m.opponent.trim());
+        const oppTrim = m.opponent.trim();
+        if (!ourNames.has(oppTrim.toLowerCase())) {
+          set.add(oppTrim);
+        }
+      }
+    });
+    // Add all teams from cloud
+    (cloudTeams || []).forEach((t) => {
+      const name = t?.name?.trim();
+      if (name && name.toLowerCase() !== "practice" && !name.toLowerCase().includes("joined team") && !ourNames.has(name.toLowerCase())) {
+        set.add(name);
+      }
+    });
+    // Add all teams from myTeams (excluding our team)
+    (myTeams || []).forEach((t) => {
+      const name = t?.name?.trim();
+      if (name && name.toLowerCase() !== "practice" && !name.toLowerCase().includes("joined team") && !ourNames.has(name.toLowerCase())) {
+        set.add(name);
       }
     });
     Object.keys(effectiveOpponentsMap || {}).forEach((k) => {
       const opp = effectiveOpponentsMap[k];
       const name = (typeof opp === "object" && opp?.teamName) ? opp.teamName : k;
       if (name && name.trim().toLowerCase() !== "practice") {
-        set.add(name.trim());
+        const clean = name.trim();
+        if (!ourNames.has(clean.toLowerCase())) {
+          set.add(clean);
+        }
       }
     });
     customOpponents.forEach((c) => {
-      if (c && c.trim()) set.add(c.trim());
+      if (c && c.trim() && !ourNames.has(c.trim().toLowerCase())) set.add(c.trim());
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [matches, effectiveOpponentsMap, effectiveInitOpp, customOpponents]);
+  }, [matches, effectiveOpponentsMap, effectiveInitOpp, customOpponents, cloudTeams, myTeams, effectiveOurTeam]);
 
   const [selectedOpponent, setSelectedOpponent] = useState<string>(() => {
     if (effectiveInitOpp) {
