@@ -703,6 +703,38 @@ export default function App() {
   const [scoreCap, setScoreCap] = useState("");
   const [history, setHistory] = useState([]);
 
+  // Device Client Identification & Match Starter Authority
+  const getClientDeviceId = useCallback(() => {
+    let id = localStorage.getItem("ucc_device_client_id");
+    if (!id) {
+      id = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      localStorage.setItem("ucc_device_client_id", id);
+    }
+    return id;
+  }, []);
+
+  const isGameStarter = useMemo(() => {
+    if (!activeMatch) return true;
+    const starterId = (activeMatch as any).startedBy || localStorage.getItem(`ucc_match_starter_${activeMatch.id}`);
+    if (!starterId) return true; // Legacy matches allow scoring
+
+    const localSavedStarter = localStorage.getItem(`ucc_match_starter_${activeMatch.id}`);
+    if (localSavedStarter && localSavedStarter === starterId) return true;
+
+    const myDevId = getClientDeviceId();
+    const myIds = [
+      user?.uid,
+      auth?.currentUser?.uid,
+      myDevId,
+      localStorage.getItem("ucc_guest_uid"),
+    ].filter(Boolean);
+
+    return myIds.some((id) => id === starterId);
+  }, [activeMatch, user, getClientDeviceId]);
+
+  // Mobile layout mode for phone usability (fast-tap cards vs detailed table)
+  const [mobileGameViewMode, setMobileGameViewMode] = useState<"cards" | "table">("cards");
+
   // Setup State
   const [newPlayerName, setNewPlayerName] = useState("");
   const [newPlayerNum, setNewPlayerNum] = useState("");
@@ -2776,75 +2808,114 @@ export default function App() {
     }
   };
 
-  const rotateUCC = () => {
-    let nextL: string[] = [];
+  const computeRotatedUCCLineup = (
+    currentLineup: string[],
+    currentLiberoId: string | null,
+    swappedOutId: string | null,
+  ) => {
+    if (!Array.isArray(currentLineup) || currentLineup.length !== 6) {
+      return {
+        newLineup: Array.isArray(currentLineup) ? [...currentLineup] : [],
+        promptLiberoOut: false,
+        newSwappedOutId: swappedOutId,
+        autoSubbedMsg: null,
+      };
+    }
+    // Standard clockwise rotation: Pos 2 (index 1) -> Pos 1 (index 0 / server), Pos 1 (index 0) -> Pos 6 (index 5)
+    const newLineup = [...currentLineup.slice(1), currentLineup[0]];
     let promptLiberoOut = false;
-    pushToHistory();
-    setLineup((prev) => {
-      let newLineup = [...prev.slice(1), prev[0]];
-      // If libero rotates to the front row (indices 1, 2, 3 correspond to Pos 2, 3, 4)
-      if (
-        liberoId &&
-        (newLineup[1] === liberoId ||
-          newLineup[2] === liberoId ||
-          newLineup[3] === liberoId)
-      ) {
-        const libFrontIdx = newLineup.indexOf(liberoId);
-        if (libFrontIdx !== -1) {
-          if (liberoSwappedOutId && !newLineup.includes(liberoSwappedOutId)) {
-            newLineup[libFrontIdx] = liberoSwappedOutId;
-            setLiberoSwappedOutId(null);
-            showToast("Libero automatically subbed out to bench as rotation reached front row", "info");
+    let newSwappedOutId = swappedOutId;
+    let autoSubbedMsg: string | null = null;
+
+    // Front row positions: indices 1, 2, 3 correspond to Pos 2, Pos 3, Pos 4
+    if (
+      currentLiberoId &&
+      (newLineup[1] === currentLiberoId ||
+        newLineup[2] === currentLiberoId ||
+        newLineup[3] === currentLiberoId)
+    ) {
+      const libFrontIdx = newLineup.indexOf(currentLiberoId);
+      if (libFrontIdx !== -1) {
+        if (newSwappedOutId && !newLineup.includes(newSwappedOutId)) {
+          newLineup[libFrontIdx] = newSwappedOutId;
+          newSwappedOutId = null;
+          autoSubbedMsg = "Libero automatically subbed out to bench as rotation reached front row";
+        } else {
+          // Find an available bench player to take front row slot
+          const benchPlayer = sortedRoster.find(
+            (p) =>
+              (showRetired || !p.isRetired) &&
+              !newLineup.includes(p.id) &&
+              p.id !== currentLiberoId,
+          );
+          if (benchPlayer) {
+            newLineup[libFrontIdx] = benchPlayer.id;
+            newSwappedOutId = null;
+            autoSubbedMsg = `Libero auto-subbed out for #${benchPlayer.number} ${benchPlayer.name}`;
           } else {
-            // Find an available bench player to take front row slot
-            const benchPlayer = sortedRoster.find(
-              (p) => (showRetired || !p.isRetired) && !newLineup.includes(p.id) && p.id !== liberoId,
-            );
-            if (benchPlayer) {
-              newLineup[libFrontIdx] = benchPlayer.id;
-              setLiberoSwappedOutId(null);
-              showToast(`Libero auto-subbed out for #${benchPlayer.number} ${benchPlayer.name}`, "info");
-            } else {
-              promptLiberoOut = true;
-            }
+            promptLiberoOut = true;
           }
         }
       }
-      nextL = newLineup;
-      return newLineup;
-    });
-    if (nextL.length > 0) {
-      updateSetState({ lineup: nextL });
     }
-    if (promptLiberoOut) {
+    return { newLineup, promptLiberoOut, newSwappedOutId, autoSubbedMsg };
+  };
+
+  const computeRotatedOppLineup = (
+    currentOppLineup: string[],
+    currentOppLiberoId: string | null,
+    oppSwappedOutId: string | null,
+  ) => {
+    if (!Array.isArray(currentOppLineup) || currentOppLineup.length !== 6) {
+      return {
+        newOppLineup: Array.isArray(currentOppLineup) ? [...currentOppLineup] : [],
+        newOppSwappedOutId: oppSwappedOutId,
+      };
+    }
+    const newOppLineup = [...currentOppLineup.slice(1), currentOppLineup[0]];
+    let newOppSwappedOutId = oppSwappedOutId;
+    if (
+      currentOppLiberoId &&
+      (newOppLineup[1] === currentOppLiberoId ||
+        newOppLineup[2] === currentOppLiberoId ||
+        newOppLineup[3] === currentOppLiberoId)
+    ) {
+      const oppLibIdx = newOppLineup.indexOf(currentOppLiberoId);
+      if (oppLibIdx !== -1 && newOppSwappedOutId && !newOppLineup.includes(newOppSwappedOutId)) {
+        newOppLineup[oppLibIdx] = newOppSwappedOutId;
+        newOppSwappedOutId = null;
+      }
+    }
+    return { newOppLineup, newOppSwappedOutId };
+  };
+
+  const rotateUCC = (explicitLineup?: string[]) => {
+    pushToHistory();
+    const source = explicitLineup || lineup;
+    const { newLineup, promptLiberoOut, newSwappedOutId, autoSubbedMsg } =
+      computeRotatedUCCLineup(source, liberoId, liberoSwappedOutId);
+    setLineup(newLineup);
+    setLiberoSwappedOutId(newSwappedOutId);
+    updateSetState({ lineup: newLineup });
+    if (autoSubbedMsg) {
+      showToast(autoSubbedMsg, "info");
+    }
+    if (promptLiberoOut && liberoId) {
       setLiberoPromptPlayerId(liberoId);
       setShowLiberoOutModal(true);
     }
+    return newLineup;
   };
-  const rotateOpp = () => {
-    let nextL: string[] = [];
+
+  const rotateOpp = (explicitOppLineup?: string[]) => {
     pushToHistory();
-    setOppLineup((prev) => {
-      const newLineup = [...prev.slice(1), prev[0]];
-      // If opp libero rotates to front row
-      if (
-        oppLiberoId &&
-        (newLineup[1] === oppLiberoId ||
-          newLineup[2] === oppLiberoId ||
-          newLineup[3] === oppLiberoId)
-      ) {
-        const oppLibIdx = newLineup.indexOf(oppLiberoId);
-        if (oppLibIdx !== -1 && oppLiberoSwappedOutId && !newLineup.includes(oppLiberoSwappedOutId)) {
-          newLineup[oppLibIdx] = oppLiberoSwappedOutId;
-          setOppLiberoSwappedOutId(null);
-        }
-      }
-      nextL = newLineup;
-      return newLineup;
-    });
-    if (nextL.length > 0) {
-      updateSetState({ oppLineup: nextL });
-    }
+    const source = explicitOppLineup || oppLineup;
+    const { newOppLineup, newOppSwappedOutId } =
+      computeRotatedOppLineup(source, oppLiberoId, oppLiberoSwappedOutId);
+    setOppLineup(newOppLineup);
+    setOppLiberoSwappedOutId(newOppSwappedOutId);
+    updateSetState({ oppLineup: newOppLineup });
+    return newOppLineup;
   };
 
   const changeRallyPhase = (newPhase) => {
@@ -3250,6 +3321,8 @@ export default function App() {
       }
 
       const matchId = Date.now().toString();
+      const starterId = user?.uid || auth?.currentUser?.uid || getClientDeviceId();
+      const starterName = user?.displayName || user?.email?.split("@")[0] || "Coach";
       const newMatch = {
         id: matchId,
         date: new Date().toISOString(),
@@ -3259,7 +3332,14 @@ export default function App() {
         format: "Open Drill (Grid)",
         cap: "",
         isLive: true,
+        startedBy: starterId,
+        startedByName: starterName,
+        startedAt: new Date().toISOString(),
       };
+      try {
+        localStorage.setItem(`ucc_match_starter_${matchId}`, starterId);
+        localStorage.setItem(`ucc_match_starter_name_${matchId}`, starterName);
+      } catch (e) {}
 
       const setId = Date.now().toString() + "_set";
       const newSet = {
@@ -3502,6 +3582,8 @@ export default function App() {
     enforceFullscreen();
     if (matchType === "Practice" && matchFormat === "Open Drill (Grid)") {
       const matchId = Date.now().toString();
+      const starterId = user?.uid || auth?.currentUser?.uid || getClientDeviceId();
+      const starterName = user?.displayName || user?.email?.split("@")[0] || "Coach";
       const newMatch = {
         id: matchId,
         date: new Date().toISOString(),
@@ -3511,7 +3593,14 @@ export default function App() {
         format: matchFormat,
         cap: "",
         isLive: true,
+        startedBy: starterId,
+        startedByName: starterName,
+        startedAt: new Date().toISOString(),
       };
+      try {
+        localStorage.setItem(`ucc_match_starter_${matchId}`, starterId);
+        localStorage.setItem(`ucc_match_starter_name_${matchId}`, starterName);
+      } catch (e) {}
 
       const setId = Date.now().toString() + "_set";
       const newSet = {
@@ -3617,6 +3706,8 @@ export default function App() {
 
       const matchId = Date.now().toString();
       const oppClean = (opponentName && opponentName.trim()) || "Opponent";
+      const starterId = user?.uid || auth?.currentUser?.uid || getClientDeviceId();
+      const starterName = user?.displayName || user?.email?.split("@")[0] || "Coach";
       const newMatch = {
         id: matchId,
         date: new Date().toISOString(),
@@ -3626,7 +3717,14 @@ export default function App() {
         format: matchFormat || "Best of 5",
         cap: scoreCap || "",
         isLive: true,
+        startedBy: starterId,
+        startedByName: starterName,
+        startedAt: new Date().toISOString(),
       };
+      try {
+        localStorage.setItem(`ucc_match_starter_${matchId}`, starterId);
+        localStorage.setItem(`ucc_match_starter_name_${matchId}`, starterName);
+      } catch (e) {}
 
       const setId = Date.now().toString() + "_set";
       const safeLineup = [...lineup];
@@ -3759,6 +3857,10 @@ export default function App() {
   };
 
   const handleUndo = async () => {
+    if (!isGameStarter) {
+      showToast("Score and match rollbacks are restricted to the match starter.", "warning");
+      return;
+    }
     if (history.length === 0) return;
     const lastState = history[history.length - 1];
     setHistory((prev) => prev.slice(0, -1));
@@ -4261,6 +4363,10 @@ export default function App() {
     newUccScore: number,
     newOppScore: number,
   ) => {
+    if (!isGameStarter) {
+      showToast("Only the match starter can edit set scores.", "warning");
+      return;
+    }
     if (activeSetId === setId) {
       setScore({ ucc: newUccScore, opp: newOppScore });
     }
@@ -4331,11 +4437,11 @@ export default function App() {
       setSelectedPlayerId(null);
     }
 
-    // Determine if this stat automatically scores a point
+    // Determine if this stat automatically scores a point (Starters only)
     let pointAwardedTo: "ucc" | "opp" | null = null;
     let pointReason = "";
 
-    if (autoScoreTracking) {
+    if (autoScoreTracking && isGameStarter) {
       if (category === "Attack") {
         if (metric === "Kill") {
           pointAwardedTo = "ucc";
@@ -4387,6 +4493,10 @@ export default function App() {
       const teamName = pointAwardedTo === "ucc" ? effectiveTeamName : (opponentName.trim() || "Opponent");
       showToast(`${pointReason} -> Point ${teamName}!`, "success");
     } else {
+      if (!isGameStarter) {
+        const pObj = appData.roster.find((r) => r.id === playerId);
+        showToast(`Stat recorded: ${metric} for ${pObj?.name || playerId} (Score synced with starter)`, "info");
+      }
       // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
       if (
         rallyPhase === "receive" ||
@@ -4412,11 +4522,11 @@ export default function App() {
       setSelectedOppId(null);
     }
 
-    // Determine if this opponent stat automatically scores a point
+    // Determine if this opponent stat automatically scores a point (Starters only)
     let pointAwardedTo: "ucc" | "opp" | null = null;
     let pointReason = "";
 
-    if (autoScoreTracking) {
+    if (autoScoreTracking && isGameStarter) {
       if (category === "Attack") {
         if (metric === "Kill") {
           pointAwardedTo = "opp";
@@ -4471,6 +4581,9 @@ export default function App() {
       const teamName = pointAwardedTo === "ucc" ? effectiveTeamName : (opponentName.trim() || "Opponent");
       showToast(`${pointReason} -> Point ${teamName}!`, "success");
     } else {
+      if (!isGameStarter) {
+        showToast(`Opponent stat recorded: ${metric} (Score synced with starter)`, "info");
+      }
       // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
       if (
         rallyPhase === "receive" ||
@@ -4497,6 +4610,10 @@ export default function App() {
   };
 
   const handlePoint = async (team: "ucc" | "opp", skipHistory = false) => {
+    if (!isGameStarter) {
+      showToast("Only the match starter can change the score.", "warning");
+      return;
+    }
     if (!skipHistory) pushToHistory();
     setEndRallyVisible(false);
     setSelectedOppId(null);
@@ -4518,19 +4635,36 @@ export default function App() {
     setScore({ ucc: newUcc, opp: newOpp });
 
     let nextServing = serving;
+    let nextPhase = "serve";
+    let updatedLineup: string[] | null = null;
+    let updatedOppLineup: string[] | null = null;
+
     if (team === "ucc") {
       if (serving === "opp") {
         nextServing = "ucc";
+        nextPhase = "serve";
         setServing("ucc");
-        rotateUCC();
+        updatedLineup = rotateUCC();
+      } else {
+        nextServing = "ucc";
+        nextPhase = "serve";
+        setServing("ucc");
       }
     } else {
       if (serving === "ucc") {
         nextServing = "opp";
+        nextPhase = "receive";
         setServing("opp");
-        rotateOpp();
+        updatedOppLineup = rotateOpp();
+      } else {
+        nextServing = "opp";
+        nextPhase = "receive";
+        setServing("opp");
       }
     }
+
+    setServing(nextServing);
+    setRallyPhase(nextPhase);
 
     const targetSetId =
       activeSetId ||
@@ -4559,7 +4693,9 @@ export default function App() {
       scoreOpp: newOpp,
       pointHistory: updatedPointHistory,
       serving: nextServing,
-      rallyPhase: "serve",
+      rallyPhase: nextPhase,
+      ...(updatedLineup ? { lineup: updatedLineup } : {}),
+      ...(updatedOppLineup ? { oppLineup: updatedOppLineup } : {}),
     });
 
     const winner = checkSetWin(newUcc, newOpp);
@@ -4567,7 +4703,7 @@ export default function App() {
       setSetWinnerModal(winner);
       setNextSetServing(nextServing === "ucc" ? "opp" : "ucc");
     } else {
-      changeRallyPhase("serve");
+      changeRallyPhase(nextPhase);
     }
   };
 
@@ -4749,6 +4885,7 @@ export default function App() {
     setShowLineupEditModal(false);
 
     const setId = Date.now().toString() + "_set";
+    const initialRallyPhase = selectedServing === "opp" ? "receive" : "serve";
     const newSet = {
       id: setId,
       matchId: targetMatchId,
@@ -4758,7 +4895,7 @@ export default function App() {
       lineup: safeSelectedLineup,
       oppLineup: safeOppLineup,
       serving: selectedServing,
-      rallyPhase: "serve",
+      rallyPhase: initialRallyPhase,
     };
 
     const updatedData = {
@@ -4796,8 +4933,13 @@ export default function App() {
     setHistory([]);
     setBetweenSetsModal(null);
     setSetWinnerModal(null);
-    changeRallyPhase("serve");
-    setServePromptVisible(true);
+    changeRallyPhase(initialRallyPhase);
+    if (selectedServing === "ucc") {
+      setServePromptVisible(true);
+    } else {
+      setServePromptVisible(false);
+      setOppServeReceivePrompt(null);
+    }
     setView("game");
   };
 
@@ -5197,6 +5339,10 @@ export default function App() {
   };
 
   const manualScoreAdjust = async (team: "ucc" | "opp", delta: number) => {
+    if (!isGameStarter) {
+      showToast("Only the match starter can change the score.", "warning");
+      return;
+    }
     pushToHistory();
     const currentUcc = typeof score?.ucc === "number" && !isNaN(score.ucc) ? score.ucc : 0;
     const currentOpp = typeof score?.opp === "number" && !isNaN(score.opp) ? score.opp : 0;
@@ -11146,21 +11292,34 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex items-center space-x-1 sm:space-x-2">
-                    <button
-                      onClick={() => manualScoreAdjust("ucc", -1)}
-                      className="text-white/40 hover:text-white p-1 active:scale-90"
-                    >
-                      <ChevronDown size={14} />
-                    </button>
-                    <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
-                      {score.ucc}
-                    </p>
-                    <button
-                      onClick={() => manualScoreAdjust("ucc", 1)}
-                      className="text-white/40 hover:text-white p-1 active:scale-90"
-                    >
-                      <ChevronUp size={14} />
-                    </button>
+                    {isGameStarter ? (
+                      <>
+                        <button
+                          onClick={() => manualScoreAdjust("ucc", -1)}
+                          className="text-white/40 hover:text-white p-1 active:scale-90"
+                          title="Decrease Score"
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                        <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                          {score.ucc}
+                        </p>
+                        <button
+                          onClick={() => manualScoreAdjust("ucc", 1)}
+                          className="text-white/40 hover:text-white p-1 active:scale-90"
+                          title="Increase Score"
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-1.5" title="Score locked — managed by match starter">
+                        <Lock size={13} className="text-amber-400/80" />
+                        <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                          {score.ucc}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
                 {serving === "ucc" && (
@@ -11188,13 +11347,13 @@ export default function App() {
                       : matchFormat}{" "}
                   • S{currentSetNum}
                 </span>
-                {isFirebaseAvailable && user ? (
-                  <span className="text-[5px] sm:text-[6px] tracking-widest text-emerald-400 opacity-80 border-l sm:border-none border-white/20 pl-2 sm:pl-0">
-                    LIVE SYNC
+                {isGameStarter ? (
+                  <span className="text-[5px] sm:text-[6px] tracking-widest text-amber-300 font-bold uppercase border-l sm:border-none border-white/20 pl-2 sm:pl-0">
+                    STARTER (SCORING)
                   </span>
                 ) : (
-                  <span className="text-[5px] sm:text-[6px] tracking-widest text-amber-500 opacity-80 uppercase border-l sm:border-none border-white/20 pl-2 sm:pl-0">
-                    {isFirebaseAvailable ? "Sync Delayed" : "Local Mode"}
+                  <span className="text-[5px] sm:text-[6px] tracking-widest text-blue-300 font-bold uppercase border-l sm:border-none border-white/20 pl-2 sm:pl-0 flex items-center gap-0.5">
+                    <Lock size={6} /> STATS ONLY (SYNCED)
                   </span>
                 )}
               </span>
@@ -11312,21 +11471,34 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex items-center space-x-1 sm:space-x-2">
-                    <button
-                      onClick={() => manualScoreAdjust("opp", -1)}
-                      className="text-white/40 hover:text-white p-1 active:scale-90"
-                    >
-                      <ChevronDown size={14} />
-                    </button>
-                    <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
-                      {score.opp}
-                    </p>
-                    <button
-                      onClick={() => manualScoreAdjust("opp", 1)}
-                      className="text-white/40 hover:text-white p-1 active:scale-90"
-                    >
-                      <ChevronUp size={14} />
-                    </button>
+                    {isGameStarter ? (
+                      <>
+                        <button
+                          onClick={() => manualScoreAdjust("opp", -1)}
+                          className="text-white/40 hover:text-white p-1 active:scale-90"
+                          title="Decrease Opponent Score"
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                        <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                          {score.opp}
+                        </p>
+                        <button
+                          onClick={() => manualScoreAdjust("opp", 1)}
+                          className="text-white/40 hover:text-white p-1 active:scale-90"
+                          title="Increase Opponent Score"
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-1.5" title="Score locked — managed by match starter">
+                        <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                          {score.opp}
+                        </p>
+                        <Lock size={13} className="text-amber-400/80" />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -11344,6 +11516,35 @@ export default function App() {
               >
                 Show Court
               </button>
+              {/* Mobile View Toggle: Cards vs Table */}
+              <div className="flex bg-slate-200/90 rounded-lg p-0.5 border border-slate-300">
+                <button
+                  type="button"
+                  onClick={() => setMobileGameViewMode("cards")}
+                  className={`px-2 sm:px-2.5 py-1 rounded-md font-black text-xs uppercase transition-all flex items-center gap-1 cursor-pointer ${
+                    mobileGameViewMode === "cards"
+                      ? "bg-white text-[#0033A0] shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  title="Mobile-optimized cards view"
+                >
+                  <Smartphone size={12} />
+                  <span>Cards</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileGameViewMode("table")}
+                  className={`px-2 sm:px-2.5 py-1 rounded-md font-black text-xs uppercase transition-all flex items-center gap-1 cursor-pointer ${
+                    mobileGameViewMode === "table"
+                      ? "bg-white text-[#0033A0] shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  title="Full table grid"
+                >
+                  <Table size={12} />
+                  <span>Table</span>
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -11759,120 +11960,534 @@ export default function App() {
             </div>
           )}
 
-          <div className="flex-1 overflow-auto p-2 sm:p-4 w-full">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-5xl mx-auto overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[600px]">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-36 sm:w-44">
-                      Sub / Lib
-                    </th>
-                    <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black">
-                      Players on Court (6)
-                    </th>
-                    {trackedCategories.Pass && viewOppStats && (
-                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                        Pass
-                      </th>
-                    )}
-                    {trackedCategories.Serve && (
-                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                        Serve
-                      </th>
-                    )}
-                    {trackedCategories.Attack && (
-                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                        Attack
-                      </th>
-                    )}
-                    {trackedCategories.Block && (
-                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                        Block
-                      </th>
-                    )}
-                    {trackedCategories.Dig && (
-                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                        Dig
-                      </th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {(() => {
-                    const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
-                      (id): id is string => Boolean(id),
-                    );
-                    const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
-                      if (!viewOppStats) {
-                        const pA = appData.roster.find((r) => r.id === idA);
-                        const pB = appData.roster.find((r) => r.id === idB);
-                        return sortPlayersByNumberThenAlpha(
-                          pA || { name: idA, id: idA },
-                          pB || { name: idB, id: idB },
-                        );
-                      } else {
-                        return sortPlayersByNumberThenAlpha(
-                          { number: idA, name: idA, id: idA },
-                          { number: idB, name: idB, id: idB },
-                        );
+          {/* RALLY FLOW STATUS STRIP */}
+          <div className="px-2 sm:px-4 pt-1.5 pb-1 shrink-0 w-full max-w-5xl mx-auto">
+            {serving === "ucc" && (rallyPhase === "serve" || rallyPhase === "opp_receive") ? (
+              <div className="bg-emerald-50 border border-emerald-300 rounded-xl px-2.5 sm:px-3 py-1.5 flex flex-wrap items-center justify-between gap-1.5 shadow-xs">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                  <span className="text-xs sm:text-sm font-black text-emerald-950 uppercase tracking-wider truncate">
+                    🏐 {effectiveTeamName} Serving
+                  </span>
+                  <span className="text-[10px] font-black uppercase bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded shrink-0">
+                    #{appData.roster.find((r) => r.id === lineup[0])?.number || "?"}{" "}
+                    {appData.roster.find((r) => r.id === lineup[0])?.name || "Server"} (Pos 1)
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setServePromptVisible(true)}
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                  >
+                    Serve Prompt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => changeRallyPhase("play")}
+                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                  >
+                    In Play
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (lineup[0]) {
+                        logStat(lineup[0], "Serve", "Ace", 1, false);
                       }
-                    });
+                      handlePoint("ucc");
+                      showToast(`Ace -> Point ${effectiveTeamName}!`, "success");
+                    }}
+                    className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    title="Quick Ace (+1 Pt Lancers)"
+                  >
+                    +Ace
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (lineup[0]) {
+                        logStat(lineup[0], "Serve", "Error", 1, false);
+                      }
+                      handlePoint("opp");
+                      showToast("Serve Error -> Point Opponent!", "info");
+                    }}
+                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    title="Quick Serve Error (+1 Pt Opponent)"
+                  >
+                    +Error
+                  </button>
+                </div>
+              </div>
+            ) : serving === "opp" && (rallyPhase === "receive" || rallyPhase === "serve") ? (
+              <div className="bg-purple-50 border border-purple-300 rounded-xl px-2.5 sm:px-3 py-1.5 flex flex-wrap items-center justify-between gap-1.5 shadow-xs">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-ping shrink-0" />
+                  <span className="text-xs sm:text-sm font-black text-purple-950 uppercase tracking-wider truncate">
+                    🛡️ {effectiveTeamName} Receiving
+                  </span>
+                  <span className="text-[10px] font-black uppercase bg-purple-200 text-purple-900 px-1.5 py-0.5 rounded shrink-0">
+                    Opp #{oppLineup[0] || "?"} Serving
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOppServeReceivePrompt({
+                        passerId: null,
+                        serverId: oppLineup[0],
+                      })
+                    }
+                    className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer animate-pulse"
+                  >
+                    Pass / Receive
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => changeRallyPhase("play")}
+                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                  >
+                    In Play
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (oppLineup[0]) {
+                        logStat(oppLineup[0], "Serve", "Error", 1, true);
+                      }
+                      handlePoint("ucc");
+                      showToast(`Opponent Serve Error -> Point ${effectiveTeamName}!`, "success");
+                    }}
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    title="Opponent Missed Serve (+1 Pt Lancers)"
+                  >
+                    +Opp Miss
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOppServeReceivePrompt({
+                        passerId: null,
+                        serverId: oppLineup[0],
+                        selectingAce: true,
+                      });
+                    }}
+                    className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    title="Opponent Ace (+1 Pt Opponent)"
+                  >
+                    +Opp Ace
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-blue-50 border border-blue-300 rounded-xl px-2.5 sm:px-3 py-1.5 flex flex-wrap items-center justify-between gap-1.5 shadow-xs">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse shrink-0" />
+                  <span className="text-xs sm:text-sm font-black text-blue-950 uppercase tracking-wider truncate">
+                    ⚡ BALL IN PLAY • Live Rally
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setEndRallyVisible(true)}
+                    className="px-2.5 py-1 bg-[#0033A0] hover:bg-blue-800 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                  >
+                    End Rally
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePoint("ucc")}
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                  >
+                    +Pt {effectiveTeamName}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePoint("opp")}
+                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                  >
+                    +Pt Opp
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => changeRallyPhase(serving === "ucc" ? "serve" : "receive")}
+                    className="px-1.5 py-1 text-slate-500 hover:text-slate-800 text-[9px] font-bold uppercase transition-colors"
+                    title="Reset to Pre-Serve / Receive"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
-                    return sortedCourtPlayers.map((id, index) => {
-                      const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
-                      const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
-                      // Back-row ("background") players in standard rotation are indices 0, 4, 5 (Positions 1, 5, 6)
-                      const isBackRow = [0, 4, 5].includes(posIndex);
-                      const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
-                      const isServer = !viewOppStats
-                        ? posIndex === 0 && serving === "ucc"
-                        : posIndex === 0 && serving === "opp";
+          {mobileGameViewMode === "cards" ? (
+            <div className="flex-1 overflow-y-auto p-2 sm:p-4 w-full">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-w-5xl mx-auto pb-4">
+                {(() => {
+                  const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
+                    (id): id is string => Boolean(id),
+                  );
+                  const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
+                    if (!viewOppStats) {
+                      const pA = appData.roster.find((r) => r.id === idA);
+                      const pB = appData.roster.find((r) => r.id === idB);
+                      return sortPlayersByNumberThenAlpha(
+                        pA || { name: idA, id: idA },
+                        pB || { name: idB, id: idB },
+                      );
+                    } else {
+                      return sortPlayersByNumberThenAlpha(
+                        { number: idA, name: idA, id: idA },
+                        { number: idB, name: idB, id: idB },
+                      );
+                    }
+                  });
 
-                      const pName = !viewOppStats
-                        ? appData.roster.find((r) => r.id === id)?.name || id
-                        : id;
-                      const pNum = !viewOppStats
-                        ? appData.roster.find((r) => r.id === id)?.number || "-"
-                        : id.replace(/\D/g, "") || id;
-                      return (
-                        <tr
-                          key={index}
-                          className="hover:bg-slate-50/50 transition-colors"
-                        >
-                          <td className="p-1.5 pt-2">
+                  return sortedCourtPlayers.map((id, index) => {
+                    const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
+                    const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
+                    const isBackRow = [0, 4, 5].includes(posIndex);
+                    const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
+                    const isServer = !viewOppStats
+                      ? posIndex === 0 && serving === "ucc"
+                      : posIndex === 0 && serving === "opp";
+
+                    const pName = !viewOppStats
+                      ? appData.roster.find((r) => r.id === id)?.name || id
+                      : id;
+                    const pNum = !viewOppStats
+                      ? appData.roster.find((r) => r.id === id)?.number || "-"
+                      : id.replace(/\D/g, "") || id;
+
+                    return (
+                      <div
+                        key={`card-${id}-${index}`}
+                        className="bg-white rounded-xl shadow-xs border border-slate-200 p-2.5 flex flex-col justify-between transition-all hover:border-blue-300"
+                      >
+                        {/* Top player header */}
+                        <div className="flex items-center justify-between pb-2 border-b border-slate-100 gap-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-8 h-8 rounded-full bg-[#0033A0]/10 text-[#0033A0] flex items-center justify-center text-xs font-black shrink-0 border border-[#0033A0]/20">
+                              {pNum}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-black text-slate-800 text-sm truncate">
+                                  {!viewOppStats ? pName : `Opponent #${id}`}
+                                </span>
+                                {isLibero && (
+                                  <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[8px] font-black uppercase tracking-wider">
+                                    LIBERO
+                                  </span>
+                                )}
+                                {isServer && (
+                                  <span className="text-[9px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded shadow-xs animate-pulse">
+                                    SRV
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                <span>Pos {courtPosNum}</span>
+                                <span>•</span>
+                                <span className={isBackRow ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
+                                  {isBackRow ? "Back Row" : "Front Row"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Quick Sub / Libero button */}
+                          <div className="shrink-0">
                             {!viewOppStats ? (
-                              <div className="flex items-center justify-center gap-1">
-                                {isLibero ? (
-                                  <>
-                                    <button
-                                      onClick={() => handleLiberoSwap(id)}
-                                      className="flex-1 py-2 px-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
-                                      title="Swap Libero out for original player (Does not count toward sub total)"
-                                    >
-                                      <ArrowRightLeft size={12} />
-                                      Lib Out
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setSelectedPlayerId(id);
-                                        setSubModalVisible(true);
-                                      }}
-                                      className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-slate-200"
-                                      title="Regular substitution"
-                                    >
-                                      Sub
-                                    </button>
-                                  </>
-                                ) : isBackRow ? (
-                                  <>
-                                    <button
-                                      onClick={() => handleLiberoSwap(id)}
-                                      className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95 shadow-xs"
-                                      title="Swap Libero in for this back row player (Does not count toward sub total)"
-                                    >
-                                      <ArrowRightLeft size={12} className="text-amber-700" />
-                                      Lib In
-                                    </button>
+                              isLibero ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleLiberoSwap(id)}
+                                  className="px-2 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-black text-[10px] uppercase flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer"
+                                  title="Swap Libero out"
+                                >
+                                  <ArrowRightLeft size={11} />
+                                  <span>Lib Out</span>
+                                </button>
+                              ) : isBackRow ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleLiberoSwap(id)}
+                                  className="px-2 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg font-black text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer"
+                                  title="Swap Libero in"
+                                >
+                                  <ArrowRightLeft size={11} className="text-amber-700" />
+                                  <span>Lib In</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (subPairs[id]) {
+                                      setPendingAutoSub({ outId: id, inId: subPairs[id] });
+                                    } else {
+                                      setSelectedPlayerId(id);
+                                      setSubModalVisible(true);
+                                    }
+                                  }}
+                                  className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer"
+                                  title="Substitute player"
+                                >
+                                  <ArrowRightLeft size={11} />
+                                  <span>Sub</span>
+                                </button>
+                              )
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedOppId(id);
+                                  setShowOppSubModal(true);
+                                }}
+                                className="px-2 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer"
+                              >
+                                <span>Sub</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Quick-Action Touch Grid */}
+                        <div className={`grid ${trackedCategories.Pass ? "grid-cols-5" : "grid-cols-4"} gap-1 sm:gap-1.5 pt-2`}>
+                          {trackedCategories.Pass && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (viewOppStats) {
+                                  setOppPassingPrompt({
+                                    passerId: id,
+                                    serverId: lineup[0] || undefined,
+                                  });
+                                } else {
+                                  setOppServeReceivePrompt({
+                                    passerId: id,
+                                    serverId: oppLineup[0] || undefined,
+                                  });
+                                }
+                              }}
+                              className={`py-2 px-0.5 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer min-h-[42px] ${
+                                rallyPhase === "receive" && !viewOppStats
+                                  ? "bg-purple-600 text-white border border-purple-500 shadow-md animate-pulse ring-2 ring-purple-400/50"
+                                  : "bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
+                              }`}
+                              title={!viewOppStats ? "Record Pass Rating (3-0) for this player" : "Record Opponent Pass"}
+                            >
+                              <span>Pass</span>
+                            </button>
+                          )}
+                          {trackedCategories.Attack && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setStatPrompt({
+                                  playerId: id,
+                                  type: "Attack",
+                                  isOpp: viewOppStats,
+                                })
+                              }
+                              className="py-2 px-0.5 bg-green-50 hover:bg-green-100 text-green-800 border border-green-200 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[42px]"
+                            >
+                              <span>Attack</span>
+                            </button>
+                          )}
+                          {trackedCategories.Serve && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (viewOppStats) {
+                                  setOppServeReceivePrompt({ passerId: null, serverId: id });
+                                } else {
+                                  setStatPrompt({ playerId: id, type: "Serve", isOpp: false });
+                                }
+                              }}
+                              className={`py-2 px-0.5 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[42px] ${
+                                id === (!viewOppStats ? lineup[0] : oppLineup[0]) && serving === (!viewOppStats ? "ucc" : "opp") && (rallyPhase === "serve" || rallyPhase === "opp_receive")
+                                  ? "bg-emerald-600 text-white border border-emerald-500 ring-2 ring-emerald-400/50"
+                                  : "bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200"
+                              }`}
+                            >
+                              <span>Serve</span>
+                            </button>
+                          )}
+                          {trackedCategories.Block && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setStatPrompt({
+                                  playerId: id,
+                                  type: "Block",
+                                  isOpp: viewOppStats,
+                                })
+                              }
+                              className="py-2 px-0.5 bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[42px]"
+                            >
+                              <span>Block</span>
+                            </button>
+                          )}
+                          {trackedCategories.Dig && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setStatPrompt({
+                                  playerId: id,
+                                  type: "Dig",
+                                  isOpp: viewOppStats,
+                                })
+                              }
+                              className="py-2 px-0.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[42px]"
+                            >
+                              <span>Dig</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-auto p-2 sm:p-4 w-full">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-5xl mx-auto overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[600px]">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-36 sm:w-44">
+                        Sub / Lib
+                      </th>
+                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black">
+                        Players on Court (6)
+                      </th>
+                      {trackedCategories.Pass && (
+                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                          Pass
+                        </th>
+                      )}
+                      {trackedCategories.Serve && (
+                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                          Serve
+                        </th>
+                      )}
+                      {trackedCategories.Attack && (
+                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                          Attack
+                        </th>
+                      )}
+                      {trackedCategories.Block && (
+                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                          Block
+                        </th>
+                      )}
+                      {trackedCategories.Dig && (
+                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                          Dig
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(() => {
+                      const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
+                        (id): id is string => Boolean(id),
+                      );
+                      const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
+                        if (!viewOppStats) {
+                          const pA = appData.roster.find((r) => r.id === idA);
+                          const pB = appData.roster.find((r) => r.id === idB);
+                          return sortPlayersByNumberThenAlpha(
+                            pA || { name: idA, id: idA },
+                            pB || { name: idB, id: idB },
+                          );
+                        } else {
+                          return sortPlayersByNumberThenAlpha(
+                            { number: idA, name: idA, id: idA },
+                            { number: idB, name: idB, id: idB },
+                          );
+                        }
+                      });
+
+                      return sortedCourtPlayers.map((id, index) => {
+                        const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
+                        const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
+                        // Back-row ("background") players in standard rotation are indices 0, 4, 5 (Positions 1, 5, 6)
+                        const isBackRow = [0, 4, 5].includes(posIndex);
+                        const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
+                        const isServer = !viewOppStats
+                          ? posIndex === 0 && serving === "ucc"
+                          : posIndex === 0 && serving === "opp";
+
+                        const pName = !viewOppStats
+                          ? appData.roster.find((r) => r.id === id)?.name || id
+                          : id;
+                        const pNum = !viewOppStats
+                          ? appData.roster.find((r) => r.id === id)?.number || "-"
+                          : id.replace(/\D/g, "") || id;
+                        return (
+                          <tr
+                            key={index}
+                            className="hover:bg-slate-50/50 transition-colors"
+                          >
+                            <td className="p-1.5 pt-2">
+                              {!viewOppStats ? (
+                                <div className="flex items-center justify-center gap-1">
+                                  {isLibero ? (
+                                    <>
+                                      <button
+                                        onClick={() => handleLiberoSwap(id)}
+                                        className="flex-1 py-2 px-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
+                                        title="Swap Libero out for original player (Does not count toward sub total)"
+                                      >
+                                        <ArrowRightLeft size={12} />
+                                        Lib Out
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setSelectedPlayerId(id);
+                                          setSubModalVisible(true);
+                                        }}
+                                        className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-slate-200"
+                                        title="Regular substitution"
+                                      >
+                                        Sub
+                                      </button>
+                                    </>
+                                  ) : isBackRow ? (
+                                    <>
+                                      <button
+                                        onClick={() => handleLiberoSwap(id)}
+                                        className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95 shadow-xs"
+                                        title="Swap Libero in for this back row player (Does not count toward sub total)"
+                                      >
+                                        <ArrowRightLeft size={12} className="text-amber-700" />
+                                        Lib In
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          if (subPairs[id]) {
+                                            setPendingAutoSub({
+                                              outId: id,
+                                              inId: subPairs[id],
+                                            });
+                                          } else {
+                                            setSelectedPlayerId(id);
+                                            setSubModalVisible(true);
+                                          }
+                                        }}
+                                        className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center border border-slate-200"
+                                        title="Regular substitution"
+                                      >
+                                        Sub
+                                      </button>
+                                    </>
+                                  ) : (
                                     <button
                                       onClick={() => {
                                         if (subPairs[id]) {
@@ -11885,198 +12500,193 @@ export default function App() {
                                           setSubModalVisible(true);
                                         }
                                       }}
-                                      className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center border border-slate-200"
-                                      title="Regular substitution"
+                                      className="w-full py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-slate-200 shadow-xs active:scale-95"
+                                      title="Front row player substitution"
                                     >
+                                      <ArrowRightLeft size={12} />
                                       Sub
                                     </button>
-                                  </>
-                                ) : (
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-center gap-1">
+                                  {isLibero ? (
+                                    <button
+                                      onClick={() => handleOppLiberoToggle(id)}
+                                      className="flex-1 py-2 px-1.5 bg-amber-500 hover:bg-amber-600 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
+                                      title="Opponent Libero Out"
+                                    >
+                                      <ArrowRightLeft size={12} />
+                                      Lib Out
+                                    </button>
+                                  ) : isBackRow && oppLiberoId ? (
+                                    <button
+                                      onClick={() => handleOppLiberoToggle(id)}
+                                      className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95"
+                                      title="Opponent Libero In"
+                                    >
+                                      <ArrowRightLeft size={12} />
+                                      Lib In
+                                    </button>
+                                  ) : null}
                                   <button
                                     onClick={() => {
-                                      if (subPairs[id]) {
-                                        setPendingAutoSub({
-                                          outId: id,
-                                          inId: subPairs[id],
-                                        });
-                                      } else {
-                                        setSelectedPlayerId(id);
-                                        setSubModalVisible(true);
-                                      }
+                                      setSelectedOppId(id);
+                                      setShowOppSubModal(true);
                                     }}
-                                    className="w-full py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-slate-200 shadow-xs active:scale-95"
-                                    title="Front row player substitution"
+                                    className="flex-1 py-2 px-2 bg-blue-50 hover:bg-blue-100 text-blue-800 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-blue-200 active:scale-95"
+                                    title="Quick Opponent substitution"
                                   >
-                                    <ArrowRightLeft size={12} />
                                     Sub
                                   </button>
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <div className="font-bold text-slate-700 capitalize flex items-center gap-2">
+                                {!viewOppStats ? (
+                                  <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
+                                    {pNum}
+                                  </span>
+                                ) : (
+                                  <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
+                                    #{id}
+                                  </span>
                                 )}
+                                <div className="flex flex-col min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="truncate font-black text-slate-800 text-sm">
+                                      {!viewOppStats ? pName : `Opponent #${id}`}
+                                    </span>
+                                    {isLibero && (
+                                      <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[9px] font-black uppercase tracking-wider">
+                                        LIBERO
+                                      </span>
+                                    )}
+                                    {isServer && (
+                                      <span className="text-xs" title="Currently Serving">
+                                        <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                    <span>Pos {courtPosNum}</span>
+                                    <span>•</span>
+                                    <span className={isBackRow ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
+                                      {isBackRow ? "Back Row" : "Front Row"}
+                                    </span>
+                                  </div>
+                                </div>
                               </div>
-                            ) : (
-                              <div className="flex items-center justify-center gap-1">
-                                {isLibero ? (
-                                  <button
-                                    onClick={() => handleOppLiberoToggle(id)}
-                                    className="flex-1 py-2 px-1.5 bg-amber-500 hover:bg-amber-600 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
-                                    title="Opponent Libero Out"
-                                  >
-                                    <ArrowRightLeft size={12} />
-                                    Lib Out
-                                  </button>
-                                ) : isBackRow && oppLiberoId ? (
-                                  <button
-                                    onClick={() => handleOppLiberoToggle(id)}
-                                    className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95"
-                                    title="Opponent Libero In"
-                                  >
-                                    <ArrowRightLeft size={12} />
-                                    Lib In
-                                  </button>
-                                ) : null}
+                            </td>
+                            {trackedCategories.Pass && (
+                              <td className="p-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (viewOppStats) {
+                                      setOppPassingPrompt({
+                                        passerId: id,
+                                        serverId: lineup[0] || undefined,
+                                      });
+                                    } else {
+                                      setOppServeReceivePrompt({
+                                        passerId: id,
+                                        serverId: oppLineup[0] || undefined,
+                                      });
+                                    }
+                                  }}
+                                  className={`w-full py-2 px-1 transition-colors rounded-lg font-bold text-xs sm:text-sm border cursor-pointer ${
+                                    rallyPhase === "receive" && !viewOppStats
+                                      ? "bg-purple-600 text-white border-purple-500 font-black animate-pulse shadow-xs"
+                                      : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-100"
+                                  }`}
+                                  title={!viewOppStats ? "Record Pass Rating (3-0)" : "Record Opponent Pass"}
+                                >
+                                  Pass
+                                </button>
+                              </td>
+                            )}
+                            {trackedCategories.Serve && (
+                              <td className="p-1.5">
                                 <button
                                   onClick={() => {
-                                    setSelectedOppId(id);
-                                    setShowOppSubModal(true);
+                                    if (viewOppStats) {
+                                      setOppServeReceivePrompt({
+                                        passerId: null,
+                                        serverId: id,
+                                      });
+                                    } else {
+                                      setStatPrompt({
+                                        playerId: id,
+                                        type: "Serve",
+                                        isOpp: false,
+                                      });
+                                    }
                                   }}
-                                  className="flex-1 py-2 px-2 bg-blue-50 hover:bg-blue-100 text-blue-800 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-blue-200 active:scale-95"
-                                  title="Quick Opponent substitution"
+                                  className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100 cursor-pointer"
                                 >
-                                  Sub
+                                  Serve
                                 </button>
-                              </div>
+                              </td>
                             )}
-                          </td>
-                          <td className="p-3">
-                            <div className="font-bold text-slate-700 capitalize flex items-center gap-2">
-                              {!viewOppStats ? (
-                                <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
-                                  {pNum}
-                                </span>
-                              ) : (
-                                <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
-                                  #{id}
-                                </span>
-                              )}
-                              <div className="flex flex-col min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="truncate font-black text-slate-800 text-sm">
-                                    {!viewOppStats ? pName : `Opponent #${id}`}
-                                  </span>
-                                  {isLibero && (
-                                    <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[9px] font-black uppercase tracking-wider">
-                                      LIBERO
-                                    </span>
-                                  )}
-                                  {isServer && (
-                                    <span className="text-xs" title="Currently Serving">
-                                      <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                                  <span>Pos {courtPosNum}</span>
-                                  <span>•</span>
-                                  <span className={isBackRow ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
-                                    {isBackRow ? "Back Row" : "Front Row"}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          {trackedCategories.Pass && viewOppStats && (
-                            <td className="p-1.5">
-                              <button
-                                onClick={() =>
-                                  setOppPassingPrompt({
-                                    passerId: id,
-                                    serverId: lineup[0] || undefined,
-                                  })
-                                }
-                                className="w-full py-2 px-1 bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-blue-100 cursor-pointer"
-                              >
-                                Pass
-                              </button>
-                            </td>
-                          )}
-                          {trackedCategories.Serve && (
-                            <td className="p-1.5">
-                              <button
-                                onClick={() => {
-                                  if (viewOppStats) {
-                                    setOppServeReceivePrompt({
-                                      passerId: null,
-                                      serverId: id,
-                                    });
-                                  } else {
+                            {trackedCategories.Attack && (
+                              <td className="p-1.5">
+                                <button
+                                  onClick={() =>
                                     setStatPrompt({
                                       playerId: id,
-                                      type: "Serve",
-                                      isOpp: false,
-                                    });
+                                      type: "Attack",
+                                      isOpp: viewOppStats,
+                                    })
                                   }
-                                }}
-                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100 cursor-pointer"
-                              >
-                                Serve
-                              </button>
-                            </td>
-                          )}
-                          {trackedCategories.Attack && (
-                            <td className="p-1.5">
-                              <button
-                                onClick={() =>
-                                  setStatPrompt({
-                                    playerId: id,
-                                    type: "Attack",
-                                    isOpp: viewOppStats,
-                                  })
-                                }
-                                className="w-full py-2 px-1 bg-green-50 hover:bg-green-100 text-green-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-green-100"
-                              >
-                                Attack
-                              </button>
-                            </td>
-                          )}
-                          {trackedCategories.Block && (
-                            <td className="p-1.5">
-                              <button
-                                onClick={() =>
-                                  setStatPrompt({
-                                    playerId: id,
-                                    type: "Block",
-                                    isOpp: viewOppStats,
-                                  })
-                                }
-                                className="w-full py-2 px-1 bg-orange-50 hover:bg-orange-100 text-orange-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-orange-100"
-                              >
-                                Block
-                              </button>
-                            </td>
-                          )}
-                          {trackedCategories.Dig && (
-                            <td className="p-1.5">
-                              <button
-                                onClick={() =>
-                                  setStatPrompt({
-                                    playerId: id,
-                                    type: "Dig",
-                                    isOpp: viewOppStats,
-                                  })
-                                }
-                                className="w-full py-2 px-1 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-amber-100"
-                              >
-                                Dig
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    });
-                  })()}
-                </tbody>
-              </table>
+                                  className="w-full py-2 px-1 bg-green-50 hover:bg-green-100 text-green-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-green-100"
+                                >
+                                  Attack
+                                </button>
+                              </td>
+                            )}
+                            {trackedCategories.Block && (
+                              <td className="p-1.5">
+                                <button
+                                  onClick={() =>
+                                    setStatPrompt({
+                                      playerId: id,
+                                      type: "Block",
+                                      isOpp: viewOppStats,
+                                    })
+                                  }
+                                  className="w-full py-2 px-1 bg-orange-50 hover:bg-orange-100 text-orange-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-orange-100"
+                                >
+                                  Block
+                                </button>
+                              </td>
+                            )}
+                            {trackedCategories.Dig && (
+                              <td className="p-1.5">
+                                <button
+                                  onClick={() =>
+                                    setStatPrompt({
+                                      playerId: id,
+                                      type: "Dig",
+                                      isOpp: viewOppStats,
+                                    })
+                                  }
+                                  className="w-full py-2 px-1 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-amber-100"
+                                >
+                                  Dig
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* STICKY BOTTOM BAR (Controls) */}
@@ -12094,37 +12704,40 @@ export default function App() {
               <Undo className="sm:mr-1.5" size={16} />{" "}
               <span className="hidden sm:inline">UNDO</span>
             </button>
-            {rallyPhase === "serve" && !servePromptVisible ? (
+            {rallyPhase === "play" ? (
               <button
-                onClick={() => {
-                  if (serving === "opp") {
-                    setOppServeReceivePrompt({
-                      passerId: null,
-                      serverId: oppLineup[0],
-                    });
-                  } else {
-                    setServePromptVisible(true);
-                  }
-                }}
-                className={`flex-1 bg-gradient-to-b ${
-                  serving === "opp"
-                    ? "from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30"
-                    : "from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30"
-                } text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer`}
+                type="button"
+                onClick={() => setEndRallyVisible(true)}
+                className="flex-1 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-widest uppercase cursor-pointer"
               >
-                <span>{serving === "opp" ? "OPP SERVE" : "SERVE"}</span>
+                End Rally
+              </button>
+            ) : serving === "opp" || rallyPhase === "receive" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setOppServeReceivePrompt({
+                    passerId: null,
+                    serverId: oppLineup[0],
+                  });
+                }}
+                className="flex-1 bg-gradient-to-b from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer"
+              >
+                <span>OPP SERVE • RECEIVE</span>
                 <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">
-                  {serving === "opp"
-                    ? "TAP TO RECORD PASS / OUTCOME"
-                    : "TAP WHEN SERVED"}
+                  TAP TO RECORD PASS / OUTCOME
                 </span>
               </button>
             ) : (
               <button
-                onClick={() => setEndRallyVisible(true)}
-                className="flex-1 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-widest uppercase"
+                type="button"
+                onClick={() => setServePromptVisible(true)}
+                className="flex-1 bg-gradient-to-b from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer"
               >
-                End Rally
+                <span>SERVE</span>
+                <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">
+                  TAP WHEN SERVED
+                </span>
               </button>
             )}
             <button
@@ -13933,21 +14546,34 @@ export default function App() {
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-pulse drop-shadow-[0_0_30px_rgba(251,191,36,0.4)]">
               Trophy
             </div>
-            <h2 className="text-3xl sm:text-5xl font-black mb-8 sm:mb-10 text-center tracking-widest uppercase">
+            <h2 className="text-3xl sm:text-5xl font-black mb-4 sm:mb-6 text-center tracking-widest uppercase">
               Who Scored?
             </h2>
 
+            {!isGameStarter && (
+              <div className="bg-amber-400/20 border border-amber-400/40 rounded-xl px-4 py-2.5 mb-6 text-center max-w-sm">
+                <p className="text-amber-300 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5">
+                  <Lock size={14} /> Score changes restricted to match starter
+                </p>
+                <p className="text-slate-300 text-[10px] mt-0.5">
+                  You are contributing stats in real-time synced mode.
+                </p>
+              </div>
+            )}
+
             <div className="flex w-full max-w-sm gap-3 sm:gap-4">
               <button
+                disabled={!isGameStarter}
                 onClick={() => handlePoint("ucc")}
-                className="flex-1 bg-[#0033A0] text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-xl sm:text-3xl flex flex-col items-center shadow-[0_15px_30px_rgba(0,51,160,0.5)] active:scale-95 border-t border-white/20"
+                className="flex-1 bg-[#0033A0] text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-xl sm:text-3xl flex flex-col items-center shadow-[0_15px_30px_rgba(0,51,160,0.5)] active:scale-95 border-t border-white/20 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 <Shield size={40} className="mb-2 opacity-80 sm:w-12 sm:h-12" />
                 Lancers
               </button>
               <button
+                disabled={!isGameStarter}
                 onClick={() => handlePoint("opp")}
-                className="flex-1 bg-slate-700 text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-xl sm:text-3xl flex flex-col items-center shadow-[0_15px_30px_rgba(0,0,0,0.5)] active:scale-95 border-t border-white/10"
+                className="flex-1 bg-slate-700 text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-xl sm:text-3xl flex flex-col items-center shadow-[0_15px_30px_rgba(0,0,0,0.5)] active:scale-95 border-t border-white/10 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 <Users size={40} className="mb-2 opacity-80 sm:w-12 sm:h-12" />
                 {opponentName.substring(0, 6)}
