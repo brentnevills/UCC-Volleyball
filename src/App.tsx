@@ -11508,8 +11508,8 @@ export default function App() {
 
         {/* NEW COLLAPSIBLE COURT AND TABLE VIEW */}
         <div className="flex-1 flex flex-col relative bg-slate-100 overflow-hidden min-h-0 landscape:min-w-0">
-          <div className="p-2 sm:p-4 flex items-center justify-between bg-white border-b border-slate-200 shrink-0 gap-2">
-            <div className="flex items-center gap-2">
+          <div className="px-2 py-1.5 sm:px-4 sm:py-2 flex items-center justify-between bg-white border-b border-slate-200 shrink-0 gap-2 overflow-x-auto no-scrollbar scroll-smooth">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <button
                 onClick={() => setShowPositioning(true)}
                 className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors"
@@ -11691,7 +11691,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
+            <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200 shrink-0">
               <button
                 onClick={() => setViewOppStats(false)}
                 className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all ${!viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}
@@ -11963,29 +11963,29 @@ export default function App() {
           {/* RALLY FLOW STATUS STRIP */}
           <div className="px-2 sm:px-4 pt-1.5 pb-1 shrink-0 w-full max-w-5xl mx-auto">
             {serving === "ucc" && (rallyPhase === "serve" || rallyPhase === "opp_receive") ? (
-              <div className="bg-emerald-50 border border-emerald-300 rounded-xl px-2.5 sm:px-3 py-1.5 flex flex-wrap items-center justify-between gap-1.5 shadow-xs">
-                <div className="flex items-center gap-1.5 min-w-0">
+              <div className="bg-emerald-50 border border-emerald-300 rounded-xl px-2 sm:px-3 py-1.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 shadow-xs">
+                <div className="flex items-center gap-1.5 min-w-0 max-w-full">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
                   <span className="text-xs sm:text-sm font-black text-emerald-950 uppercase tracking-wider truncate">
                     🏐 {effectiveTeamName} Serving
                   </span>
-                  <span className="text-[10px] font-black uppercase bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded shrink-0">
+                  <span className="text-[10px] font-black uppercase bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded shrink-0 truncate">
                     #{appData.roster.find((r) => r.id === lineup[0])?.number || "?"}{" "}
                     {appData.roster.find((r) => r.id === lineup[0])?.name || "Server"} (Pos 1)
                   </span>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0 flex-wrap xs:flex-nowrap">
                   <button
                     type="button"
                     onClick={() => setServePromptVisible(true)}
-                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                   >
-                    Serve Prompt
+                    Serve 🏐
                   </button>
                   <button
                     type="button"
                     onClick={() => changeRallyPhase("play")}
-                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     In Play
                   </button>
@@ -11998,7 +11998,7 @@ export default function App() {
                       handlePoint("ucc");
                       showToast(`Ace -> Point ${effectiveTeamName}!`, "success");
                     }}
-                    className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                     title="Quick Ace (+1 Pt Lancers)"
                   >
                     +Ace
@@ -12012,7 +12012,7 @@ export default function App() {
                       handlePoint("opp");
                       showToast("Serve Error -> Point Opponent!", "info");
                     }}
-                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                     title="Quick Serve Error (+1 Pt Opponent)"
                   >
                     +Error
@@ -12020,17 +12020,17 @@ export default function App() {
                 </div>
               </div>
             ) : serving === "opp" && (rallyPhase === "receive" || rallyPhase === "serve") ? (
-              <div className="bg-purple-50 border border-purple-300 rounded-xl px-2.5 sm:px-3 py-1.5 flex flex-wrap items-center justify-between gap-1.5 shadow-xs">
-                <div className="flex items-center gap-1.5 min-w-0">
+              <div className="bg-purple-50 border border-purple-300 rounded-xl px-2 sm:px-3 py-1.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 shadow-xs">
+                <div className="flex items-center gap-1.5 min-w-0 max-w-full">
                   <span className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-ping shrink-0" />
                   <span className="text-xs sm:text-sm font-black text-purple-950 uppercase tracking-wider truncate">
                     🛡️ {effectiveTeamName} Receiving
                   </span>
-                  <span className="text-[10px] font-black uppercase bg-purple-200 text-purple-900 px-1.5 py-0.5 rounded shrink-0">
+                  <span className="text-[10px] font-black uppercase bg-purple-200 text-purple-900 px-1.5 py-0.5 rounded shrink-0 truncate">
                     Opp #{oppLineup[0] || "?"} Serving
                   </span>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0 flex-wrap xs:flex-nowrap">
                   <button
                     type="button"
                     onClick={() =>
@@ -12039,14 +12039,14 @@ export default function App() {
                         serverId: oppLineup[0],
                       })
                     }
-                    className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer animate-pulse"
+                    className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer animate-pulse whitespace-nowrap"
                   >
-                    Pass / Receive
+                    Receive 🛡️
                   </button>
                   <button
                     type="button"
                     onClick={() => changeRallyPhase("play")}
-                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     In Play
                   </button>
@@ -12059,10 +12059,10 @@ export default function App() {
                       handlePoint("ucc");
                       showToast(`Opponent Serve Error -> Point ${effectiveTeamName}!`, "success");
                     }}
-                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                     title="Opponent Missed Serve (+1 Pt Lancers)"
                   >
-                    +Opp Miss
+                    +Miss
                   </button>
                   <button
                     type="button"
@@ -12073,47 +12073,47 @@ export default function App() {
                         selectingAce: true,
                       });
                     }}
-                    className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                     title="Opponent Ace (+1 Pt Opponent)"
                   >
-                    +Opp Ace
+                    +Ace
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="bg-blue-50 border border-blue-300 rounded-xl px-2.5 sm:px-3 py-1.5 flex flex-wrap items-center justify-between gap-1.5 shadow-xs">
-                <div className="flex items-center gap-1.5 min-w-0">
+              <div className="bg-blue-50 border border-blue-300 rounded-xl px-2 sm:px-3 py-1.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 shadow-xs">
+                <div className="flex items-center gap-1.5 min-w-0 max-w-full">
                   <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse shrink-0" />
                   <span className="text-xs sm:text-sm font-black text-blue-950 uppercase tracking-wider truncate">
                     ⚡ BALL IN PLAY • Live Rally
                   </span>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0 flex-wrap xs:flex-nowrap">
                   <button
                     type="button"
                     onClick={() => setEndRallyVisible(true)}
-                    className="px-2.5 py-1 bg-[#0033A0] hover:bg-blue-800 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-[#0033A0] hover:bg-blue-800 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     End Rally
                   </button>
                   <button
                     type="button"
                     onClick={() => handlePoint("ucc")}
-                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                   >
-                    +Pt {effectiveTeamName}
+                    +Pt {effectiveTeamName.length > 7 ? "Lancers" : effectiveTeamName}
                   </button>
                   <button
                     type="button"
                     onClick={() => handlePoint("opp")}
-                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer"
+                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     +Pt Opp
                   </button>
                   <button
                     type="button"
                     onClick={() => changeRallyPhase(serving === "ucc" ? "serve" : "receive")}
-                    className="px-1.5 py-1 text-slate-500 hover:text-slate-800 text-[9px] font-bold uppercase transition-colors"
+                    className="px-1.5 py-1 text-slate-500 hover:text-slate-800 text-[9px] font-bold uppercase transition-colors whitespace-nowrap"
                     title="Reset to Pre-Serve / Receive"
                   >
                     Reset
@@ -12170,21 +12170,21 @@ export default function App() {
                         {/* Top player header */}
                         <div className="flex items-center justify-between pb-2 border-b border-slate-100 gap-1.5">
                           <div className="flex items-center gap-2 min-w-0">
-                            <span className="w-8 h-8 rounded-full bg-[#0033A0]/10 text-[#0033A0] flex items-center justify-center text-xs font-black shrink-0 border border-[#0033A0]/20">
+                            <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#0033A0]/10 text-[#0033A0] flex items-center justify-center text-xs font-black shrink-0 border border-[#0033A0]/20">
                               {pNum}
                             </span>
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-black text-slate-800 text-sm truncate">
+                                <span className="font-black text-slate-800 text-xs sm:text-sm truncate max-w-[100px] xs:max-w-[130px] sm:max-w-[180px]">
                                   {!viewOppStats ? pName : `Opponent #${id}`}
                                 </span>
                                 {isLibero && (
-                                  <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[8px] font-black uppercase tracking-wider">
+                                  <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[8px] font-black uppercase tracking-wider shrink-0">
                                     LIBERO
                                   </span>
                                 )}
                                 {isServer && (
-                                  <span className="text-[9px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded shadow-xs animate-pulse">
+                                  <span className="text-[9px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded shadow-xs animate-pulse shrink-0">
                                     SRV
                                   </span>
                                 )}
@@ -12200,29 +12200,31 @@ export default function App() {
                           </div>
 
                           {/* Quick Sub / Libero button */}
-                          <div className="shrink-0">
+                          <div className="shrink-0 flex items-center gap-1">
                             {!viewOppStats ? (
-                              isLibero ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleLiberoSwap(id)}
-                                  className="px-2 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-black text-[10px] uppercase flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer"
-                                  title="Swap Libero out"
-                                >
-                                  <ArrowRightLeft size={11} />
-                                  <span>Lib Out</span>
-                                </button>
-                              ) : isBackRow ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleLiberoSwap(id)}
-                                  className="px-2 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg font-black text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer"
-                                  title="Swap Libero in"
-                                >
-                                  <ArrowRightLeft size={11} className="text-amber-700" />
-                                  <span>Lib In</span>
-                                </button>
-                              ) : (
+                              <>
+                                {isLibero ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleLiberoSwap(id)}
+                                    className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-black text-[10px] uppercase flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
+                                    title="Swap Libero out for original player"
+                                  >
+                                    <ArrowRightLeft size={10} />
+                                    <span>Lib Out</span>
+                                  </button>
+                                ) : isBackRow && liberoId ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleLiberoSwap(id)}
+                                    className="px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg font-black text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
+                                    title="Swap Libero in for this back row player (No sub charged)"
+                                  >
+                                    <ArrowRightLeft size={10} className="text-amber-700" />
+                                    <span>Lib In</span>
+                                  </button>
+                                ) : null}
+
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -12233,13 +12235,13 @@ export default function App() {
                                       setSubModalVisible(true);
                                     }
                                   }}
-                                  className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer"
-                                  title="Substitute player"
+                                  className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
+                                  title={isBackRow ? "Substitute back row player with bench" : "Substitute player with bench"}
                                 >
-                                  <ArrowRightLeft size={11} />
+                                  <ArrowRightLeft size={10} />
                                   <span>Sub</span>
                                 </button>
-                              )
+                              </>
                             ) : (
                               <button
                                 type="button"
@@ -12247,7 +12249,7 @@ export default function App() {
                                   setSelectedOppId(id);
                                   setShowOppSubModal(true);
                                 }}
-                                className="px-2 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer"
+                                className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
                               >
                                 <span>Sub</span>
                               </button>
@@ -12256,98 +12258,132 @@ export default function App() {
                         </div>
 
                         {/* Quick-Action Touch Grid */}
-                        <div className={`grid ${trackedCategories.Pass ? "grid-cols-5" : "grid-cols-4"} gap-1 sm:gap-1.5 pt-2`}>
-                          {trackedCategories.Pass && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (viewOppStats) {
-                                  setOppPassingPrompt({
-                                    passerId: id,
-                                    serverId: lineup[0] || undefined,
-                                  });
-                                } else {
-                                  setOppServeReceivePrompt({
-                                    passerId: id,
-                                    serverId: oppLineup[0] || undefined,
-                                  });
-                                }
-                              }}
-                              className={`py-2 px-0.5 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer min-h-[42px] ${
-                                rallyPhase === "receive" && !viewOppStats
-                                  ? "bg-purple-600 text-white border border-purple-500 shadow-md animate-pulse ring-2 ring-purple-400/50"
-                                  : "bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
-                              }`}
-                              title={!viewOppStats ? "Record Pass Rating (3-0) for this player" : "Record Opponent Pass"}
-                            >
-                              <span>Pass</span>
-                            </button>
-                          )}
-                          {trackedCategories.Attack && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setStatPrompt({
-                                  playerId: id,
-                                  type: "Attack",
-                                  isOpp: viewOppStats,
-                                })
-                              }
-                              className="py-2 px-0.5 bg-green-50 hover:bg-green-100 text-green-800 border border-green-200 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[42px]"
-                            >
-                              <span>Attack</span>
-                            </button>
-                          )}
-                          {trackedCategories.Serve && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (viewOppStats) {
-                                  setOppServeReceivePrompt({ passerId: null, serverId: id });
-                                } else {
-                                  setStatPrompt({ playerId: id, type: "Serve", isOpp: false });
-                                }
-                              }}
-                              className={`py-2 px-0.5 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[42px] ${
-                                id === (!viewOppStats ? lineup[0] : oppLineup[0]) && serving === (!viewOppStats ? "ucc" : "opp") && (rallyPhase === "serve" || rallyPhase === "opp_receive")
-                                  ? "bg-emerald-600 text-white border border-emerald-500 ring-2 ring-emerald-400/50"
-                                  : "bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200"
-                              }`}
-                            >
-                              <span>Serve</span>
-                            </button>
-                          )}
-                          {trackedCategories.Block && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setStatPrompt({
-                                  playerId: id,
-                                  type: "Block",
-                                  isOpp: viewOppStats,
-                                })
-                              }
-                              className="py-2 px-0.5 bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[42px]"
-                            >
-                              <span>Block</span>
-                            </button>
-                          )}
-                          {trackedCategories.Dig && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setStatPrompt({
-                                  playerId: id,
-                                  type: "Dig",
-                                  isOpp: viewOppStats,
-                                })
-                              }
-                              className="py-2 px-0.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-black text-[11px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[42px]"
-                            >
-                              <span>Dig</span>
-                            </button>
-                          )}
-                        </div>
+                        {(() => {
+                          const showPassBtn = trackedCategories.Pass && rallyPhase !== "play" && (
+                            !viewOppStats
+                              ? (serving === "opp" || rallyPhase === "receive")
+                              : (serving === "ucc" || rallyPhase === "opp_receive")
+                          );
+                          const showServeBtn = trackedCategories.Serve && rallyPhase !== "play" && (
+                            !viewOppStats
+                              ? (serving === "ucc" && (rallyPhase === "serve" || rallyPhase === "opp_receive"))
+                              : (serving === "opp" && (rallyPhase === "serve" || rallyPhase === "receive"))
+                          );
+                          const activeCount = [
+                            showPassBtn,
+                            trackedCategories.Attack,
+                            showServeBtn,
+                            trackedCategories.Block,
+                            trackedCategories.Dig,
+                          ].filter(Boolean).length;
+                          const gridColsClass =
+                            activeCount >= 5
+                              ? "grid-cols-5"
+                              : activeCount === 4
+                                ? "grid-cols-4"
+                                : activeCount === 3
+                                  ? "grid-cols-3"
+                                  : activeCount === 2
+                                    ? "grid-cols-2"
+                                    : "grid-cols-1";
+
+                          return (
+                            <div className={`grid ${gridColsClass} gap-1 sm:gap-1.5 pt-2`}>
+                              {showPassBtn && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (viewOppStats) {
+                                      setOppPassingPrompt({
+                                        passerId: id,
+                                        serverId: lineup[0] || undefined,
+                                      });
+                                    } else {
+                                      setOppServeReceivePrompt({
+                                        passerId: id,
+                                        serverId: oppLineup[0] || undefined,
+                                      });
+                                    }
+                                  }}
+                                  className={`py-1.5 sm:py-2 px-0.5 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px] ${
+                                    rallyPhase === "receive" && !viewOppStats
+                                      ? "bg-purple-600 text-white border border-purple-500 shadow-md animate-pulse ring-2 ring-purple-400/50"
+                                      : "bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
+                                  }`}
+                                  title={!viewOppStats ? "Record Pass Rating (3-0) for this player" : "Record Opponent Pass"}
+                                >
+                                  <span className="truncate max-w-full leading-none">Pass</span>
+                                </button>
+                              )}
+                              {trackedCategories.Attack && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setStatPrompt({
+                                      playerId: id,
+                                      type: "Attack",
+                                      isOpp: viewOppStats,
+                                    })
+                                  }
+                                  className="py-1.5 sm:py-2 px-0.5 bg-green-50 hover:bg-green-100 text-green-800 border border-green-200 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px]"
+                                >
+                                  <span className="truncate max-w-full leading-none">Attack</span>
+                                </button>
+                              )}
+                              {showServeBtn && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (viewOppStats) {
+                                      setOppServeReceivePrompt({ passerId: null, serverId: id });
+                                    } else {
+                                      setStatPrompt({ playerId: id, type: "Serve", isOpp: false });
+                                    }
+                                  }}
+                                  className={`py-1.5 sm:py-2 px-0.5 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px] ${
+                                    id === (!viewOppStats ? lineup[0] : oppLineup[0]) &&
+                                    serving === (!viewOppStats ? "ucc" : "opp") &&
+                                    (rallyPhase === "serve" || rallyPhase === "opp_receive")
+                                      ? "bg-emerald-600 text-white border border-emerald-500 ring-2 ring-emerald-400/50"
+                                      : "bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200"
+                                  }`}
+                                >
+                                  <span className="truncate max-w-full leading-none">Serve</span>
+                                </button>
+                              )}
+                              {trackedCategories.Block && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setStatPrompt({
+                                      playerId: id,
+                                      type: "Block",
+                                      isOpp: viewOppStats,
+                                    })
+                                  }
+                                  className="py-1.5 sm:py-2 px-0.5 bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px]"
+                                >
+                                  <span className="truncate max-w-full leading-none">Block</span>
+                                </button>
+                              )}
+                              {trackedCategories.Dig && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setStatPrompt({
+                                      playerId: id,
+                                      type: "Dig",
+                                      isOpp: viewOppStats,
+                                    })
+                                  }
+                                  className="py-1.5 sm:py-2 px-0.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px]"
+                                >
+                                  <span className="truncate max-w-full leading-none">Dig</span>
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   });
@@ -12366,12 +12402,12 @@ export default function App() {
                       <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black">
                         Players on Court (6)
                       </th>
-                      {trackedCategories.Pass && (
+                      {trackedCategories.Pass && rallyPhase !== "play" && (
                         <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
                           Pass
                         </th>
                       )}
-                      {trackedCategories.Serve && (
+                      {trackedCategories.Serve && rallyPhase !== "play" && (
                         <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
                           Serve
                         </th>
@@ -12579,7 +12615,7 @@ export default function App() {
                                 </div>
                               </div>
                             </td>
-                            {trackedCategories.Pass && (
+                            {trackedCategories.Pass && rallyPhase !== "play" && (
                               <td className="p-1.5">
                                 <button
                                   type="button"
@@ -12607,7 +12643,7 @@ export default function App() {
                                 </button>
                               </td>
                             )}
-                            {trackedCategories.Serve && (
+                            {trackedCategories.Serve && rallyPhase !== "play" && (
                               <td className="p-1.5">
                                 <button
                                   onClick={() => {
@@ -13343,126 +13379,138 @@ export default function App() {
               </div>
 
               <div className="p-3 sm:p-4 space-y-3 sm:space-y-4 bg-slate-50 overflow-y-auto w-full">
-                {/* SERVE SECTION */}
-                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                    <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
-                      <Activity size={12} className="mr-1 text-purple-600" /> Serve
-                    </h4>
-                    {selectedPlayerId === lineup[0] && (
-                      <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
-                        Current Server (Pos 1)
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedPlayerId(null);
-                        setPendingAceData({
-                          serverId: selectedPlayerId,
-                          team: "ucc",
-                          isOpp: false,
-                        });
-                        setAceReceiverPrompt("ucc");
-                      }}
-                      className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
-                    >
-                      ACE
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedPlayerId(null);
-                        pushToHistory();
-                        logStat(selectedPlayerId, "Serve", "Attempt", 1, false);
-                        changeRallyPhase(trackOppReceives ? "opp_receive" : "play");
-                        if (trackOppReceives) {
-                          setOppPassingPrompt({
-                            passerId: null,
-                            serverId: selectedPlayerId,
-                          });
-                        }
-                      }}
-                      className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
-                    >
-                      IN PLAY
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedPlayerId(null);
-                        setServeErrorPrompt("ucc");
-                      }}
-                      className="bg-gradient-to-b from-red-500 to-red-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
-                    >
-                      ERROR
-                    </button>
-                  </div>
-                </div>
-
-                {/* PASS / SERVE RECEIVE SECTION */}
-                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                    <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
-                      <Target size={12} className="mr-1 text-indigo-600" /> Receive / Pass (0-3)
-                    </h4>
-                    {rallyPhase === "receive" && (
-                      <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-900 px-1.5 py-0.5 rounded border border-indigo-300 animate-pulse">
-                        Awaiting Receive
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-2">
-                    {[
-                      { val: 3, label: "Perfect (3)", color: "from-green-500 to-green-600" },
-                      { val: 2, label: "Good (2)", color: "from-emerald-500 to-teal-600" },
-                      { val: 1, label: "Poor (1)", color: "from-amber-500 to-orange-600" },
-                      { val: 0, label: "0 / Shank", color: "from-slate-600 to-slate-700" },
-                    ].map(({ val, label, color }) => (
+                {/* SERVE SECTION - available pre-rally when serving, or mid-rally */}
+                {(serving === "ucc" || rallyPhase === "play" || rallyPhase === "serve" || rallyPhase === "opp_receive") && (
+                  <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
+                        <Activity size={12} className="mr-1 text-purple-600" /> Serve
+                      </h4>
+                      {selectedPlayerId === lineup[0] ? (
+                        <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
+                          Current Server (Pos 1)
+                        </span>
+                      ) : rallyPhase === "play" ? (
+                        <span className="text-[9px] font-bold uppercase bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200">
+                          Serve
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                       <button
-                        key={`modal-pass-${val}`}
                         type="button"
                         onClick={() => {
-                          if (val === 0) {
-                            logStat(selectedPlayerId, "Pass", "Rating", 0, false);
-                            changeRallyPhase("play");
-                            setSelectedPlayerId(null);
-                            showToast("0-Pass (Overbump) recorded • Play continues", "info");
-                          } else {
-                            recordStatAndCheckPoint(selectedPlayerId, "Pass", "Rating", val);
-                            setSelectedPlayerId(null);
+                          setSelectedPlayerId(null);
+                          setPendingAceData({
+                            serverId: selectedPlayerId,
+                            team: "ucc",
+                            isOpp: false,
+                          });
+                          setAceReceiverPrompt("ucc");
+                        }}
+                        className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
+                      >
+                        ACE
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPlayerId(null);
+                          pushToHistory();
+                          logStat(selectedPlayerId, "Serve", "Attempt", 1, false);
+                          changeRallyPhase(trackOppReceives ? "opp_receive" : "play");
+                          if (trackOppReceives) {
+                            setOppPassingPrompt({
+                              passerId: null,
+                              serverId: selectedPlayerId,
+                            });
                           }
                         }}
-                        className={`bg-gradient-to-b ${color} text-white p-2 sm:p-2.5 rounded-lg sm:rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all cursor-pointer`}
+                        className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
                       >
-                        <span className="text-xl sm:text-2xl leading-none">{val}</span>
-                        <span className="text-[8px] uppercase tracking-wider opacity-90 mt-0.5 text-center font-bold">
-                          {label.split(" ")[0]}
-                        </span>
+                        IN PLAY
                       </button>
-                    ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPlayerId(null);
+                          setServeErrorPrompt("ucc");
+                        }}
+                        className="bg-gradient-to-b from-red-500 to-red-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
+                      >
+                        ERROR
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const sId = oppLineup[0] || "Opponent";
-                      logMultipleStats([
-                        { playerId: selectedPlayerId, category: "Pass", metric: "Aced", value: 0, isOpponent: false },
-                        { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: true },
-                      ]);
-                      handlePoint("opp", true);
-                      setSelectedPlayerId(null);
-                      showToast(`Aced! #${selectedPlayerObj?.number} got aced -> Point Opponent`, "info");
-                    }}
-                    className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
-                    title="Receiver got aced (reception error) -> Point for Opponent"
-                  >
-                    <XCircle size={15} />
-                    <span>Aced / Reception Error (+1 Pt Opponent)</span>
-                  </button>
-                </div>
+                )}
+
+                {/* PASS / SERVE RECEIVE SECTION - available pre-rally when receiving, or mid-rally */}
+                {(serving === "opp" || rallyPhase === "play" || rallyPhase === "receive") && (
+                  <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
+                        <Target size={12} className="mr-1 text-indigo-600" /> Receive / Pass (0-3)
+                      </h4>
+                      {rallyPhase === "receive" ? (
+                        <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-900 px-1.5 py-0.5 rounded border border-indigo-300 animate-pulse">
+                          Awaiting Receive
+                        </span>
+                      ) : rallyPhase === "play" ? (
+                        <span className="text-[9px] font-bold uppercase bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-200">
+                          Pass
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-2">
+                      {[
+                        { val: 3, label: "Perfect (3)", color: "from-green-500 to-green-600" },
+                        { val: 2, label: "Good (2)", color: "from-emerald-500 to-teal-600" },
+                        { val: 1, label: "Poor (1)", color: "from-amber-500 to-orange-600" },
+                        { val: 0, label: "0 / Shank", color: "from-slate-600 to-slate-700" },
+                      ].map(({ val, label, color }) => (
+                        <button
+                          key={`modal-pass-${val}`}
+                          type="button"
+                          onClick={() => {
+                            if (val === 0) {
+                              logStat(selectedPlayerId, "Pass", "Rating", 0, false);
+                              changeRallyPhase("play");
+                              setSelectedPlayerId(null);
+                              showToast("0-Pass (Overbump) recorded • Play continues", "info");
+                            } else {
+                              recordStatAndCheckPoint(selectedPlayerId, "Pass", "Rating", val);
+                              setSelectedPlayerId(null);
+                            }
+                          }}
+                          className={`bg-gradient-to-b ${color} text-white p-2 sm:p-2.5 rounded-lg sm:rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all cursor-pointer`}
+                        >
+                          <span className="text-xl sm:text-2xl leading-none">{val}</span>
+                          <span className="text-[8px] uppercase tracking-wider opacity-90 mt-0.5 text-center font-bold">
+                            {label.split(" ")[0]}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sId = oppLineup[0] || "Opponent";
+                        logMultipleStats([
+                          { playerId: selectedPlayerId, category: "Pass", metric: "Aced", value: 0, isOpponent: false },
+                          { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: true },
+                        ]);
+                        handlePoint("opp", true);
+                        setSelectedPlayerId(null);
+                        showToast(`Aced! #${selectedPlayerObj?.number} got aced -> Point Opponent`, "info");
+                      }}
+                      className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                      title="Receiver got aced (reception error) -> Point for Opponent"
+                    >
+                      <XCircle size={15} />
+                      <span>Aced / Reception Error (+1 Pt Opponent)</span>
+                    </button>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                   <button
@@ -13885,107 +13933,115 @@ export default function App() {
                   </div>
                 )}
 
-                {!rallyPhase.includes("receive") && (
-                  <>
-                    <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
+                {/* Opponent Passing - available pre-rally or mid-rally */}
+                {(!rallyPhase.includes("receive") || rallyPhase === "play") && (
+                  <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
                         <Activity size={12} className="mr-1 text-blue-500" />{" "}
                         Passing
                       </h4>
-                      <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
-                        {[3, 2, 1, 0].map((val) => (
-                          <button
-                            key={`opp-pass-rate-${val}`}
-                            onClick={() => {
-                              recordOppStatAndCheckPoint(
-                                selectedOppId,
-                                "Pass",
-                                "Rating",
-                                val,
-                              );
-                              setSelectedOppId(null);
-                            }}
-                            className={`p-2 sm:p-3 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 transition-all ${
-                              val === 3
-                                ? "bg-green-100 text-green-700 border border-green-200"
-                                : val === 0
-                                  ? "bg-red-100 text-red-700 border border-red-200"
-                                  : "bg-slate-100 text-slate-700 border border-slate-200"
-                            }`}
-                          >
-                            {val}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                      <textarea
-                        className="w-full h-12 sm:h-16 p-2 sm:p-3 bg-slate-50 border border-slate-200 rounded-lg sm:rounded-xl outline-none resize-none font-bold text-xs sm:text-sm text-slate-700 placeholder-slate-400 mb-1.5 sm:mb-2 transition-all focus:ring-2 focus:ring-blue-400"
-                        placeholder="Scouting notes..."
-                        value={tempNote || oppNotesMem[selectedOppId] || ""}
-                        onChange={(e) => setTempNote(e.target.value)}
-                        onBlur={() => {
-                          if (tempNote) saveOppNote();
-                        }}
-                      />
-                      <div className="flex gap-1.5 sm:gap-2">
-                        <button
-                          onClick={handleOppSetterSwap}
-                          className={`flex-1 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm uppercase ${
-                            oppSetterId === selectedOppId
-                              ? "bg-gradient-to-b from-green-500 to-green-600 text-white"
-                              : "bg-slate-100 text-slate-600 border border-slate-200"
-                          }`}
-                        >
-                          {oppSetterId === selectedOppId
-                            ? "Setter"
-                            : "Mark Setter"}
-                        </button>
-                        {oppLiberoId &&
-                          (oppLineup.indexOf(selectedOppId) === 0 ||
-                            oppLineup.indexOf(selectedOppId) === 4 ||
-                            oppLineup.indexOf(selectedOppId) === 5 ||
-                            selectedOppId === oppLiberoId) && (
-                            <button
-                              onClick={() => handleOppLiberoToggle(selectedOppId)}
-                              className="flex-1 bg-gradient-to-b from-amber-100 to-amber-200 text-amber-800 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl border border-amber-300 uppercase shadow-sm"
-                            >
-                              {selectedOppId === oppLiberoId
-                                ? "Lib Out"
-                                : "Lib In"}
-                            </button>
-                          )}
-                      </div>
-                    </div>
-
-                    <div className="flex gap-1.5 sm:gap-2 items-center bg-slate-200 p-1.5 sm:p-2 rounded-xl sm:rounded-2xl">
-                      {subPairs[selectedOppId] ? (
-                        <button
-                          onClick={handleOppSub}
-                          className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
-                        >
-                          Auto Sub #{subPairs[selectedOppId]} In
-                        </button>
-                      ) : (
-                        <>
-                          <input
-                            placeholder="New#"
-                            value={newOppNumber}
-                            onChange={(e) => setNewOppNumber(e.target.value)}
-                            className="w-12 sm:w-16 p-2 sm:p-3 bg-white border border-slate-300 rounded-lg sm:rounded-xl outline-none text-center font-black text-slate-800 uppercase text-xs sm:text-base"
-                          />
-                          <button
-                            onClick={handleOppSub}
-                            className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
-                          >
-                            Sub In
-                          </button>
-                        </>
+                      {rallyPhase === "play" && (
+                        <span className="text-[9px] font-bold uppercase bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-200">
+                          Pass
+                        </span>
                       )}
                     </div>
-                  </>
+                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                      {[3, 2, 1, 0].map((val) => (
+                        <button
+                          key={`opp-pass-rate-${val}`}
+                          onClick={() => {
+                            recordOppStatAndCheckPoint(
+                              selectedOppId,
+                              "Pass",
+                              "Rating",
+                              val,
+                            );
+                            setSelectedOppId(null);
+                          }}
+                          className={`p-2 sm:p-3 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 transition-all ${
+                            val === 3
+                              ? "bg-green-100 text-green-700 border border-green-200"
+                              : val === 0
+                                ? "bg-red-100 text-red-700 border border-red-200"
+                                : "bg-slate-100 text-slate-700 border border-slate-200"
+                          }`}
+                        >
+                          {val}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
+
+                {/* Scouting Notes, Setter, Libero */}
+                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                  <textarea
+                    className="w-full h-12 sm:h-16 p-2 sm:p-3 bg-slate-50 border border-slate-200 rounded-lg sm:rounded-xl outline-none resize-none font-bold text-xs sm:text-sm text-slate-700 placeholder-slate-400 mb-1.5 sm:mb-2 transition-all focus:ring-2 focus:ring-blue-400"
+                    placeholder="Scouting notes..."
+                    value={tempNote || oppNotesMem[selectedOppId] || ""}
+                    onChange={(e) => setTempNote(e.target.value)}
+                    onBlur={() => {
+                      if (tempNote) saveOppNote();
+                    }}
+                  />
+                  <div className="flex gap-1.5 sm:gap-2">
+                    <button
+                      onClick={handleOppSetterSwap}
+                      className={`flex-1 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm uppercase ${
+                        oppSetterId === selectedOppId
+                          ? "bg-gradient-to-b from-green-500 to-green-600 text-white"
+                          : "bg-slate-100 text-slate-600 border border-slate-200"
+                      }`}
+                    >
+                      {oppSetterId === selectedOppId
+                        ? "Setter"
+                        : "Mark Setter"}
+                    </button>
+                    {oppLiberoId &&
+                      (oppLineup.indexOf(selectedOppId) === 0 ||
+                        oppLineup.indexOf(selectedOppId) === 4 ||
+                        oppLineup.indexOf(selectedOppId) === 5 ||
+                        selectedOppId === oppLiberoId) && (
+                        <button
+                          onClick={() => handleOppLiberoToggle(selectedOppId)}
+                          className="flex-1 bg-gradient-to-b from-amber-100 to-amber-200 text-amber-800 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl border border-amber-300 uppercase shadow-sm"
+                        >
+                          {selectedOppId === oppLiberoId
+                            ? "Lib Out"
+                            : "Lib In"}
+                        </button>
+                      )}
+                  </div>
+                </div>
+
+                {/* Sub In */}
+                <div className="flex gap-1.5 sm:gap-2 items-center bg-slate-200 p-1.5 sm:p-2 rounded-xl sm:rounded-2xl">
+                  {subPairs[selectedOppId] ? (
+                    <button
+                      onClick={handleOppSub}
+                      className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
+                    >
+                      Auto Sub #{subPairs[selectedOppId]} In
+                    </button>
+                  ) : (
+                    <>
+                      <input
+                        placeholder="New#"
+                        value={newOppNumber}
+                        onChange={(e) => setNewOppNumber(e.target.value)}
+                        className="w-12 sm:w-16 p-2 sm:p-3 bg-white border border-slate-300 rounded-lg sm:rounded-xl outline-none text-center font-black text-slate-800 uppercase text-xs sm:text-base"
+                      />
+                      <button
+                        onClick={handleOppSub}
+                        className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
+                      >
+                        Sub In
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
