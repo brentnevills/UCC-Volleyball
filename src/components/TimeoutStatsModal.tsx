@@ -32,6 +32,7 @@ import {
   Ban,
   Sun,
   Moon,
+  Trash2,
 } from "lucide-react";
 import {
   calculatePassingIndex,
@@ -63,6 +64,8 @@ interface TimeoutStatsModalProps {
     oppTimeouts: number;
   };
   history?: any[];
+  timeoutEvents?: any[];
+  onDeleteTimeout?: (timeoutId: string) => void;
 }
 
 export interface TrendShiftItem {
@@ -140,6 +143,8 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
   activeSetId,
   teamStats = { uccSubs: 0, oppSubs: 0, uccTimeouts: 0, oppTimeouts: 0 },
   history = [],
+  timeoutEvents = [],
+  onDeleteTimeout,
 }) => {
   // 60-second official timeout countdown timer
   const [secondsRemaining, setSecondsRemaining] = useState<number>(60);
@@ -153,14 +158,95 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
   // Scope toggle: "set" (current active set) or "match" (entire match totals)
   const [viewScope, setViewScope] = useState<"set" | "match">("set");
 
-  // Detailed table tab selection: "passers" | "attackers" | "court"
-  const [activeDetailTab, setActiveDetailTab] = useState<"passers" | "attackers" | "court">("passers");
+  // Detailed table tab selection: "passers" | "attackers" | "court" | "timeouts"
+  const [activeDetailTab, setActiveDetailTab] = useState<"passers" | "attackers" | "court" | "timeouts">("passers");
 
   // Toggle to expand all detected trend shifts in last 10 points
   const [showAllTrends, setShowAllTrends] = useState<boolean>(false);
 
   // Bright / High-Contrast Mode for gym lighting (default true per coach request)
   const [isBrightMode, setIsBrightMode] = useState<boolean>(true);
+
+  // Live in-game streak & tactical alert computation
+  const liveSituation = useMemo(() => {
+    let oppRun = 0;
+    let uccRun = 0;
+    if (history && history.length > 0) {
+      for (let i = history.length - 1; i >= 0; i--) {
+        const hPrev = history[i];
+        const hPrevU = hPrev.score?.ucc ?? 0;
+        const hPrevO = hPrev.score?.opp ?? 0;
+        const hCurrU = i === history.length - 1 ? score.ucc : history[i + 1]?.score?.ucc ?? 0;
+        const hCurrO = i === history.length - 1 ? score.opp : history[i + 1]?.score?.opp ?? 0;
+        if (hCurrU > hPrevU && hCurrO === hPrevO) {
+          if (oppRun > 0) break;
+          uccRun += (hCurrU - hPrevU);
+        } else if (hCurrO > hPrevO && hCurrU === hPrevU) {
+          if (uccRun > 0) break;
+          oppRun += (hCurrO - hPrevO);
+        } else {
+          break;
+        }
+      }
+    }
+    const isOppRunAlert = oppRun >= 2;
+    const isLancersSurge = uccRun >= 2;
+    const isLateSetCrunch = (score.ucc >= 20 || score.opp >= 20);
+    return {
+      oppRun,
+      uccRun,
+      isOppRunAlert,
+      isLancersSurge,
+      isLateSetCrunch,
+    };
+  }, [history, score]);
+
+  // Aggregate Timeout Analytics & History for match / set
+  const timeoutAnalytics = useMemo(() => {
+    const relevantTimeouts = (timeoutEvents || []).filter((to: any) => {
+      if (activeMatch?.id && to.matchId && to.matchId !== activeMatch.id) return false;
+      if (viewScope === "set") {
+        return Number(to.setNum) === Number(currentSetNum);
+      }
+      return true;
+    });
+
+    const ourTimeouts = relevantTimeouts.filter((to: any) => to.team === "ucc");
+    const oppTimeouts = relevantTimeouts.filter((to: any) => to.team === "opp");
+
+    // 1. First Ball Sideout % (FBSO) when we called timeout while receiving
+    const ourReceivingTOs = ourTimeouts.filter((to: any) => to.serving === "opp" && to.nextRallyWinner !== undefined);
+    const sideoutSuccesses = ourReceivingTOs.filter((to: any) => to.sideoutAchieved === true || to.nextRallyWinner === "ucc");
+    const fbsoRate = ourReceivingTOs.length > 0 ? (sideoutSuccesses.length / ourReceivingTOs.length) * 100 : null;
+
+    // 2. Server Icing % (did opponent server commit error or lose rally #1?)
+    const oppServerIced = ourReceivingTOs.filter((to: any) => to.serverIced === true || to.nextRallyWinner === "ucc");
+    const icingRate = ourReceivingTOs.length > 0 ? (oppServerIced.length / ourReceivingTOs.length) * 100 : null;
+
+    // 3. Run Stoppage Success % (when opp was on 2+ run, did rally #1 stop them?)
+    const oppRunTOs = ourTimeouts.filter((to: any) => (to.oppRunBeforeCall || 0) >= 2 && to.nextRallyWinner !== undefined);
+    const runHaltedSuccesses = oppRunTOs.filter((to: any) => to.runHalted === true || to.nextRallyWinner === "ucc");
+    const runStoppageRate = oppRunTOs.length > 0 ? (runHaltedSuccesses.length / oppRunTOs.length) * 100 : null;
+
+    // 4. Net 3-rally momentum average
+    const resolvedTOs = ourTimeouts.filter((to: any) => (to.next3RalliesUcc !== undefined && to.next3RalliesOpp !== undefined));
+    let netPoints = 0;
+    resolvedTOs.forEach((to: any) => {
+      netPoints += ((to.next3RalliesUcc || 0) - (to.next3RalliesOpp || 0));
+    });
+    const avgNet = resolvedTOs.length > 0 ? netPoints / resolvedTOs.length : 0;
+
+    return {
+      totalCount: relevantTimeouts.length,
+      ourCount: ourTimeouts.length,
+      oppCount: oppTimeouts.length,
+      fbsoRate,
+      icingRate,
+      runStoppageRate,
+      avgNet,
+      list: relevantTimeouts.slice().reverse(),
+    };
+  }, [timeoutEvents, activeMatch?.id, viewScope, currentSetNum]);
 
   // Play audio tones for 15s warning and 0s end
   const playChime = (type: "warning" | "buzzer" | "start") => {
@@ -1770,6 +1856,104 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
 
         {/* MODAL BODY */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1 custom-scrollbar">
+          {/* ACTIVE SITUATION & TIMEOUT STRATEGY ALERT */}
+          <div className={`p-4 rounded-2xl border transition-all shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3.5 ${
+            liveSituation.isOppRunAlert
+              ? isBrightMode
+                ? "bg-rose-50 border-2 border-rose-300 text-rose-950 shadow-rose-100"
+                : "bg-rose-950/40 border border-rose-500/50 text-rose-200"
+              : liveSituation.isLancersSurge
+              ? isBrightMode
+                ? "bg-emerald-50 border-2 border-emerald-300 text-emerald-950 shadow-emerald-100"
+                : "bg-emerald-950/40 border border-emerald-500/50 text-emerald-200"
+              : isBrightMode
+              ? "bg-amber-50/70 border-2 border-amber-200 text-slate-900"
+              : "bg-slate-800/60 border border-slate-700 text-slate-200"
+          }`}>
+            <div className="flex items-start sm:items-center gap-3">
+              <div className={`p-2.5 rounded-xl shrink-0 ${
+                liveSituation.isOppRunAlert
+                  ? "bg-rose-500 text-white animate-pulse shadow-md"
+                  : liveSituation.isLancersSurge
+                  ? "bg-emerald-500 text-slate-950 shadow-md"
+                  : "bg-amber-400 text-slate-950 shadow-sm"
+              }`}>
+                {liveSituation.isOppRunAlert ? (
+                  <Flame size={20} />
+                ) : liveSituation.isLancersSurge ? (
+                  <Sparkles size={20} />
+                ) : (
+                  <Clock size={20} />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-black uppercase tracking-wider">
+                    {liveSituation.isOppRunAlert
+                      ? `⚠️ Opponent on ${liveSituation.oppRun}-0 Scoring Run`
+                      : liveSituation.isLancersSurge
+                      ? `🔥 ${ourTeamName} on ${liveSituation.uccRun}-0 Surge`
+                      : liveSituation.isLateSetCrunch
+                      ? `⏱ Late-Set Crunch Time (${score.ucc}-${score.opp})`
+                      : `Live Match Situation (${score.ucc}-${score.opp})`}
+                  </span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+                    isBrightMode ? "bg-white text-slate-800 border border-slate-300" : "bg-black/30 text-white"
+                  }`}>
+                    Set {currentSetNum} · Serving: {serving === "ucc" ? ourTeamName : opponentName}
+                  </span>
+                </div>
+                <p className={`text-xs mt-0.5 ${isBrightMode ? "text-slate-700" : "text-slate-300"}`}>
+                  {liveSituation.isOppRunAlert
+                    ? `Opponent has won the last ${liveSituation.oppRun} consecutive rallies. Tactical timeout recommended to freeze server platform & re-establish first-ball sideout.`
+                    : liveSituation.isLancersSurge
+                    ? `${ourTeamName} has won the last ${liveSituation.uccRun} rallies. Protect momentum; keep defensive transition pressure high.`
+                    : liveSituation.isLateSetCrunch
+                    ? `Close late-set scenario. Use timeout to plan front-row sideout option and defensive assignment.`
+                    : `Tactical timeout review. Lancers have ${2 - teamStats.uccTimeouts}/2 timeouts left in Set ${currentSetNum}.`}
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Actions in Banner */}
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onCallOfficialTimeout) {
+                    onCallOfficialTimeout("ucc");
+                  }
+                }}
+                disabled={teamStats.uccTimeouts >= 2}
+                className={`px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+                  teamStats.uccTimeouts >= 2
+                    ? "bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300"
+                    : "bg-blue-600 hover:bg-blue-500 text-white active:scale-95 border border-blue-400/30"
+                }`}
+                title="Record Official Lancers Timeout"
+              >
+                <CheckCircle2 size={13} />
+                <span>Call {ourTeamName} TO ({teamStats.uccTimeouts}/2)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveDetailTab("timeouts")}
+                className={`px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer border ${
+                  activeDetailTab === "timeouts"
+                    ? "bg-amber-400 text-slate-950 border-amber-500 shadow-sm"
+                    : isBrightMode
+                    ? "bg-white hover:bg-slate-100 text-slate-800 border-slate-300"
+                    : "bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-600"
+                }`}
+                title="View Timeout Analytics & Log"
+              >
+                <Clock size={13} />
+                <span>Timeout Intel ({timeoutAnalytics.totalCount})</span>
+              </button>
+            </div>
+          </div>
+
           {/* ========================================================= */}
           {/* LAST 10 POINTS: TWO BIGGEST TREND SHIFTS (1 POS, 1 NEG)  */}
           {/* ========================================================= */}
@@ -2651,12 +2835,28 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
                   <Users size={13} />
                   <span>On Court ({computedMetrics.courtPlayerStats.length})</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveDetailTab("timeouts")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                    activeDetailTab === "timeouts"
+                      ? "bg-amber-400 text-slate-950 font-black shadow-xs ring-2 ring-amber-400/50"
+                      : isBrightMode
+                      ? "text-slate-600 hover:text-slate-950 hover:bg-slate-200/70"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800"
+                  }`}
+                >
+                  <Clock size={13} />
+                  <span>Timeout Intel ({timeoutAnalytics.totalCount})</span>
+                </button>
               </div>
 
               <div className={`text-[10px] font-semibold hidden md:block ${isBrightMode ? "text-slate-500" : "text-slate-400"}`}>
                 {activeDetailTab === "passers" && "Ranked by Passing Index"}
                 {activeDetailTab === "attackers" && "Ranked by Kills and Kill Efficiency"}
                 {activeDetailTab === "court" && "Active rotation positions"}
+                {activeDetailTab === "timeouts" && "Timeout efficiency, FBSO rate, and chronological log"}
               </div>
             </div>
 
@@ -3001,6 +3201,286 @@ export const TimeoutStatsModal: React.FC<TimeoutStatsModalProps> = ({
                       })}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* TAB 4: TIMEOUT INTEL & HISTORY */}
+              {activeDetailTab === "timeouts" && (
+                <div className="space-y-4">
+                  {/* KPI TILES */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {/* KPI 1: FBSO Rate */}
+                    <div className={`p-3 rounded-2xl border transition-colors ${
+                      isBrightMode ? "bg-emerald-50/80 border-emerald-200" : "bg-emerald-950/30 border-emerald-500/40"
+                    }`}>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${isBrightMode ? "text-emerald-900" : "text-emerald-300"}`}>
+                          FBSO (Sideout) %
+                        </span>
+                        <Target size={13} className="text-emerald-500 shrink-0" />
+                      </div>
+                      <div className={`text-xl sm:text-2xl font-black font-mono ${isBrightMode ? "text-emerald-950" : "text-emerald-200"}`}>
+                        {timeoutAnalytics.fbsoRate !== null ? `${timeoutAnalytics.fbsoRate.toFixed(1)}%` : "N/A"}
+                      </div>
+                      <p className={`text-[9px] mt-0.5 ${isBrightMode ? "text-emerald-700 font-semibold" : "text-emerald-400"}`}>
+                        Scored immediately on rally #1 out of timeout
+                      </p>
+                    </div>
+
+                    {/* KPI 2: Server Icing Rate */}
+                    <div className={`p-3 rounded-2xl border transition-colors ${
+                      isBrightMode ? "bg-sky-50/80 border-sky-200" : "bg-sky-950/30 border-sky-500/40"
+                    }`}>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${isBrightMode ? "text-sky-900" : "text-sky-300"}`}>
+                          Server Icing %
+                        </span>
+                        <Activity size={13} className="text-sky-500 shrink-0" />
+                      </div>
+                      <div className={`text-xl sm:text-2xl font-black font-mono ${isBrightMode ? "text-sky-950" : "text-sky-200"}`}>
+                        {timeoutAnalytics.icingRate !== null ? `${timeoutAnalytics.icingRate.toFixed(1)}%` : "N/A"}
+                      </div>
+                      <p className={`text-[9px] mt-0.5 ${isBrightMode ? "text-sky-700 font-semibold" : "text-sky-400"}`}>
+                        Opponent missed serve or sideout on 1st ball
+                      </p>
+                    </div>
+
+                    {/* KPI 3: Run Stoppage % */}
+                    <div className={`p-3 rounded-2xl border transition-colors ${
+                      isBrightMode ? "bg-amber-50/80 border-amber-200" : "bg-amber-950/30 border-amber-500/40"
+                    }`}>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${isBrightMode ? "text-amber-900" : "text-amber-300"}`}>
+                          Run Halt %
+                        </span>
+                        <Shield size={13} className="text-amber-500 shrink-0" />
+                      </div>
+                      <div className={`text-xl sm:text-2xl font-black font-mono ${isBrightMode ? "text-amber-950" : "text-amber-200"}`}>
+                        {timeoutAnalytics.runStoppageRate !== null ? `${timeoutAnalytics.runStoppageRate.toFixed(1)}%` : "N/A"}
+                      </div>
+                      <p className={`text-[9px] mt-0.5 ${isBrightMode ? "text-amber-700 font-semibold" : "text-amber-400"}`}>
+                        Opponent 2+ runs broken on 1st rally
+                      </p>
+                    </div>
+
+                    {/* KPI 4: 3-Rally Momentum */}
+                    <div className={`p-3 rounded-2xl border transition-colors ${
+                      isBrightMode ? "bg-indigo-50/80 border-indigo-200" : "bg-indigo-950/30 border-indigo-500/40"
+                    }`}>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${isBrightMode ? "text-indigo-900" : "text-indigo-300"}`}>
+                          3-Pt Momentum
+                        </span>
+                        <TrendingUp size={13} className="text-indigo-500 shrink-0" />
+                      </div>
+                      <div className={`text-xl sm:text-2xl font-black font-mono ${
+                        timeoutAnalytics.avgNet > 0
+                          ? isBrightMode ? "text-emerald-700" : "text-emerald-300"
+                          : timeoutAnalytics.avgNet < 0
+                          ? isBrightMode ? "text-rose-700" : "text-rose-300"
+                          : isBrightMode ? "text-slate-900" : "text-slate-200"
+                      }`}>
+                        {timeoutAnalytics.avgNet > 0 ? `+${timeoutAnalytics.avgNet.toFixed(1)}` : timeoutAnalytics.avgNet.toFixed(1)} pts
+                      </div>
+                      <p className={`text-[9px] mt-0.5 ${isBrightMode ? "text-indigo-700 font-semibold" : "text-indigo-400"}`}>
+                        Avg point differential over next 3 rallies
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* TIMEOUT LOG */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between pb-1">
+                      <h4 className={`text-xs font-black uppercase tracking-wider ${isBrightMode ? "text-slate-950" : "text-white"}`}>
+                        {viewScope === "set" ? `Set ${currentSetNum} Timeout Log` : "Full Match Timeout Log"}
+                      </h4>
+                      <span className={`text-[10px] font-semibold ${isBrightMode ? "text-slate-500" : "text-slate-400"}`}>
+                        {timeoutAnalytics.list.length} {timeoutAnalytics.list.length === 1 ? "timeout recorded" : "timeouts recorded"}
+                      </span>
+                    </div>
+
+                    {timeoutAnalytics.list.length === 0 ? (
+                      <div className={`p-6 text-center rounded-2xl border border-dashed ${
+                        isBrightMode ? "bg-slate-50 border-slate-300 text-slate-500" : "bg-slate-900 border-slate-700 text-slate-400"
+                      }`}>
+                        <Clock size={28} className="mx-auto mb-2 opacity-40 text-amber-500" />
+                        <p className="text-xs font-bold">No timeouts recorded in this selection.</p>
+                        <p className="text-[11px] mt-1 text-slate-400">
+                          When a timeout is called in this set, full situation, streak context, and post-timeout sideout outcomes will automatically display here.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[380px] overflow-y-auto custom-scrollbar pr-1">
+                        {timeoutAnalytics.list.map((to: any) => {
+                          const isOurTO = to.team === "ucc";
+                          const hasOutcome = to.nextRallyWinner !== undefined;
+                          const nextRallyWon = to.nextRallyWinner === "ucc";
+
+                          return (
+                            <div
+                              key={to.id}
+                              className={`p-3.5 rounded-2xl border transition-all shadow-xs ${
+                                isOurTO
+                                  ? isBrightMode
+                                    ? "bg-blue-50/50 border-blue-200 text-slate-950"
+                                    : "bg-slate-900 border-blue-500/30 text-white"
+                                  : isBrightMode
+                                  ? "bg-rose-50/40 border-rose-200 text-slate-950"
+                                  : "bg-slate-900 border-rose-500/30 text-white"
+                              }`}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                    isOurTO
+                                      ? "bg-blue-600 text-white shadow-2xs"
+                                      : "bg-rose-600 text-white shadow-2xs"
+                                  }`}>
+                                    {isOurTO ? ourTeamName : opponentName} TO
+                                  </span>
+                                  <span className={`text-xs font-black font-mono ${isBrightMode ? "text-slate-900" : "text-white"}`}>
+                                    Set {to.setNum} · Score: {to.scoreUcc}-{to.scoreOpp}
+                                  </span>
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${
+                                    to.pointDiff > 0
+                                      ? "text-emerald-700 bg-emerald-100"
+                                      : to.pointDiff < 0
+                                      ? "text-rose-700 bg-rose-100"
+                                      : "text-slate-700 bg-slate-200"
+                                  }`}>
+                                    {to.pointDiff > 0 ? `+${to.pointDiff}` : to.pointDiff}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[10px] font-medium ${isBrightMode ? "text-slate-500" : "text-slate-400"}`}>
+                                    Server: <strong>{to.serverName || (to.serving === "ucc" ? ourTeamName : opponentName)}</strong>
+                                  </span>
+                                  {onDeleteTimeout && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onDeleteTimeout(to.id)}
+                                      className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                      title="Delete / Undo this timeout entry"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[11px] font-bold ${isBrightMode ? "text-slate-700" : "text-slate-300"}`}>
+                                    Context:
+                                  </span>
+                                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${
+                                    (to.oppRunBeforeCall || 0) >= 2
+                                      ? isBrightMode ? "bg-rose-100/80 text-rose-900 border-rose-300" : "bg-rose-950/50 text-rose-300 border-rose-800"
+                                      : (to.uccRunBeforeCall || 0) >= 2
+                                      ? isBrightMode ? "bg-emerald-100/80 text-emerald-900 border-emerald-300" : "bg-emerald-950/50 text-emerald-300 border-emerald-800"
+                                      : isBrightMode ? "bg-white text-slate-800 border-slate-200" : "bg-slate-800 text-slate-200 border-slate-700"
+                                  }`}>
+                                    {to.situation}
+                                  </span>
+                                </div>
+
+                                {/* Outcome on Rally #1 */}
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`text-[11px] font-bold ${isBrightMode ? "text-slate-700" : "text-slate-400"}`}>
+                                    Rally #1:
+                                  </span>
+                                  {hasOutcome ? (
+                                    nextRallyWon ? (
+                                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-emerald-500 text-white shadow-2xs flex items-center gap-1">
+                                        <CheckCircle2 size={11} />
+                                        <span>{isOurTO ? "First-Ball Sideout Won (+1)" : "Point Won (+1)"}</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-rose-600 text-white shadow-2xs flex items-center gap-1">
+                                        <X size={11} />
+                                        <span>{isOurTO ? "Point Conceded (-1)" : "Opponent Sideout"}</span>
+                                      </span>
+                                    )
+                                  ) : (
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-400 text-slate-950 animate-pulse">
+                                      Next Rally Pending...
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* 3-Rally Momentum Detail */}
+                              {hasOutcome && (to.next3RalliesUcc !== undefined || to.next3RalliesOpp !== undefined) && (
+                                <div className={`mt-2 pt-2 border-t flex items-center justify-between text-[11px] font-mono ${
+                                  isBrightMode ? "border-slate-200/80 text-slate-600" : "border-slate-800 text-slate-400"
+                                }`}>
+                                  <span>
+                                    Next 3 Rallies: <strong>{ourTeamName} {to.next3RalliesUcc || 0}</strong> - <strong>{to.next3RalliesOpp || 0} {opponentName}</strong>
+                                  </span>
+                                  <span className={`font-black ${
+                                    (to.next3RalliesUcc || 0) > (to.next3RalliesOpp || 0)
+                                      ? "text-emerald-600"
+                                      : (to.next3RalliesUcc || 0) < (to.next3RalliesOpp || 0)
+                                      ? "text-rose-600"
+                                      : "text-slate-500"
+                                  }`}>
+                                    {(to.next3RalliesUcc || 0) - (to.next3RalliesOpp || 0) >= 0 ? "+" : ""}
+                                    {(to.next3RalliesUcc || 0) - (to.next3RalliesOpp || 0)} Net Momentum
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* COACH HUDDLE TACTICAL CHEAT SHEET */}
+                  <div className={`p-4 rounded-2xl border transition-colors ${
+                    isBrightMode ? "bg-slate-100/80 border-slate-200 text-slate-900" : "bg-slate-900 border-slate-700 text-slate-200"
+                  }`}>
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <Sparkles size={15} className="text-amber-500 shrink-0" />
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                        Huddle Tactical Focus
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                      <div className={`p-2.5 rounded-xl border ${isBrightMode ? "bg-white border-slate-200" : "bg-slate-950/60 border-slate-800"}`}>
+                        <span className="block text-[10px] font-black uppercase text-indigo-700 tracking-wider mb-0.5">
+                          1. Offense Priority
+                        </span>
+                        <p className={`text-[11px] ${isBrightMode ? "text-slate-700" : "text-slate-300"}`}>
+                          {computedMetrics.rankedHitters.length > 0
+                            ? `Primary finisher: #${computedMetrics.rankedHitters[0].number} ${computedMetrics.rankedHitters[0].name} (Eff: ${computedMetrics.rankedHitters[0].efficiency >= 0 ? "+" : ""}${computedMetrics.rankedHitters[0].efficiency.toFixed(3)})`
+                            : "Set middle or open opposite if outside is pinned."}
+                        </p>
+                      </div>
+
+                      <div className={`p-2.5 rounded-xl border ${isBrightMode ? "bg-white border-slate-200" : "bg-slate-950/60 border-slate-800"}`}>
+                        <span className="block text-[10px] font-black uppercase text-purple-700 tracking-wider mb-0.5">
+                          2. Serve Receive Platform
+                        </span>
+                        <p className={`text-[11px] ${isBrightMode ? "text-slate-700" : "text-slate-300"}`}>
+                          {computedMetrics.rankedPassers.length > 0
+                            ? `Stabilizer: #${computedMetrics.rankedPassers[0].number} ${computedMetrics.rankedPassers[0].name} (Idx: ${computedMetrics.rankedPassers[0].passingIndex})`
+                            : "Early platform angle to target setter position."}
+                        </p>
+                      </div>
+
+                      <div className={`p-2.5 rounded-xl border ${isBrightMode ? "bg-white border-slate-200" : "bg-slate-950/60 border-slate-800"}`}>
+                        <span className="block text-[10px] font-black uppercase text-amber-700 tracking-wider mb-0.5">
+                          3. Defensive Call
+                        </span>
+                        <p className={`text-[11px] ${isBrightMode ? "text-slate-700" : "text-slate-300"}`}>
+                          Blockers press over net on line/cross assignment; back-row shift to off-speed tips.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

@@ -703,38 +703,6 @@ export default function App() {
   const [scoreCap, setScoreCap] = useState("");
   const [history, setHistory] = useState([]);
 
-  // Device Client Identification & Match Starter Authority
-  const getClientDeviceId = useCallback(() => {
-    let id = localStorage.getItem("ucc_device_client_id");
-    if (!id) {
-      id = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      localStorage.setItem("ucc_device_client_id", id);
-    }
-    return id;
-  }, []);
-
-  const isGameStarter = useMemo(() => {
-    if (!activeMatch) return true;
-    const starterId = (activeMatch as any).startedBy || localStorage.getItem(`ucc_match_starter_${activeMatch.id}`);
-    if (!starterId) return true; // Legacy matches allow scoring
-
-    const localSavedStarter = localStorage.getItem(`ucc_match_starter_${activeMatch.id}`);
-    if (localSavedStarter && localSavedStarter === starterId) return true;
-
-    const myDevId = getClientDeviceId();
-    const myIds = [
-      user?.uid,
-      auth?.currentUser?.uid,
-      myDevId,
-      localStorage.getItem("ucc_guest_uid"),
-    ].filter(Boolean);
-
-    return myIds.some((id) => id === starterId);
-  }, [activeMatch, user, getClientDeviceId]);
-
-  // Mobile layout mode for phone usability (fast-tap cards vs detailed table)
-  const [mobileGameViewMode, setMobileGameViewMode] = useState<"cards" | "table">("cards");
-
   // Setup State
   const [newPlayerName, setNewPlayerName] = useState("");
   const [newPlayerNum, setNewPlayerNum] = useState("");
@@ -765,6 +733,16 @@ export default function App() {
     oppSubs: 0,
     uccTimeouts: 0,
     oppTimeouts: 0,
+  });
+
+  // Comprehensive Match & Season Timeout Events Tracking
+  const [timeoutEvents, setTimeoutEvents] = useState<any[]>(() => {
+    try {
+      const stored = localStorage.getItem("ucc_timeout_events");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
   });
 
   // Game Tracking States
@@ -2808,114 +2786,75 @@ export default function App() {
     }
   };
 
-  const computeRotatedUCCLineup = (
-    currentLineup: string[],
-    currentLiberoId: string | null,
-    swappedOutId: string | null,
-  ) => {
-    if (!Array.isArray(currentLineup) || currentLineup.length !== 6) {
-      return {
-        newLineup: Array.isArray(currentLineup) ? [...currentLineup] : [],
-        promptLiberoOut: false,
-        newSwappedOutId: swappedOutId,
-        autoSubbedMsg: null,
-      };
-    }
-    // Standard clockwise rotation: Pos 2 (index 1) -> Pos 1 (index 0 / server), Pos 1 (index 0) -> Pos 6 (index 5)
-    const newLineup = [...currentLineup.slice(1), currentLineup[0]];
+  const rotateUCC = () => {
+    let nextL: string[] = [];
     let promptLiberoOut = false;
-    let newSwappedOutId = swappedOutId;
-    let autoSubbedMsg: string | null = null;
-
-    // Front row positions: indices 1, 2, 3 correspond to Pos 2, Pos 3, Pos 4
-    if (
-      currentLiberoId &&
-      (newLineup[1] === currentLiberoId ||
-        newLineup[2] === currentLiberoId ||
-        newLineup[3] === currentLiberoId)
-    ) {
-      const libFrontIdx = newLineup.indexOf(currentLiberoId);
-      if (libFrontIdx !== -1) {
-        if (newSwappedOutId && !newLineup.includes(newSwappedOutId)) {
-          newLineup[libFrontIdx] = newSwappedOutId;
-          newSwappedOutId = null;
-          autoSubbedMsg = "Libero automatically subbed out to bench as rotation reached front row";
-        } else {
-          // Find an available bench player to take front row slot
-          const benchPlayer = sortedRoster.find(
-            (p) =>
-              (showRetired || !p.isRetired) &&
-              !newLineup.includes(p.id) &&
-              p.id !== currentLiberoId,
-          );
-          if (benchPlayer) {
-            newLineup[libFrontIdx] = benchPlayer.id;
-            newSwappedOutId = null;
-            autoSubbedMsg = `Libero auto-subbed out for #${benchPlayer.number} ${benchPlayer.name}`;
+    pushToHistory();
+    setLineup((prev) => {
+      let newLineup = [...prev.slice(1), prev[0]];
+      // If libero rotates to the front row (indices 1, 2, 3 correspond to Pos 2, 3, 4)
+      if (
+        liberoId &&
+        (newLineup[1] === liberoId ||
+          newLineup[2] === liberoId ||
+          newLineup[3] === liberoId)
+      ) {
+        const libFrontIdx = newLineup.indexOf(liberoId);
+        if (libFrontIdx !== -1) {
+          if (liberoSwappedOutId && !newLineup.includes(liberoSwappedOutId)) {
+            newLineup[libFrontIdx] = liberoSwappedOutId;
+            setLiberoSwappedOutId(null);
+            showToast("Libero automatically subbed out to bench as rotation reached front row", "info");
           } else {
-            promptLiberoOut = true;
+            // Find an available bench player to take front row slot
+            const benchPlayer = sortedRoster.find(
+              (p) => (showRetired || !p.isRetired) && !newLineup.includes(p.id) && p.id !== liberoId,
+            );
+            if (benchPlayer) {
+              newLineup[libFrontIdx] = benchPlayer.id;
+              setLiberoSwappedOutId(null);
+              showToast(`Libero auto-subbed out for #${benchPlayer.number} ${benchPlayer.name}`, "info");
+            } else {
+              promptLiberoOut = true;
+            }
           }
         }
       }
+      nextL = newLineup;
+      return newLineup;
+    });
+    if (nextL.length > 0) {
+      updateSetState({ lineup: nextL });
     }
-    return { newLineup, promptLiberoOut, newSwappedOutId, autoSubbedMsg };
-  };
-
-  const computeRotatedOppLineup = (
-    currentOppLineup: string[],
-    currentOppLiberoId: string | null,
-    oppSwappedOutId: string | null,
-  ) => {
-    if (!Array.isArray(currentOppLineup) || currentOppLineup.length !== 6) {
-      return {
-        newOppLineup: Array.isArray(currentOppLineup) ? [...currentOppLineup] : [],
-        newOppSwappedOutId: oppSwappedOutId,
-      };
-    }
-    const newOppLineup = [...currentOppLineup.slice(1), currentOppLineup[0]];
-    let newOppSwappedOutId = oppSwappedOutId;
-    if (
-      currentOppLiberoId &&
-      (newOppLineup[1] === currentOppLiberoId ||
-        newOppLineup[2] === currentOppLiberoId ||
-        newOppLineup[3] === currentOppLiberoId)
-    ) {
-      const oppLibIdx = newOppLineup.indexOf(currentOppLiberoId);
-      if (oppLibIdx !== -1 && newOppSwappedOutId && !newOppLineup.includes(newOppSwappedOutId)) {
-        newOppLineup[oppLibIdx] = newOppSwappedOutId;
-        newOppSwappedOutId = null;
-      }
-    }
-    return { newOppLineup, newOppSwappedOutId };
-  };
-
-  const rotateUCC = (explicitLineup?: string[]) => {
-    pushToHistory();
-    const source = explicitLineup || lineup;
-    const { newLineup, promptLiberoOut, newSwappedOutId, autoSubbedMsg } =
-      computeRotatedUCCLineup(source, liberoId, liberoSwappedOutId);
-    setLineup(newLineup);
-    setLiberoSwappedOutId(newSwappedOutId);
-    updateSetState({ lineup: newLineup });
-    if (autoSubbedMsg) {
-      showToast(autoSubbedMsg, "info");
-    }
-    if (promptLiberoOut && liberoId) {
+    if (promptLiberoOut) {
       setLiberoPromptPlayerId(liberoId);
       setShowLiberoOutModal(true);
     }
-    return newLineup;
   };
-
-  const rotateOpp = (explicitOppLineup?: string[]) => {
+  const rotateOpp = () => {
+    let nextL: string[] = [];
     pushToHistory();
-    const source = explicitOppLineup || oppLineup;
-    const { newOppLineup, newOppSwappedOutId } =
-      computeRotatedOppLineup(source, oppLiberoId, oppLiberoSwappedOutId);
-    setOppLineup(newOppLineup);
-    setOppLiberoSwappedOutId(newOppSwappedOutId);
-    updateSetState({ oppLineup: newOppLineup });
-    return newOppLineup;
+    setOppLineup((prev) => {
+      const newLineup = [...prev.slice(1), prev[0]];
+      // If opp libero rotates to front row
+      if (
+        oppLiberoId &&
+        (newLineup[1] === oppLiberoId ||
+          newLineup[2] === oppLiberoId ||
+          newLineup[3] === oppLiberoId)
+      ) {
+        const oppLibIdx = newLineup.indexOf(oppLiberoId);
+        if (oppLibIdx !== -1 && oppLiberoSwappedOutId && !newLineup.includes(oppLiberoSwappedOutId)) {
+          newLineup[oppLibIdx] = oppLiberoSwappedOutId;
+          setOppLiberoSwappedOutId(null);
+        }
+      }
+      nextL = newLineup;
+      return newLineup;
+    });
+    if (nextL.length > 0) {
+      updateSetState({ oppLineup: nextL });
+    }
   };
 
   const changeRallyPhase = (newPhase) => {
@@ -3321,8 +3260,6 @@ export default function App() {
       }
 
       const matchId = Date.now().toString();
-      const starterId = user?.uid || auth?.currentUser?.uid || getClientDeviceId();
-      const starterName = user?.displayName || user?.email?.split("@")[0] || "Coach";
       const newMatch = {
         id: matchId,
         date: new Date().toISOString(),
@@ -3332,14 +3269,7 @@ export default function App() {
         format: "Open Drill (Grid)",
         cap: "",
         isLive: true,
-        startedBy: starterId,
-        startedByName: starterName,
-        startedAt: new Date().toISOString(),
       };
-      try {
-        localStorage.setItem(`ucc_match_starter_${matchId}`, starterId);
-        localStorage.setItem(`ucc_match_starter_name_${matchId}`, starterName);
-      } catch (e) {}
 
       const setId = Date.now().toString() + "_set";
       const newSet = {
@@ -3582,8 +3512,6 @@ export default function App() {
     enforceFullscreen();
     if (matchType === "Practice" && matchFormat === "Open Drill (Grid)") {
       const matchId = Date.now().toString();
-      const starterId = user?.uid || auth?.currentUser?.uid || getClientDeviceId();
-      const starterName = user?.displayName || user?.email?.split("@")[0] || "Coach";
       const newMatch = {
         id: matchId,
         date: new Date().toISOString(),
@@ -3593,14 +3521,7 @@ export default function App() {
         format: matchFormat,
         cap: "",
         isLive: true,
-        startedBy: starterId,
-        startedByName: starterName,
-        startedAt: new Date().toISOString(),
       };
-      try {
-        localStorage.setItem(`ucc_match_starter_${matchId}`, starterId);
-        localStorage.setItem(`ucc_match_starter_name_${matchId}`, starterName);
-      } catch (e) {}
 
       const setId = Date.now().toString() + "_set";
       const newSet = {
@@ -3706,8 +3627,6 @@ export default function App() {
 
       const matchId = Date.now().toString();
       const oppClean = (opponentName && opponentName.trim()) || "Opponent";
-      const starterId = user?.uid || auth?.currentUser?.uid || getClientDeviceId();
-      const starterName = user?.displayName || user?.email?.split("@")[0] || "Coach";
       const newMatch = {
         id: matchId,
         date: new Date().toISOString(),
@@ -3717,14 +3636,7 @@ export default function App() {
         format: matchFormat || "Best of 5",
         cap: scoreCap || "",
         isLive: true,
-        startedBy: starterId,
-        startedByName: starterName,
-        startedAt: new Date().toISOString(),
       };
-      try {
-        localStorage.setItem(`ucc_match_starter_${matchId}`, starterId);
-        localStorage.setItem(`ucc_match_starter_name_${matchId}`, starterName);
-      } catch (e) {}
 
       const setId = Date.now().toString() + "_set";
       const safeLineup = [...lineup];
@@ -3857,10 +3769,6 @@ export default function App() {
   };
 
   const handleUndo = async () => {
-    if (!isGameStarter) {
-      showToast("Score and match rollbacks are restricted to the match starter.", "warning");
-      return;
-    }
     if (history.length === 0) return;
     const lastState = history[history.length - 1];
     setHistory((prev) => prev.slice(0, -1));
@@ -4363,10 +4271,6 @@ export default function App() {
     newUccScore: number,
     newOppScore: number,
   ) => {
-    if (!isGameStarter) {
-      showToast("Only the match starter can edit set scores.", "warning");
-      return;
-    }
     if (activeSetId === setId) {
       setScore({ ucc: newUccScore, opp: newOppScore });
     }
@@ -4437,11 +4341,11 @@ export default function App() {
       setSelectedPlayerId(null);
     }
 
-    // Determine if this stat automatically scores a point (Starters only)
+    // Determine if this stat automatically scores a point
     let pointAwardedTo: "ucc" | "opp" | null = null;
     let pointReason = "";
 
-    if (autoScoreTracking && isGameStarter) {
+    if (autoScoreTracking) {
       if (category === "Attack") {
         if (metric === "Kill") {
           pointAwardedTo = "ucc";
@@ -4493,10 +4397,6 @@ export default function App() {
       const teamName = pointAwardedTo === "ucc" ? effectiveTeamName : (opponentName.trim() || "Opponent");
       showToast(`${pointReason} -> Point ${teamName}!`, "success");
     } else {
-      if (!isGameStarter) {
-        const pObj = appData.roster.find((r) => r.id === playerId);
-        showToast(`Stat recorded: ${metric} for ${pObj?.name || playerId} (Score synced with starter)`, "info");
-      }
       // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
       if (
         rallyPhase === "receive" ||
@@ -4522,11 +4422,11 @@ export default function App() {
       setSelectedOppId(null);
     }
 
-    // Determine if this opponent stat automatically scores a point (Starters only)
+    // Determine if this opponent stat automatically scores a point
     let pointAwardedTo: "ucc" | "opp" | null = null;
     let pointReason = "";
 
-    if (autoScoreTracking && isGameStarter) {
+    if (autoScoreTracking) {
       if (category === "Attack") {
         if (metric === "Kill") {
           pointAwardedTo = "opp";
@@ -4581,9 +4481,6 @@ export default function App() {
       const teamName = pointAwardedTo === "ucc" ? effectiveTeamName : (opponentName.trim() || "Opponent");
       showToast(`${pointReason} -> Point ${teamName}!`, "success");
     } else {
-      if (!isGameStarter) {
-        showToast(`Opponent stat recorded: ${metric} (Score synced with starter)`, "info");
-      }
       // ANY stat recorded during receive phase satisfies the "first touch", so we transition to PLAY.
       if (
         rallyPhase === "receive" ||
@@ -4610,10 +4507,6 @@ export default function App() {
   };
 
   const handlePoint = async (team: "ucc" | "opp", skipHistory = false) => {
-    if (!isGameStarter) {
-      showToast("Only the match starter can change the score.", "warning");
-      return;
-    }
     if (!skipHistory) pushToHistory();
     setEndRallyVisible(false);
     setSelectedOppId(null);
@@ -4635,36 +4528,19 @@ export default function App() {
     setScore({ ucc: newUcc, opp: newOpp });
 
     let nextServing = serving;
-    let nextPhase = "serve";
-    let updatedLineup: string[] | null = null;
-    let updatedOppLineup: string[] | null = null;
-
     if (team === "ucc") {
       if (serving === "opp") {
         nextServing = "ucc";
-        nextPhase = "serve";
         setServing("ucc");
-        updatedLineup = rotateUCC();
-      } else {
-        nextServing = "ucc";
-        nextPhase = "serve";
-        setServing("ucc");
+        rotateUCC();
       }
     } else {
       if (serving === "ucc") {
         nextServing = "opp";
-        nextPhase = "receive";
         setServing("opp");
-        updatedOppLineup = rotateOpp();
-      } else {
-        nextServing = "opp";
-        nextPhase = "receive";
-        setServing("opp");
+        rotateOpp();
       }
     }
-
-    setServing(nextServing);
-    setRallyPhase(nextPhase);
 
     const targetSetId =
       activeSetId ||
@@ -4688,14 +4564,65 @@ export default function App() {
     };
     const updatedPointHistory = [...existingPoints, pointEntry];
 
+    // Evaluate real-time post-timeout outcomes for any timeout called in this set
+    setTimeoutEvents((prev) => {
+      let changed = false;
+      const updated = prev.map((to) => {
+        if (to.matchId === (activeMatch?.id || "match_current") && to.setNum === (currentSetNum || 1)) {
+          // If first rally after timeout has not been resolved yet:
+          if (to.nextRallyWinner === undefined) {
+            changed = true;
+            const sideoutAchieved = to.team === "ucc" && to.serving === "opp" && team === "ucc";
+            const runHalted = (to.oppRunBeforeCall || 0) >= 2 && team === "ucc";
+            let effectiveness = "Neutral";
+            if (sideoutAchieved || runHalted) {
+              effectiveness = "Critical Success";
+            } else if (to.team === "ucc" && team === "ucc") {
+              effectiveness = "Effective";
+            } else if (to.team === "ucc" && team === "opp") {
+              effectiveness = "Unsuccessful";
+            } else if (to.team === "opp" && team === "opp") {
+              effectiveness = "Effective";
+            }
+            return {
+              ...to,
+              nextRallyWinner: team,
+              sideoutAchieved,
+              runHalted,
+              effectiveness,
+              next3RalliesUcc: team === "ucc" ? 1 : 0,
+              next3RalliesOpp: team === "opp" ? 1 : 0,
+            };
+          } else {
+            // Track outcomes across next 3 rallies
+            const totalNext = (to.next3RalliesUcc || 0) + (to.next3RalliesOpp || 0);
+            if (totalNext < 3) {
+              changed = true;
+              return {
+                ...to,
+                next3RalliesUcc: team === "ucc" ? (to.next3RalliesUcc || 0) + 1 : (to.next3RalliesUcc || 0),
+                next3RalliesOpp: team === "opp" ? (to.next3RalliesOpp || 0) + 1 : (to.next3RalliesOpp || 0),
+              };
+            }
+          }
+        }
+        return to;
+      });
+      if (changed) {
+        try {
+          localStorage.setItem("ucc_timeout_events", JSON.stringify(updated));
+        } catch {}
+        return updated;
+      }
+      return prev;
+    });
+
     updateSetState({
       scoreUcc: newUcc,
       scoreOpp: newOpp,
       pointHistory: updatedPointHistory,
       serving: nextServing,
-      rallyPhase: nextPhase,
-      ...(updatedLineup ? { lineup: updatedLineup } : {}),
-      ...(updatedOppLineup ? { oppLineup: updatedOppLineup } : {}),
+      rallyPhase: "serve",
     });
 
     const winner = checkSetWin(newUcc, newOpp);
@@ -4703,7 +4630,7 @@ export default function App() {
       setSetWinnerModal(winner);
       setNextSetServing(nextServing === "ucc" ? "opp" : "ucc");
     } else {
-      changeRallyPhase(nextPhase);
+      changeRallyPhase("serve");
     }
   };
 
@@ -4885,7 +4812,6 @@ export default function App() {
     setShowLineupEditModal(false);
 
     const setId = Date.now().toString() + "_set";
-    const initialRallyPhase = selectedServing === "opp" ? "receive" : "serve";
     const newSet = {
       id: setId,
       matchId: targetMatchId,
@@ -4895,7 +4821,7 @@ export default function App() {
       lineup: safeSelectedLineup,
       oppLineup: safeOppLineup,
       serving: selectedServing,
-      rallyPhase: initialRallyPhase,
+      rallyPhase: "serve",
     };
 
     const updatedData = {
@@ -4933,13 +4859,8 @@ export default function App() {
     setHistory([]);
     setBetweenSetsModal(null);
     setSetWinnerModal(null);
-    changeRallyPhase(initialRallyPhase);
-    if (selectedServing === "ucc") {
-      setServePromptVisible(true);
-    } else {
-      setServePromptVisible(false);
-      setOppServeReceivePrompt(null);
-    }
+    changeRallyPhase("serve");
+    setServePromptVisible(true);
     setView("game");
   };
 
@@ -5339,10 +5260,6 @@ export default function App() {
   };
 
   const manualScoreAdjust = async (team: "ucc" | "opp", delta: number) => {
-    if (!isGameStarter) {
-      showToast("Only the match starter can change the score.", "warning");
-      return;
-    }
     pushToHistory();
     const currentUcc = typeof score?.ucc === "number" && !isNaN(score.ucc) ? score.ucc : 0;
     const currentOpp = typeof score?.opp === "number" && !isNaN(score.opp) ? score.opp : 0;
@@ -5541,11 +5458,115 @@ export default function App() {
     setSelectedPlayerId(null);
   };
 
-  const callTimeout = (team) => {
-    if (team === "ucc")
+  const callTimeout = (team: "ucc" | "opp") => {
+    if (team === "ucc") {
       setTeamStats((s) => ({ ...s, uccTimeouts: s.uccTimeouts + 1 }));
-    if (team === "opp")
+    } else {
       setTeamStats((s) => ({ ...s, oppTimeouts: s.oppTimeouts + 1 }));
+    }
+
+    // Calculate active streaks going into this timeout
+    let oppRun = 0;
+    let uccRun = 0;
+    if (history && history.length > 0) {
+      for (let i = history.length - 1; i >= 0; i--) {
+        const hPrev = history[i];
+        const hPrevU = hPrev.score?.ucc ?? 0;
+        const hPrevO = hPrev.score?.opp ?? 0;
+        const hCurrU = i === history.length - 1 ? score.ucc : history[i + 1]?.score?.ucc ?? 0;
+        const hCurrO = i === history.length - 1 ? score.opp : history[i + 1]?.score?.opp ?? 0;
+        if (hCurrU > hPrevU && hCurrO === hPrevO) {
+          if (oppRun > 0) break;
+          uccRun += (hCurrU - hPrevU);
+        } else if (hCurrO > hPrevO && hCurrU === hPrevU) {
+          if (uccRun > 0) break;
+          oppRun += (hCurrO - hPrevO);
+        } else {
+          break;
+        }
+      }
+    }
+
+    const currentServerName = serving === "ucc"
+      ? (lineup[0] ? (appData.roster.find((p) => p.id === lineup[0])?.name || `#${appData.roster.find((p) => p.id === lineup[0])?.number || ""}`) : effectiveTeamName)
+      : (opponentName || "Opponent");
+
+    let situation = `Tactical timeout at ${score.ucc}-${score.opp}`;
+    if (team === "ucc" && oppRun >= 2) {
+      situation = `Halt Opponent ${oppRun}-0 Run`;
+    } else if (team === "opp" && uccRun >= 2) {
+      situation = `Opponent attempts to break ${effectiveTeamName} ${uccRun}-0 Run`;
+    } else if (score.opp >= 20 || score.ucc >= 20) {
+      situation = `Late-set crunch (${score.ucc}-${score.opp})`;
+    }
+
+    const newTimeoutRecord = {
+      id: `to_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      matchId: activeMatch?.id || "match_current",
+      setId: activeSetId,
+      setNum: currentSetNum || 1,
+      team,
+      timestamp: Date.now(),
+      scoreUcc: score.ucc,
+      scoreOpp: score.opp,
+      pointDiff: score.ucc - score.opp,
+      serving,
+      serverName: currentServerName,
+      oppRunBeforeCall: oppRun,
+      uccRunBeforeCall: uccRun,
+      situation,
+      historyRallyIndex: history.length,
+      nextRallyWinner: undefined,
+      sideoutAchieved: undefined,
+      serverIced: undefined,
+      next3RalliesUcc: 0,
+      next3RalliesOpp: 0,
+      runHalted: oppRun >= 2 ? undefined : false,
+      effectiveness: "Neutral",
+    };
+
+    setTimeoutEvents((prev) => {
+      const updated = [...prev, newTimeoutRecord];
+      try {
+        localStorage.setItem("ucc_timeout_events", JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    if (activeMatch?.id) {
+      setAppData((prev) => {
+        const matchIdx = prev.matches.findIndex((m: any) => m.id === activeMatch.id);
+        if (matchIdx >= 0) {
+          const updatedMatches = [...prev.matches];
+          const currM = updatedMatches[matchIdx];
+          const currLog = currM.timeoutLog || [];
+          updatedMatches[matchIdx] = {
+            ...currM,
+            timeoutLog: [...currLog, newTimeoutRecord],
+          };
+          return { ...prev, matches: updatedMatches };
+        }
+        return prev;
+      });
+    }
+  };
+
+  const handleDeleteTimeout = (timeoutId: string) => {
+    const toDelete = timeoutEvents.find((t) => t.id === timeoutId);
+    if (!toDelete) return;
+    if (toDelete.team === "ucc") {
+      setTeamStats((s) => ({ ...s, uccTimeouts: Math.max(0, s.uccTimeouts - 1) }));
+    } else {
+      setTeamStats((s) => ({ ...s, oppTimeouts: Math.max(0, s.oppTimeouts - 1) }));
+    }
+    setTimeoutEvents((prev) => {
+      const updated = prev.filter((t) => t.id !== timeoutId);
+      try {
+        localStorage.setItem("ucc_timeout_events", JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    showToast("Timeout entry removed", "info");
   };
 
   // -------------------------------------------------------------
@@ -9217,6 +9238,8 @@ export default function App() {
         sets={appData.sets}
         activeMatch={activeMatch}
         activeSetId={activeSetId}
+        timeoutEvents={timeoutEvents}
+        onDeleteTimeout={handleDeleteTimeout}
         teamStats={teamStats}
         history={history}
       />
@@ -9763,127 +9786,126 @@ export default function App() {
             );
           })()}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 w-full mb-6 sm:mb-10">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 w-full mb-4 sm:mb-6">
             {teamInfo.role !== "player" && (
               <>
                 <button
                   onClick={() => startSetup("League")}
-                  className="bg-gradient-to-b from-[#0044cc] to-[#002b80] text-white p-6 sm:p-8 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-wider hover:from-[#0055ff] hover:to-[#003399] transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-blue-400/30"
+                  className="bg-gradient-to-b from-[#0044cc] to-[#002b80] text-white p-5 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-base sm:text-lg tracking-wider hover:from-[#0055ff] hover:to-[#003399] transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-blue-400/30 cursor-pointer"
                 >
-                  <Play className="mb-2 sm:mb-3" size={32} />
+                  <Play className="mb-2 sm:mb-2.5" size={28} />
                   <span>LEAGUE MATCH</span>
                 </button>
                 <button
                   onClick={() => startSetup("Tournament")}
-                  className="bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 p-6 sm:p-8 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-wider hover:from-amber-300 hover:to-amber-500 transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-amber-200/50"
+                  className="bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 p-5 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-base sm:text-lg tracking-wider hover:from-amber-300 hover:to-amber-500 transition-all duration-200 active:scale-95 flex flex-col items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.3)] border border-amber-200/50 cursor-pointer"
                 >
-                  <Trophy className="mb-2 sm:mb-3" size={32} />
+                  <Trophy className="mb-2 sm:mb-2.5" size={28} />
                   <span>TOURNAMENT</span>
                 </button>
                 <button
                   onClick={() => startSetup("Scrimmage")}
-                  className="md:col-span-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-bold text-sm sm:text-lg tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center"
+                  className="bg-white/10 hover:bg-white/20 border border-white/20 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-bold text-xs sm:text-base tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Users className="mr-3 text-blue-300" size={20} /> SCRIMMAGE /
-                  CUSTOM
+                  <Users className="text-blue-300 shrink-0" size={18} />
+                  <span>SCRIMMAGE / CUSTOM</span>
                 </button>
                 <button
                   onClick={() => startSetup("Practice")}
-                  className="md:col-span-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-bold text-sm sm:text-lg tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center"
+                  className="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-bold text-xs sm:text-base tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Activity className="mr-3 text-slate-500" size={20} />{" "}
-                  PRACTICE MODE
+                  <Activity className="text-slate-500 shrink-0" size={18} />
+                  <span>PRACTICE MODE</span>
                 </button>
-                {appData.matches.filter((m) => m.isLive === true).length >
-                  0 && (
+                {appData.matches.filter((m) => m.isLive === true).length > 0 && (
                   <button
                     onClick={joinLiveMatch}
-                    className="md:col-span-2 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 border border-green-400 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-xl tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center uppercase shadow-lg"
+                    className="sm:col-span-2 bg-gradient-to-b from-green-500 to-green-600 hover:from-green-400 hover:to-green-500 border border-green-400 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-lg tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center uppercase shadow-lg cursor-pointer"
                   >
-                    <Activity
-                      className="mr-2 sm:mr-3 text-green-100"
-                      size={20}
-                    />{" "}
-                    Join Live Match
+                    <Activity className="mr-2 text-green-100" size={20} />
+                    <span>Join Live Match</span>
                   </button>
                 )}
               </>
             )}
           </div>
 
-          <div className="w-full flex flex-col gap-4 sm:gap-6">
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            {/* Primary Action Row: Season History & Live Stats */}
+            <button
+              onClick={() => setShowSeasonHistoryModal(true)}
+              className="bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-wider hover:from-amber-400 hover:to-amber-500 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-amber-300/40 cursor-pointer"
+            >
+              <Trophy className="mr-2 sm:mr-3 text-slate-950 shrink-0" size={22} />
+              <span>SEASON HISTORY ({(appData.matches || []).filter((m) => m.type !== "Practice").length})</span>
+            </button>
+            <button
+              onClick={viewStatsFromMenu}
+              className="bg-white text-[#001b5e] p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-wider hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-slate-200 cursor-pointer"
+            >
+              <Activity className="mr-2 sm:mr-3 text-[#0033A0] shrink-0" size={22} />
+              <span>VIEW STATS</span>
+            </button>
+
+            {/* Roster & Lineups */}
             {teamInfo.role !== "player" && (
               <>
                 <button
                   onClick={() => setIsRosterModalOpen(true)}
-                  className="w-full bg-white text-slate-700 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] cursor-pointer"
+                  className="bg-white text-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-wider hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-md border border-slate-200 cursor-pointer"
                 >
-                  <Users className="mr-2 sm:mr-3 text-slate-500" size={24} /> EDIT
-                  ROSTER
+                  <Users className="mr-2 sm:mr-3 text-slate-500 shrink-0" size={20} />
+                  <span>EDIT ROSTER</span>
                 </button>
                 <button
                   onClick={() => {
                     setLineupsModalContext("setup");
                     setIsLineupsModalOpen(true);
                   }}
-                  className="w-full bg-white text-slate-700 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] cursor-pointer"
+                  className="bg-white text-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-wider hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-md border border-slate-200 cursor-pointer"
                 >
-                  <Bookmark className="mr-2 sm:mr-3 text-[#0033A0]" size={24} /> SAVED
-                  LINEUPS ({Object.keys(appData.savedLineups || {}).length})
+                  <Bookmark className="mr-2 sm:mr-3 text-[#0033A0] shrink-0" size={20} />
+                  <span>SAVED LINEUPS ({Object.keys(appData.savedLineups || {}).length})</span>
                 </button>
               </>
             )}
-            <button
-              onClick={() => setShowSeasonHistoryModal(true)}
-              className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:from-amber-400 hover:to-amber-500 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] border border-amber-300/40 cursor-pointer"
-            >
-              <Trophy className="mr-2 sm:mr-3 text-slate-950" size={24} />{" "}
-              SEASON HISTORY ({(appData.matches || []).filter((m) => m.type !== "Practice").length} GAMES)
-            </button>
-            <button
-              onClick={viewStatsFromMenu}
-              className="w-full bg-white text-[#001b5e] p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:bg-slate-100 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)]"
-            >
-              <Activity className="mr-2 sm:mr-3 text-[#0033A0]" size={24} />{" "}
-              VIEW STATS
-            </button>
+
+            {/* Opponents & Cloud Sync */}
             <button
               onClick={() => {
                 setReportOpponentName("");
                 setShowOpponentReportModal(true);
               }}
-              className="w-full bg-gradient-to-r from-blue-900 to-indigo-950 text-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl font-black text-lg sm:text-xl tracking-widest hover:from-blue-800 hover:to-indigo-900 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-[0_10px_25px_rgba(0,0,0,0.4)] border border-blue-400/30"
+              className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-wider hover:from-blue-800 hover:to-indigo-900 transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-blue-400/30 cursor-pointer"
             >
-              <Shield className="mr-2 sm:mr-3 text-blue-400" size={24} />{" "}
-              VIEW OPPONENTS
+              <Shield className="mr-2 sm:mr-3 text-blue-400 shrink-0" size={20} />
+              <span>VIEW OPPONENTS</span>
             </button>
-            {/* Direct Cloud Sync Action in Main Menu */}
             <button
               type="button"
               onClick={() => syncLocalGamesToCloud(true)}
               disabled={isSyncingWithCloud}
-              className="w-full bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-emerald-400/30 cursor-pointer disabled:opacity-50"
+              className="bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white p-4 sm:p-5 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-emerald-400/30 cursor-pointer disabled:opacity-50"
             >
-              <Upload className={`mr-2.5 text-white ${isSyncingWithCloud ? "animate-bounce" : ""}`} size={22} />
-              <span>{isSyncingWithCloud ? "SYNCING WITH FIREBASE..." : "SYNC & UPLOAD TO CLOUD"}</span>
+              <Upload className={`mr-2 text-white shrink-0 ${isSyncingWithCloud ? "animate-bounce" : ""}`} size={20} />
+              <span>{isSyncingWithCloud ? "SYNCING..." : "SYNC TO CLOUD"}</span>
             </button>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
-              <button
-                onClick={() => setShowRuggedStorageModal(true)}
-                className="w-full bg-slate-800/90 hover:bg-slate-700/90 text-white p-4 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-slate-700 hover:border-slate-500 cursor-pointer"
-              >
-                <HardDrive className="mr-2 text-emerald-400" size={22} />
-                <span>OFFLINE STORAGE</span>
-              </button>
-              <button
-                onClick={() => setShowRollingSnapshotsModal(true)}
-                className="w-full bg-slate-800/90 hover:bg-slate-700/90 text-amber-300 p-4 rounded-2xl sm:rounded-3xl font-black text-sm sm:text-base tracking-widest transition-all duration-200 active:scale-95 flex items-center justify-center shadow-lg border border-amber-500/40 hover:border-amber-400 cursor-pointer"
-              >
-                <History className="mr-2 text-amber-400" size={22} />
-                <span>ROLLING SNAPSHOTS</span>
-              </button>
-            </div>
+            {/* Storage Management Row */}
+            <button
+              onClick={() => setShowRuggedStorageModal(true)}
+              className="w-full bg-slate-800/90 hover:bg-slate-700/90 text-white p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl font-black text-xs sm:text-sm tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center shadow-md border border-slate-700 hover:border-slate-500 cursor-pointer"
+            >
+              <HardDrive className="mr-2 text-emerald-400 shrink-0" size={18} />
+              <span>OFFLINE STORAGE</span>
+            </button>
+            <button
+              onClick={() => setShowRollingSnapshotsModal(true)}
+              className="w-full bg-slate-800/90 hover:bg-slate-700/90 text-amber-300 p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl font-black text-xs sm:text-sm tracking-wider transition-all duration-200 active:scale-95 flex items-center justify-center shadow-md border border-amber-500/40 hover:border-amber-400 cursor-pointer"
+            >
+              <History className="mr-2 text-amber-400 shrink-0" size={18} />
+              <span>ROLLING SNAPSHOTS</span>
+            </button>
           </div>
         </div>
 
@@ -10304,8 +10326,8 @@ export default function App() {
         {renderQuotaBanner()}
         <div className="p-2 sm:p-6 md:p-10 w-full flex flex-col items-center justify-start sm:justify-center flex-1">
           <div className="w-full max-w-4xl bg-white rounded-2xl sm:rounded-[2rem] shadow-xl sm:shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
-          <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-4 sm:p-6 text-white flex justify-between items-center shadow-md z-10 relative">
-            <div className="flex items-center space-x-3 sm:space-x-4">
+          <div className="bg-gradient-to-r from-[#001b5e] via-[#0033A0] to-[#001b5e] p-3.5 sm:p-6 text-white flex flex-wrap justify-between items-center gap-2 sm:gap-4 shadow-md z-10 relative">
+            <div className="flex items-center space-x-2.5 sm:space-x-4 min-w-0">
               <div className="flex items-center justify-center h-10 w-10 sm:h-16 sm:w-16 overflow-hidden relative shrink-0">
                 <img
                   src={APP_LOGO_SRC}
@@ -10324,47 +10346,53 @@ export default function App() {
                 />
               </div>
               <div>
-                <h1 className="text-xl sm:text-2xl font-black tracking-widest uppercase text-white drop-shadow-md">
+                <h1 className="text-lg sm:text-2xl font-black tracking-widest uppercase text-white drop-shadow-md truncate">
                   {matchType} SETUP
                 </h1>
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
               <button
                 onClick={handleInstallApp}
-                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-2.5 sm:px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
                 title="Download App"
               >
-                <Download className="mr-1.5 sm:mr-2" size={16} />
-                <span className="hidden sm:inline">DOWNLOAD APP</span>
+                <Download className="mr-1 sm:mr-2" size={16} />
+                <span className="hidden md:inline">DOWNLOAD APP</span>
+                <span className="hidden xs:inline md:hidden">APP</span>
               </button>
               <button
                 onClick={toggleFullscreen}
-                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-2.5 sm:px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm"
                 title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
               >
-                {isFullscreen ? <Minimize className="mr-1.5 sm:mr-2" size={16} /> : <Maximize className="mr-1.5 sm:mr-2" size={16} />}
-                <span className="hidden sm:inline">{isFullscreen ? "EXIT FULL" : "FULL SCREEN"}</span>
+                {isFullscreen ? <Minimize className="mr-1 sm:mr-2" size={16} /> : <Maximize className="mr-1 sm:mr-2" size={16} />}
+                <span className="hidden md:inline">{isFullscreen ? "EXIT FULL" : "FULL SCREEN"}</span>
+                <span className="hidden xs:inline md:hidden">{isFullscreen ? "EXIT" : "FULL"}</span>
               </button>
               <button
                 onClick={() => setIsRosterModalOpen(true)}
-                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm cursor-pointer"
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-2.5 sm:px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm cursor-pointer"
+                title="Manage Roster"
               >
-                <Users className="mr-1.5 sm:mr-2" size={16} /> ROSTER
+                <Users className="mr-1 sm:mr-2" size={16} />
+                <span className="hidden xs:inline">ROSTER</span>
               </button>
               <button
                 onClick={() => {
                   setLineupsModalContext("setup");
                   setIsLineupsModalOpen(true);
                 }}
-                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm cursor-pointer"
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white px-2.5 sm:px-3 py-2 rounded-xl font-bold flex items-center transition-all active:scale-95 text-xs sm:text-sm cursor-pointer"
                 title="Manage Saved Lineup Presets"
               >
-                <Bookmark className="mr-1.5 sm:mr-2" size={16} /> LINEUPS
+                <Bookmark className="mr-1 sm:mr-2" size={16} />
+                <span className="hidden xs:inline">LINEUPS</span>
               </button>
               <button
                 onClick={() => setView("menu")}
-                className="bg-white text-[#0033A0] p-2 sm:px-4 sm:py-2 rounded-xl font-black hover:bg-slate-100 shadow-sm transition-all active:scale-95 text-xs sm:text-sm"
+                className="bg-white text-[#0033A0] p-2 sm:px-4 sm:py-2 rounded-xl font-black hover:bg-slate-100 shadow-sm transition-all active:scale-95 text-xs sm:text-sm flex items-center justify-center min-w-[36px]"
+                title="Return to Menu"
               >
                 <Home size={18} className="sm:hidden" />
                 <span className="hidden sm:inline">MENU</span>
@@ -11292,34 +11320,21 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex items-center space-x-1 sm:space-x-2">
-                    {isGameStarter ? (
-                      <>
-                        <button
-                          onClick={() => manualScoreAdjust("ucc", -1)}
-                          className="text-white/40 hover:text-white p-1 active:scale-90"
-                          title="Decrease Score"
-                        >
-                          <ChevronDown size={14} />
-                        </button>
-                        <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
-                          {score.ucc}
-                        </p>
-                        <button
-                          onClick={() => manualScoreAdjust("ucc", 1)}
-                          className="text-white/40 hover:text-white p-1 active:scale-90"
-                          title="Increase Score"
-                        >
-                          <ChevronUp size={14} />
-                        </button>
-                      </>
-                    ) : (
-                      <div className="flex items-center gap-1.5" title="Score locked — managed by match starter">
-                        <Lock size={13} className="text-amber-400/80" />
-                        <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
-                          {score.ucc}
-                        </p>
-                      </div>
-                    )}
+                    <button
+                      onClick={() => manualScoreAdjust("ucc", -1)}
+                      className="text-white/40 hover:text-white p-1 active:scale-90"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                      {score.ucc}
+                    </p>
+                    <button
+                      onClick={() => manualScoreAdjust("ucc", 1)}
+                      className="text-white/40 hover:text-white p-1 active:scale-90"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
                   </div>
                 </div>
                 {serving === "ucc" && (
@@ -11347,13 +11362,13 @@ export default function App() {
                       : matchFormat}{" "}
                   • S{currentSetNum}
                 </span>
-                {isGameStarter ? (
-                  <span className="text-[5px] sm:text-[6px] tracking-widest text-amber-300 font-bold uppercase border-l sm:border-none border-white/20 pl-2 sm:pl-0">
-                    STARTER (SCORING)
+                {isFirebaseAvailable && user ? (
+                  <span className="text-[5px] sm:text-[6px] tracking-widest text-emerald-400 opacity-80 border-l sm:border-none border-white/20 pl-2 sm:pl-0">
+                    LIVE SYNC
                   </span>
                 ) : (
-                  <span className="text-[5px] sm:text-[6px] tracking-widest text-blue-300 font-bold uppercase border-l sm:border-none border-white/20 pl-2 sm:pl-0 flex items-center gap-0.5">
-                    <Lock size={6} /> STATS ONLY (SYNCED)
+                  <span className="text-[5px] sm:text-[6px] tracking-widest text-amber-500 opacity-80 uppercase border-l sm:border-none border-white/20 pl-2 sm:pl-0">
+                    {isFirebaseAvailable ? "Sync Delayed" : "Local Mode"}
                   </span>
                 )}
               </span>
@@ -11471,34 +11486,21 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex items-center space-x-1 sm:space-x-2">
-                    {isGameStarter ? (
-                      <>
-                        <button
-                          onClick={() => manualScoreAdjust("opp", -1)}
-                          className="text-white/40 hover:text-white p-1 active:scale-90"
-                          title="Decrease Opponent Score"
-                        >
-                          <ChevronDown size={14} />
-                        </button>
-                        <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
-                          {score.opp}
-                        </p>
-                        <button
-                          onClick={() => manualScoreAdjust("opp", 1)}
-                          className="text-white/40 hover:text-white p-1 active:scale-90"
-                          title="Increase Opponent Score"
-                        >
-                          <ChevronUp size={14} />
-                        </button>
-                      </>
-                    ) : (
-                      <div className="flex items-center gap-1.5" title="Score locked — managed by match starter">
-                        <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
-                          {score.opp}
-                        </p>
-                        <Lock size={13} className="text-amber-400/80" />
-                      </div>
-                    )}
+                    <button
+                      onClick={() => manualScoreAdjust("opp", -1)}
+                      className="text-white/40 hover:text-white p-1 active:scale-90"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    <p className="text-3xl sm:text-4xl font-black tabular-nums tracking-tighter drop-shadow-md">
+                      {score.opp}
+                    </p>
+                    <button
+                      onClick={() => manualScoreAdjust("opp", 1)}
+                      className="text-white/40 hover:text-white p-1 active:scale-90"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -11508,43 +11510,14 @@ export default function App() {
 
         {/* NEW COLLAPSIBLE COURT AND TABLE VIEW */}
         <div className="flex-1 flex flex-col relative bg-slate-100 overflow-hidden min-h-0 landscape:min-w-0">
-          <div className="px-2 py-1.5 sm:px-4 sm:py-2 flex items-center justify-between bg-white border-b border-slate-200 shrink-0 gap-2 overflow-x-auto no-scrollbar scroll-smooth">
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="p-2 sm:p-3 flex flex-wrap items-center justify-between bg-white border-b border-slate-200 shrink-0 gap-2">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
               <button
                 onClick={() => setShowPositioning(true)}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors"
+                className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors cursor-pointer"
               >
                 Show Court
               </button>
-              {/* Mobile View Toggle: Cards vs Table */}
-              <div className="flex bg-slate-200/90 rounded-lg p-0.5 border border-slate-300">
-                <button
-                  type="button"
-                  onClick={() => setMobileGameViewMode("cards")}
-                  className={`px-2 sm:px-2.5 py-1 rounded-md font-black text-xs uppercase transition-all flex items-center gap-1 cursor-pointer ${
-                    mobileGameViewMode === "cards"
-                      ? "bg-white text-[#0033A0] shadow-xs"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                  title="Mobile-optimized cards view"
-                >
-                  <Smartphone size={12} />
-                  <span>Cards</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMobileGameViewMode("table")}
-                  className={`px-2 sm:px-2.5 py-1 rounded-md font-black text-xs uppercase transition-all flex items-center gap-1 cursor-pointer ${
-                    mobileGameViewMode === "table"
-                      ? "bg-white text-[#0033A0] shadow-xs"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                  title="Full table grid"
-                >
-                  <Table size={12} />
-                  <span>Table</span>
-                </button>
-              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -11568,7 +11541,7 @@ export default function App() {
                   setReportOpponentName(opponentName);
                   setShowOpponentReportModal(true);
                 }}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-50 text-blue-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-blue-100 transition-colors flex items-center gap-1.5 border border-blue-200 shadow-xs cursor-pointer"
+                className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-blue-50 text-blue-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-blue-100 transition-colors flex items-center gap-1.5 border border-blue-200 shadow-xs cursor-pointer"
                 title="View Opponent Scouting & History"
               >
                 <Shield size={14} className="text-blue-600" />
@@ -11578,7 +11551,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={viewStatsWithCurrentMatch}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                 title="View Live Match Stats"
               >
                 <Activity size={14} className="text-slate-950" />
@@ -11588,14 +11561,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowTimeoutModal(true)}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer active:scale-95"
+                className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer active:scale-95"
                 title="Open Timeout Key Stats & 60-Second Huddle Dashboard"
               >
                 <Clock size={14} className="text-amber-300" />
-                <span className="hidden sm:inline">TO Stats</span>
-                <span className="sm:hidden">TO</span>
-                <span className="bg-amber-400 text-slate-950 text-[9px] px-1.5 py-0.2 rounded font-black hidden xs:inline">
-                  TO: {teamStats.uccTimeouts}/2 • {teamStats.oppTimeouts}/2
+                <span>TO</span>
+                <span className="bg-amber-400 text-slate-950 text-[9px] px-1 py-0.2 rounded font-black">
+                  {teamStats.uccTimeouts}/2
                 </span>
               </button>
               <button
@@ -11608,7 +11580,7 @@ export default function App() {
                     "info",
                   );
                 }}
-                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 border transition-all cursor-pointer ${
+                className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 border transition-all cursor-pointer ${
                   autoScoreTracking
                     ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs hover:bg-emerald-100"
                     : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
@@ -11640,7 +11612,7 @@ export default function App() {
                     serverId: lineup[0] || undefined,
                   });
                 }}
-                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 border transition-all cursor-pointer ${
+                className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 border transition-all cursor-pointer ${
                   trackOppReceives
                     ? "bg-amber-50 text-amber-900 border-amber-300 shadow-xs hover:bg-amber-100"
                     : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
@@ -11652,7 +11624,7 @@ export default function App() {
                 <span className="md:hidden">Opp Pass</span>
               </button>
               <div
-                className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
+                className="flex items-center gap-1.5 bg-slate-100 px-2 sm:px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
                 title="Official Team Substitutions (Libero replacements are free and do not count toward this total)"
               >
                 <Users size={13} className="text-[#0033A0]" />
@@ -11691,18 +11663,18 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200 shrink-0">
+            <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200 shrink-0 ml-auto">
               <button
                 onClick={() => setViewOppStats(false)}
-                className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all ${!viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}
+                className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all cursor-pointer ${!viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}
               >
-                Lancers
+                {effectiveTeamName}
               </button>
               <button
                 onClick={() => setViewOppStats(true)}
-                className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all ${viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}
+                className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all cursor-pointer ${viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}
               >
-                {opponentName}
+                {opponentName || "Opponent"}
               </button>
             </div>
           </div>
@@ -11960,570 +11932,120 @@ export default function App() {
             </div>
           )}
 
-          {/* RALLY FLOW STATUS STRIP */}
-          <div className="px-2 sm:px-4 pt-1.5 pb-1 shrink-0 w-full max-w-5xl mx-auto">
-            {serving === "ucc" && (rallyPhase === "serve" || rallyPhase === "opp_receive") ? (
-              <div className="bg-emerald-50 border border-emerald-300 rounded-xl px-2 sm:px-3 py-1.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 shadow-xs">
-                <div className="flex items-center gap-1.5 min-w-0 max-w-full">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
-                  <span className="text-xs sm:text-sm font-black text-emerald-950 uppercase tracking-wider truncate">
-                    🏐 {effectiveTeamName} Serving
-                  </span>
-                  <span className="text-[10px] font-black uppercase bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded shrink-0 truncate">
-                    #{appData.roster.find((r) => r.id === lineup[0])?.number || "?"}{" "}
-                    {appData.roster.find((r) => r.id === lineup[0])?.name || "Server"} (Pos 1)
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0 flex-wrap xs:flex-nowrap">
-                  <button
-                    type="button"
-                    onClick={() => setServePromptVisible(true)}
-                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                  >
-                    Serve 🏐
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => changeRallyPhase("play")}
-                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                  >
-                    In Play
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (lineup[0]) {
-                        logStat(lineup[0], "Serve", "Ace", 1, false);
-                      }
-                      handlePoint("ucc");
-                      showToast(`Ace -> Point ${effectiveTeamName}!`, "success");
-                    }}
-                    className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                    title="Quick Ace (+1 Pt Lancers)"
-                  >
-                    +Ace
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (lineup[0]) {
-                        logStat(lineup[0], "Serve", "Error", 1, false);
-                      }
-                      handlePoint("opp");
-                      showToast("Serve Error -> Point Opponent!", "info");
-                    }}
-                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                    title="Quick Serve Error (+1 Pt Opponent)"
-                  >
-                    +Error
-                  </button>
-                </div>
-              </div>
-            ) : serving === "opp" && (rallyPhase === "receive" || rallyPhase === "serve") ? (
-              <div className="bg-purple-50 border border-purple-300 rounded-xl px-2 sm:px-3 py-1.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 shadow-xs">
-                <div className="flex items-center gap-1.5 min-w-0 max-w-full">
-                  <span className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-ping shrink-0" />
-                  <span className="text-xs sm:text-sm font-black text-purple-950 uppercase tracking-wider truncate">
-                    🛡️ {effectiveTeamName} Receiving
-                  </span>
-                  <span className="text-[10px] font-black uppercase bg-purple-200 text-purple-900 px-1.5 py-0.5 rounded shrink-0 truncate">
-                    Opp #{oppLineup[0] || "?"} Serving
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0 flex-wrap xs:flex-nowrap">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setOppServeReceivePrompt({
-                        passerId: null,
-                        serverId: oppLineup[0],
-                      })
-                    }
-                    className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer animate-pulse whitespace-nowrap"
-                  >
-                    Receive 🛡️
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => changeRallyPhase("play")}
-                    className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                  >
-                    In Play
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (oppLineup[0]) {
-                        logStat(oppLineup[0], "Serve", "Error", 1, true);
-                      }
-                      handlePoint("ucc");
-                      showToast(`Opponent Serve Error -> Point ${effectiveTeamName}!`, "success");
-                    }}
-                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                    title="Opponent Missed Serve (+1 Pt Lancers)"
-                  >
-                    +Miss
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOppServeReceivePrompt({
-                        passerId: null,
-                        serverId: oppLineup[0],
-                        selectingAce: true,
-                      });
-                    }}
-                    className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                    title="Opponent Ace (+1 Pt Opponent)"
-                  >
-                    +Ace
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-blue-50 border border-blue-300 rounded-xl px-2 sm:px-3 py-1.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 shadow-xs">
-                <div className="flex items-center gap-1.5 min-w-0 max-w-full">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse shrink-0" />
-                  <span className="text-xs sm:text-sm font-black text-blue-950 uppercase tracking-wider truncate">
-                    ⚡ BALL IN PLAY • Live Rally
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0 flex-wrap xs:flex-nowrap">
-                  <button
-                    type="button"
-                    onClick={() => setEndRallyVisible(true)}
-                    className="px-2 py-1 bg-[#0033A0] hover:bg-blue-800 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                  >
-                    End Rally
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handlePoint("ucc")}
-                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                  >
-                    +Pt {effectiveTeamName.length > 7 ? "Lancers" : effectiveTeamName}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handlePoint("opp")}
-                    className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                  >
-                    +Pt Opp
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => changeRallyPhase(serving === "ucc" ? "serve" : "receive")}
-                    className="px-1.5 py-1 text-slate-500 hover:text-slate-800 text-[9px] font-bold uppercase transition-colors whitespace-nowrap"
-                    title="Reset to Pre-Serve / Receive"
-                  >
-                    Reset
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {mobileGameViewMode === "cards" ? (
-            <div className="flex-1 overflow-y-auto p-2 sm:p-4 w-full">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-w-5xl mx-auto pb-4">
-                {(() => {
-                  const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
-                    (id): id is string => Boolean(id),
-                  );
-                  const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
-                    if (!viewOppStats) {
-                      const pA = appData.roster.find((r) => r.id === idA);
-                      const pB = appData.roster.find((r) => r.id === idB);
-                      return sortPlayersByNumberThenAlpha(
-                        pA || { name: idA, id: idA },
-                        pB || { name: idB, id: idB },
-                      );
-                    } else {
-                      return sortPlayersByNumberThenAlpha(
-                        { number: idA, name: idA, id: idA },
-                        { number: idB, name: idB, id: idB },
-                      );
-                    }
-                  });
-
-                  return sortedCourtPlayers.map((id, index) => {
-                    const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
-                    const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
-                    const isBackRow = [0, 4, 5].includes(posIndex);
-                    const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
-                    const isServer = !viewOppStats
-                      ? posIndex === 0 && serving === "ucc"
-                      : posIndex === 0 && serving === "opp";
-
-                    const pName = !viewOppStats
-                      ? appData.roster.find((r) => r.id === id)?.name || id
-                      : id;
-                    const pNum = !viewOppStats
-                      ? appData.roster.find((r) => r.id === id)?.number || "-"
-                      : id.replace(/\D/g, "") || id;
-
-                    return (
-                      <div
-                        key={`card-${id}-${index}`}
-                        className="bg-white rounded-xl shadow-xs border border-slate-200 p-2.5 flex flex-col justify-between transition-all hover:border-blue-300"
-                      >
-                        {/* Top player header */}
-                        <div className="flex items-center justify-between pb-2 border-b border-slate-100 gap-1.5">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#0033A0]/10 text-[#0033A0] flex items-center justify-center text-xs font-black shrink-0 border border-[#0033A0]/20">
-                              {pNum}
-                            </span>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-black text-slate-800 text-xs sm:text-sm truncate max-w-[100px] xs:max-w-[130px] sm:max-w-[180px]">
-                                  {!viewOppStats ? pName : `Opponent #${id}`}
-                                </span>
-                                {isLibero && (
-                                  <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[8px] font-black uppercase tracking-wider shrink-0">
-                                    LIBERO
-                                  </span>
-                                )}
-                                {isServer && (
-                                  <span className="text-[9px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded shadow-xs animate-pulse shrink-0">
-                                    SRV
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                                <span>Pos {courtPosNum}</span>
-                                <span>•</span>
-                                <span className={isBackRow ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
-                                  {isBackRow ? "Back Row" : "Front Row"}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Quick Sub / Libero button */}
-                          <div className="shrink-0 flex items-center gap-1">
-                            {!viewOppStats ? (
-                              <>
-                                {isLibero ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleLiberoSwap(id)}
-                                    className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-black text-[10px] uppercase flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
-                                    title="Swap Libero out for original player"
-                                  >
-                                    <ArrowRightLeft size={10} />
-                                    <span>Lib Out</span>
-                                  </button>
-                                ) : isBackRow && liberoId ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleLiberoSwap(id)}
-                                    className="px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg font-black text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
-                                    title="Swap Libero in for this back row player (No sub charged)"
-                                  >
-                                    <ArrowRightLeft size={10} className="text-amber-700" />
-                                    <span>Lib In</span>
-                                  </button>
-                                ) : null}
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (subPairs[id]) {
-                                      setPendingAutoSub({ outId: id, inId: subPairs[id] });
-                                    } else {
-                                      setSelectedPlayerId(id);
-                                      setSubModalVisible(true);
-                                    }
-                                  }}
-                                  className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
-                                  title={isBackRow ? "Substitute back row player with bench" : "Substitute player with bench"}
-                                >
-                                  <ArrowRightLeft size={10} />
-                                  <span>Sub</span>
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedOppId(id);
-                                  setShowOppSubModal(true);
-                                }}
-                                className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg font-bold text-[10px] uppercase flex items-center gap-1 active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
-                              >
-                                <span>Sub</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Quick-Action Touch Grid */}
-                        {(() => {
-                          const showPassBtn = trackedCategories.Pass && rallyPhase !== "play" && (
-                            !viewOppStats
-                              ? (serving === "opp" || rallyPhase === "receive")
-                              : (serving === "ucc" || rallyPhase === "opp_receive")
-                          );
-                          const showServeBtn = trackedCategories.Serve && rallyPhase !== "play" && (
-                            !viewOppStats
-                              ? (serving === "ucc" && (rallyPhase === "serve" || rallyPhase === "opp_receive"))
-                              : (serving === "opp" && (rallyPhase === "serve" || rallyPhase === "receive"))
-                          );
-                          const activeCount = [
-                            showPassBtn,
-                            trackedCategories.Attack,
-                            showServeBtn,
-                            trackedCategories.Block,
-                            trackedCategories.Dig,
-                          ].filter(Boolean).length;
-                          const gridColsClass =
-                            activeCount >= 5
-                              ? "grid-cols-5"
-                              : activeCount === 4
-                                ? "grid-cols-4"
-                                : activeCount === 3
-                                  ? "grid-cols-3"
-                                  : activeCount === 2
-                                    ? "grid-cols-2"
-                                    : "grid-cols-1";
-
-                          return (
-                            <div className={`grid ${gridColsClass} gap-1 sm:gap-1.5 pt-2`}>
-                              {showPassBtn && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (viewOppStats) {
-                                      setOppPassingPrompt({
-                                        passerId: id,
-                                        serverId: lineup[0] || undefined,
-                                      });
-                                    } else {
-                                      setOppServeReceivePrompt({
-                                        passerId: id,
-                                        serverId: oppLineup[0] || undefined,
-                                      });
-                                    }
-                                  }}
-                                  className={`py-1.5 sm:py-2 px-0.5 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-all active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px] ${
-                                    rallyPhase === "receive" && !viewOppStats
-                                      ? "bg-purple-600 text-white border border-purple-500 shadow-md animate-pulse ring-2 ring-purple-400/50"
-                                      : "bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
-                                  }`}
-                                  title={!viewOppStats ? "Record Pass Rating (3-0) for this player" : "Record Opponent Pass"}
-                                >
-                                  <span className="truncate max-w-full leading-none">Pass</span>
-                                </button>
-                              )}
-                              {trackedCategories.Attack && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setStatPrompt({
-                                      playerId: id,
-                                      type: "Attack",
-                                      isOpp: viewOppStats,
-                                    })
-                                  }
-                                  className="py-1.5 sm:py-2 px-0.5 bg-green-50 hover:bg-green-100 text-green-800 border border-green-200 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px]"
-                                >
-                                  <span className="truncate max-w-full leading-none">Attack</span>
-                                </button>
-                              )}
-                              {showServeBtn && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (viewOppStats) {
-                                      setOppServeReceivePrompt({ passerId: null, serverId: id });
-                                    } else {
-                                      setStatPrompt({ playerId: id, type: "Serve", isOpp: false });
-                                    }
-                                  }}
-                                  className={`py-1.5 sm:py-2 px-0.5 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px] ${
-                                    id === (!viewOppStats ? lineup[0] : oppLineup[0]) &&
-                                    serving === (!viewOppStats ? "ucc" : "opp") &&
-                                    (rallyPhase === "serve" || rallyPhase === "opp_receive")
-                                      ? "bg-emerald-600 text-white border border-emerald-500 ring-2 ring-emerald-400/50"
-                                      : "bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200"
-                                  }`}
-                                >
-                                  <span className="truncate max-w-full leading-none">Serve</span>
-                                </button>
-                              )}
-                              {trackedCategories.Block && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setStatPrompt({
-                                      playerId: id,
-                                      type: "Block",
-                                      isOpp: viewOppStats,
-                                    })
-                                  }
-                                  className="py-1.5 sm:py-2 px-0.5 bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px]"
-                                >
-                                  <span className="truncate max-w-full leading-none">Block</span>
-                                </button>
-                              )}
-                              {trackedCategories.Dig && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setStatPrompt({
-                                      playerId: id,
-                                      type: "Dig",
-                                      isOpp: viewOppStats,
-                                    })
-                                  }
-                                  className="py-1.5 sm:py-2 px-0.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-black text-[10px] sm:text-xs uppercase flex flex-col items-center justify-center transition-colors active:scale-95 shadow-xs cursor-pointer min-h-[38px] sm:min-h-[42px]"
-                                >
-                                  <span className="truncate max-w-full leading-none">Dig</span>
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </div>
+          <div className="flex-1 overflow-auto p-2 sm:p-4 w-full">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-5xl mx-auto overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[600px]">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-36 sm:w-44">
+                      Sub / Lib
+                    </th>
+                    <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black">
+                      Players on Court (6)
+                    </th>
+                    {trackedCategories.Pass && viewOppStats && (
+                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                        Pass
+                      </th>
+                    )}
+                    {trackedCategories.Serve && (
+                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                        Serve
+                      </th>
+                    )}
+                    {trackedCategories.Attack && (
+                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                        Attack
+                      </th>
+                    )}
+                    {trackedCategories.Block && (
+                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                        Block
+                      </th>
+                    )}
+                    {trackedCategories.Dig && (
+                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
+                        Dig
+                      </th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(() => {
+                    const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
+                      (id): id is string => Boolean(id),
                     );
-                  });
-                })()}
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 overflow-auto p-2 sm:p-4 w-full">
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-5xl mx-auto overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[600px]">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200">
-                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-36 sm:w-44">
-                        Sub / Lib
-                      </th>
-                      <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black">
-                        Players on Court (6)
-                      </th>
-                      {trackedCategories.Pass && rallyPhase !== "play" && (
-                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                          Pass
-                        </th>
-                      )}
-                      {trackedCategories.Serve && rallyPhase !== "play" && (
-                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                          Serve
-                        </th>
-                      )}
-                      {trackedCategories.Attack && (
-                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                          Attack
-                        </th>
-                      )}
-                      {trackedCategories.Block && (
-                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                          Block
-                        </th>
-                      )}
-                      {trackedCategories.Dig && (
-                        <th className="p-3 text-xs uppercase tracking-widest text-slate-500 font-black text-center w-24">
-                          Dig
-                        </th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(() => {
-                      const currentLineupList = (!viewOppStats ? lineup : oppLineup).filter(
-                        (id): id is string => Boolean(id),
-                      );
-                      const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
-                        if (!viewOppStats) {
-                          const pA = appData.roster.find((r) => r.id === idA);
-                          const pB = appData.roster.find((r) => r.id === idB);
-                          return sortPlayersByNumberThenAlpha(
-                            pA || { name: idA, id: idA },
-                            pB || { name: idB, id: idB },
-                          );
-                        } else {
-                          return sortPlayersByNumberThenAlpha(
-                            { number: idA, name: idA, id: idA },
-                            { number: idB, name: idB, id: idB },
-                          );
-                        }
-                      });
+                    const sortedCourtPlayers = [...currentLineupList].sort((idA, idB) => {
+                      if (!viewOppStats) {
+                        const pA = appData.roster.find((r) => r.id === idA);
+                        const pB = appData.roster.find((r) => r.id === idB);
+                        return sortPlayersByNumberThenAlpha(
+                          pA || { name: idA, id: idA },
+                          pB || { name: idB, id: idB },
+                        );
+                      } else {
+                        return sortPlayersByNumberThenAlpha(
+                          { number: idA, name: idA, id: idA },
+                          { number: idB, name: idB, id: idB },
+                        );
+                      }
+                    });
 
-                      return sortedCourtPlayers.map((id, index) => {
-                        const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
-                        const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
-                        // Back-row ("background") players in standard rotation are indices 0, 4, 5 (Positions 1, 5, 6)
-                        const isBackRow = [0, 4, 5].includes(posIndex);
-                        const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
-                        const isServer = !viewOppStats
-                          ? posIndex === 0 && serving === "ucc"
-                          : posIndex === 0 && serving === "opp";
+                    return sortedCourtPlayers.map((id, index) => {
+                      const posIndex = !viewOppStats ? lineup.indexOf(id) : oppLineup.indexOf(id);
+                      const courtPosNum = posIndex !== -1 ? posIndex + 1 : index + 1;
+                      // Back-row ("background") players in standard rotation are indices 0, 4, 5 (Positions 1, 5, 6)
+                      const isBackRow = [0, 4, 5].includes(posIndex);
+                      const isLibero = !viewOppStats ? id === liberoId : id === oppLiberoId;
+                      const isServer = !viewOppStats
+                        ? posIndex === 0 && serving === "ucc"
+                        : posIndex === 0 && serving === "opp";
 
-                        const pName = !viewOppStats
-                          ? appData.roster.find((r) => r.id === id)?.name || id
-                          : id;
-                        const pNum = !viewOppStats
-                          ? appData.roster.find((r) => r.id === id)?.number || "-"
-                          : id.replace(/\D/g, "") || id;
-                        return (
-                          <tr
-                            key={index}
-                            className="hover:bg-slate-50/50 transition-colors"
-                          >
-                            <td className="p-1.5 pt-2">
-                              {!viewOppStats ? (
-                                <div className="flex items-center justify-center gap-1">
-                                  {isLibero ? (
-                                    <>
-                                      <button
-                                        onClick={() => handleLiberoSwap(id)}
-                                        className="flex-1 py-2 px-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
-                                        title="Swap Libero out for original player (Does not count toward sub total)"
-                                      >
-                                        <ArrowRightLeft size={12} />
-                                        Lib Out
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          setSelectedPlayerId(id);
-                                          setSubModalVisible(true);
-                                        }}
-                                        className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-slate-200"
-                                        title="Regular substitution"
-                                      >
-                                        Sub
-                                      </button>
-                                    </>
-                                  ) : isBackRow ? (
-                                    <>
-                                      <button
-                                        onClick={() => handleLiberoSwap(id)}
-                                        className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95 shadow-xs"
-                                        title="Swap Libero in for this back row player (Does not count toward sub total)"
-                                      >
-                                        <ArrowRightLeft size={12} className="text-amber-700" />
-                                        Lib In
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          if (subPairs[id]) {
-                                            setPendingAutoSub({
-                                              outId: id,
-                                              inId: subPairs[id],
-                                            });
-                                          } else {
-                                            setSelectedPlayerId(id);
-                                            setSubModalVisible(true);
-                                          }
-                                        }}
-                                        className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center border border-slate-200"
-                                        title="Regular substitution"
-                                      >
-                                        Sub
-                                      </button>
-                                    </>
-                                  ) : (
+                      const pName = !viewOppStats
+                        ? appData.roster.find((r) => r.id === id)?.name || id
+                        : id;
+                      const pNum = !viewOppStats
+                        ? appData.roster.find((r) => r.id === id)?.number || "-"
+                        : id.replace(/\D/g, "") || id;
+                      return (
+                        <tr
+                          key={index}
+                          className="hover:bg-slate-50/50 transition-colors"
+                        >
+                          <td className="p-1.5 pt-2">
+                            {!viewOppStats ? (
+                              <div className="flex items-center justify-center gap-1">
+                                {isLibero ? (
+                                  <>
+                                    <button
+                                      onClick={() => handleLiberoSwap(id)}
+                                      className="flex-1 py-2 px-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
+                                      title="Swap Libero out for original player (Does not count toward sub total)"
+                                    >
+                                      <ArrowRightLeft size={12} />
+                                      Lib Out
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setSelectedPlayerId(id);
+                                        setSubModalVisible(true);
+                                      }}
+                                      className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-slate-200"
+                                      title="Regular substitution"
+                                    >
+                                      Sub
+                                    </button>
+                                  </>
+                                ) : isBackRow ? (
+                                  <>
+                                    <button
+                                      onClick={() => handleLiberoSwap(id)}
+                                      className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95 shadow-xs"
+                                      title="Swap Libero in for this back row player (Does not count toward sub total)"
+                                    >
+                                      <ArrowRightLeft size={12} className="text-amber-700" />
+                                      Lib In
+                                    </button>
                                     <button
                                       onClick={() => {
                                         if (subPairs[id]) {
@@ -12536,275 +12058,281 @@ export default function App() {
                                           setSubModalVisible(true);
                                         }
                                       }}
-                                      className="w-full py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-slate-200 shadow-xs active:scale-95"
-                                      title="Front row player substitution"
+                                      className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center border border-slate-200"
+                                      title="Regular substitution"
                                     >
-                                      <ArrowRightLeft size={12} />
                                       Sub
                                     </button>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="flex items-center justify-center gap-1">
-                                  {isLibero ? (
-                                    <button
-                                      onClick={() => handleOppLiberoToggle(id)}
-                                      className="flex-1 py-2 px-1.5 bg-amber-500 hover:bg-amber-600 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
-                                      title="Opponent Libero Out"
-                                    >
-                                      <ArrowRightLeft size={12} />
-                                      Lib Out
-                                    </button>
-                                  ) : isBackRow && oppLiberoId ? (
-                                    <button
-                                      onClick={() => handleOppLiberoToggle(id)}
-                                      className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95"
-                                      title="Opponent Libero In"
-                                    >
-                                      <ArrowRightLeft size={12} />
-                                      Lib In
-                                    </button>
-                                  ) : null}
+                                  </>
+                                ) : (
                                   <button
                                     onClick={() => {
-                                      setSelectedOppId(id);
-                                      setShowOppSubModal(true);
+                                      if (subPairs[id]) {
+                                        setPendingAutoSub({
+                                          outId: id,
+                                          inId: subPairs[id],
+                                        });
+                                      } else {
+                                        setSelectedPlayerId(id);
+                                        setSubModalVisible(true);
+                                      }
                                     }}
-                                    className="flex-1 py-2 px-2 bg-blue-50 hover:bg-blue-100 text-blue-800 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-blue-200 active:scale-95"
-                                    title="Quick Opponent substitution"
+                                    className="w-full py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-slate-200 shadow-xs active:scale-95"
+                                    title="Front row player substitution"
                                   >
+                                    <ArrowRightLeft size={12} />
                                     Sub
                                   </button>
-                                </div>
-                              )}
-                            </td>
-                            <td className="p-3">
-                              <div className="font-bold text-slate-700 capitalize flex items-center gap-2">
-                                {!viewOppStats ? (
-                                  <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
-                                    {pNum}
-                                  </span>
-                                ) : (
-                                  <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
-                                    #{id}
-                                  </span>
                                 )}
-                                <div className="flex flex-col min-w-0">
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="truncate font-black text-slate-800 text-sm">
-                                      {!viewOppStats ? pName : `Opponent #${id}`}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center gap-1">
+                                {isLibero ? (
+                                  <button
+                                    onClick={() => handleOppLiberoToggle(id)}
+                                    className="flex-1 py-2 px-1.5 bg-amber-500 hover:bg-amber-600 text-white transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 shadow-sm active:scale-95 border border-amber-600"
+                                    title="Opponent Libero Out"
+                                  >
+                                    <ArrowRightLeft size={12} />
+                                    Lib Out
+                                  </button>
+                                ) : isBackRow && oppLiberoId ? (
+                                  <button
+                                    onClick={() => handleOppLiberoToggle(id)}
+                                    className="flex-1 py-2 px-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 transition-all rounded-lg font-black text-[10px] sm:text-xs uppercase flex items-center justify-center gap-1 border border-amber-300 active:scale-95"
+                                    title="Opponent Libero In"
+                                  >
+                                    <ArrowRightLeft size={12} />
+                                    Lib In
+                                  </button>
+                                ) : null}
+                                <button
+                                  onClick={() => {
+                                    setSelectedOppId(id);
+                                    setShowOppSubModal(true);
+                                  }}
+                                  className="flex-1 py-2 px-2 bg-blue-50 hover:bg-blue-100 text-blue-800 transition-colors rounded-lg font-bold text-[10px] sm:text-xs uppercase border border-blue-200 active:scale-95"
+                                  title="Quick Opponent substitution"
+                                >
+                                  Sub
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            <div className="font-bold text-slate-700 capitalize flex items-center gap-2">
+                              {!viewOppStats ? (
+                                <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
+                                  {pNum}
+                                </span>
+                              ) : (
+                                <span className="w-7 h-7 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs shrink-0 font-black">
+                                  #{id}
+                                </span>
+                              )}
+                              <div className="flex flex-col min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate font-black text-slate-800 text-sm">
+                                    {!viewOppStats ? pName : `Opponent #${id}`}
+                                  </span>
+                                  {isLibero && (
+                                    <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[9px] font-black uppercase tracking-wider">
+                                      LIBERO
                                     </span>
-                                    {isLibero && (
-                                      <span className="px-1.5 py-0.5 bg-amber-500 text-white rounded text-[9px] font-black uppercase tracking-wider">
-                                        LIBERO
-                                      </span>
-                                    )}
-                                    {isServer && (
-                                      <span className="text-xs" title="Currently Serving">
-                                        <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                                    <span>Pos {courtPosNum}</span>
-                                    <span>•</span>
-                                    <span className={isBackRow ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
-                                      {isBackRow ? "Back Row" : "Front Row"}
+                                  )}
+                                  {isServer && (
+                                    <span className="text-xs" title="Currently Serving">
+                                      <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
                                     </span>
-                                  </div>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                  <span>Pos {courtPosNum}</span>
+                                  <span>•</span>
+                                  <span className={isBackRow ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
+                                    {isBackRow ? "Back Row" : "Front Row"}
+                                  </span>
                                 </div>
                               </div>
+                            </div>
+                          </td>
+                          {trackedCategories.Pass && viewOppStats && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setOppPassingPrompt({
+                                    passerId: id,
+                                    serverId: lineup[0] || undefined,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-blue-100 cursor-pointer"
+                              >
+                                Pass
+                              </button>
                             </td>
-                            {trackedCategories.Pass && rallyPhase !== "play" && (
-                              <td className="p-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (viewOppStats) {
-                                      setOppPassingPrompt({
-                                        passerId: id,
-                                        serverId: lineup[0] || undefined,
-                                      });
-                                    } else {
-                                      setOppServeReceivePrompt({
-                                        passerId: id,
-                                        serverId: oppLineup[0] || undefined,
-                                      });
-                                    }
-                                  }}
-                                  className={`w-full py-2 px-1 transition-colors rounded-lg font-bold text-xs sm:text-sm border cursor-pointer ${
-                                    rallyPhase === "receive" && !viewOppStats
-                                      ? "bg-purple-600 text-white border-purple-500 font-black animate-pulse shadow-xs"
-                                      : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-100"
-                                  }`}
-                                  title={!viewOppStats ? "Record Pass Rating (3-0)" : "Record Opponent Pass"}
-                                >
-                                  Pass
-                                </button>
-                              </td>
-                            )}
-                            {trackedCategories.Serve && rallyPhase !== "play" && (
-                              <td className="p-1.5">
-                                <button
-                                  onClick={() => {
-                                    if (viewOppStats) {
-                                      setOppServeReceivePrompt({
-                                        passerId: null,
-                                        serverId: id,
-                                      });
-                                    } else {
-                                      setStatPrompt({
-                                        playerId: id,
-                                        type: "Serve",
-                                        isOpp: false,
-                                      });
-                                    }
-                                  }}
-                                  className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100 cursor-pointer"
-                                >
-                                  Serve
-                                </button>
-                              </td>
-                            )}
-                            {trackedCategories.Attack && (
-                              <td className="p-1.5">
-                                <button
-                                  onClick={() =>
+                          )}
+                          {trackedCategories.Serve && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() => {
+                                  if (viewOppStats) {
+                                    setOppServeReceivePrompt({
+                                      passerId: null,
+                                      serverId: id,
+                                    });
+                                  } else {
                                     setStatPrompt({
                                       playerId: id,
-                                      type: "Attack",
-                                      isOpp: viewOppStats,
-                                    })
+                                      type: "Serve",
+                                      isOpp: false,
+                                    });
                                   }
-                                  className="w-full py-2 px-1 bg-green-50 hover:bg-green-100 text-green-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-green-100"
-                                >
-                                  Attack
-                                </button>
-                              </td>
-                            )}
-                            {trackedCategories.Block && (
-                              <td className="p-1.5">
-                                <button
-                                  onClick={() =>
-                                    setStatPrompt({
-                                      playerId: id,
-                                      type: "Block",
-                                      isOpp: viewOppStats,
-                                    })
-                                  }
-                                  className="w-full py-2 px-1 bg-orange-50 hover:bg-orange-100 text-orange-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-orange-100"
-                                >
-                                  Block
-                                </button>
-                              </td>
-                            )}
-                            {trackedCategories.Dig && (
-                              <td className="p-1.5">
-                                <button
-                                  onClick={() =>
-                                    setStatPrompt({
-                                      playerId: id,
-                                      type: "Dig",
-                                      isOpp: viewOppStats,
-                                    })
-                                  }
-                                  className="w-full py-2 px-1 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-amber-100"
-                                >
-                                  Dig
-                                </button>
-                              </td>
-                            )}
-                          </tr>
-                        );
-                      });
-                    })()}
-                  </tbody>
-                </table>
-              </div>
+                                }}
+                                className="w-full py-2 px-1 bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-purple-100 cursor-pointer"
+                              >
+                                Serve
+                              </button>
+                            </td>
+                          )}
+                          {trackedCategories.Attack && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Attack",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-green-50 hover:bg-green-100 text-green-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-green-100"
+                              >
+                                Attack
+                              </button>
+                            </td>
+                          )}
+                          {trackedCategories.Block && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Block",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-orange-50 hover:bg-orange-100 text-orange-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-orange-100"
+                              >
+                                Block
+                              </button>
+                            </td>
+                          )}
+                          {trackedCategories.Dig && (
+                            <td className="p-1.5">
+                              <button
+                                onClick={() =>
+                                  setStatPrompt({
+                                    playerId: id,
+                                    type: "Dig",
+                                    isOpp: viewOppStats,
+                                  })
+                                }
+                                className="w-full py-2 px-1 bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors rounded-lg font-bold text-xs sm:text-sm border border-amber-100"
+                              >
+                                Dig
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
             </div>
-          )}
+          </div>
         </div>
 
         {/* STICKY BOTTOM BAR (Controls) */}
-        <div className="bg-slate-900 border-t landscape:border-t-0 landscape:border-l border-white/10 px-2 sm:px-4 py-2 sm:py-3 landscape:py-4 z-30 shadow-[0_-10px_30px_rgba(0,0,0,0.5)] shrink-0 landscape:w-32 xl:landscape:w-48 flex items-center">
-          <div className="max-w-5xl mx-auto flex landscape:flex-col gap-2 sm:gap-3 landscape:gap-4 w-full h-full justify-center landscape:items-stretch">
+        <div className="bg-slate-900 border-t landscape:border-t-0 landscape:border-l border-white/10 px-1.5 sm:px-4 py-2 sm:py-3 landscape:py-4 z-30 shadow-[0_-10px_30px_rgba(0,0,0,0.5)] shrink-0 landscape:w-32 xl:landscape:w-48 flex items-center">
+          <div className="max-w-5xl mx-auto flex landscape:flex-col gap-1 sm:gap-2 md:gap-3 landscape:gap-4 w-full h-full justify-center landscape:items-stretch">
             <button
               onClick={handleUndo}
               disabled={history.length === 0}
-              className={`px-3 sm:px-4 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black flex items-center justify-center shadow-md transition-all active:scale-95 text-xs sm:text-sm ${
+              className={`px-2 sm:px-4 py-2.5 sm:py-3.5 rounded-xl sm:rounded-2xl font-black flex items-center justify-center shadow-md transition-all active:scale-95 text-xs sm:text-sm shrink-0 min-h-[44px] min-w-[42px] ${
                 history.length === 0
                   ? "bg-white/5 text-white/20"
                   : "bg-slate-700 text-white hover:bg-slate-600"
               }`}
+              title="Undo Last Action"
             >
               <Undo className="sm:mr-1.5" size={16} />{" "}
               <span className="hidden sm:inline">UNDO</span>
             </button>
-            {rallyPhase === "play" ? (
+            {rallyPhase === "serve" && !servePromptVisible ? (
               <button
-                type="button"
-                onClick={() => setEndRallyVisible(true)}
-                className="flex-1 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-widest uppercase cursor-pointer"
-              >
-                End Rally
-              </button>
-            ) : serving === "opp" || rallyPhase === "receive" ? (
-              <button
-                type="button"
                 onClick={() => {
-                  setOppServeReceivePrompt({
-                    passerId: null,
-                    serverId: oppLineup[0],
-                  });
+                  if (serving === "opp") {
+                    setOppServeReceivePrompt({
+                      passerId: null,
+                      serverId: oppLineup[0],
+                    });
+                  } else {
+                    setServePromptVisible(true);
+                  }
                 }}
-                className="flex-1 bg-gradient-to-b from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer"
+                className={`flex-1 min-w-[75px] bg-gradient-to-b ${
+                  serving === "opp"
+                    ? "from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30"
+                    : "from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30"
+                } text-white py-2.5 sm:py-3.5 px-2 rounded-xl sm:rounded-2xl font-black text-xs sm:text-lg transition-all active:scale-95 tracking-wider sm:tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer min-h-[44px]`}
               >
-                <span>OPP SERVE • RECEIVE</span>
-                <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">
-                  TAP TO RECORD PASS / OUTCOME
+                <span>{serving === "opp" ? "OPP SERVE" : "SERVE"}</span>
+                <span className="text-[7px] sm:text-[10px] tracking-wider opacity-80 mt-0.5 sm:mt-1 hidden xs:inline">
+                  {serving === "opp"
+                    ? "TAP TO PASS"
+                    : "TAP WHEN SERVED"}
                 </span>
               </button>
             ) : (
               <button
-                type="button"
-                onClick={() => setServePromptVisible(true)}
-                className="flex-1 bg-gradient-to-b from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30 text-white py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-xl transition-all active:scale-95 tracking-widest uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer"
+                onClick={() => setEndRallyVisible(true)}
+                className="flex-1 min-w-[75px] bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white py-2.5 sm:py-3.5 px-2 rounded-xl sm:rounded-2xl font-black text-xs sm:text-lg shadow-[0_5px_15px_rgba(0,51,160,0.4)] border-t border-blue-400/30 transition-all active:scale-95 tracking-wider sm:tracking-widest uppercase min-h-[44px] flex items-center justify-center"
               >
-                <span>SERVE</span>
-                <span className="text-[8px] sm:text-[10px] tracking-widest opacity-80 mt-1">
-                  TAP WHEN SERVED
-                </span>
+                <span className="hidden xs:inline">END RALLY</span>
+                <span className="xs:hidden">RALLY</span>
               </button>
             )}
             <button
               onClick={viewStatsWithCurrentMatch}
-              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase gap-1.5 shrink-0"
+              className="px-2 sm:px-3.5 py-2.5 sm:py-3.5 bg-gradient-to-b from-amber-400 to-amber-600 text-amber-950 rounded-xl sm:rounded-2xl font-black tracking-wider flex items-center justify-center hover:from-amber-300 hover:to-amber-500 shadow-md border-t border-amber-300 transition-all active:scale-95 text-xs sm:text-sm uppercase gap-1 shrink-0 min-h-[44px] min-w-[42px]"
               title="View Live Stats"
             >
-              <Activity size={18} />
+              <Activity size={17} />
               <span className="hidden sm:inline font-black text-xs">STATS</span>
             </button>
             <button
               onClick={() => setShowStatCorrectionModal(true)}
-              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-indigo-600 to-indigo-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-indigo-500 hover:to-indigo-700 shadow-md border-t border-indigo-400 transition-all active:scale-95 text-xs sm:text-sm uppercase"
+              className="px-2 sm:px-3 py-2.5 sm:py-3.5 bg-gradient-to-b from-indigo-600 to-indigo-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-indigo-500 hover:to-indigo-700 shadow-md border-t border-indigo-400 transition-all active:scale-95 text-xs sm:text-sm uppercase shrink-0 min-h-[44px] min-w-[42px]"
               title="Data Correction & Stat Log"
             >
-              <Edit3 size={18} />
+              <Edit3 size={17} />
             </button>
             <button
               onClick={openInGameLineupEdit}
-              className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-slate-700 to-slate-900 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-slate-600 hover:to-slate-800 shadow-md border-t border-slate-600 transition-all active:scale-95 text-xs sm:text-sm uppercase"
+              className="px-2 sm:px-3 py-2.5 sm:py-3.5 bg-gradient-to-b from-slate-700 to-slate-900 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-slate-600 hover:to-slate-800 shadow-md border-t border-slate-600 transition-all active:scale-95 text-xs sm:text-sm uppercase shrink-0 min-h-[44px] min-w-[42px]"
               title="Switch / Adjust Court Lineup"
             >
-              <Users size={18} />
+              <Users size={17} />
             </button>
             {appData.matches.find((m) => m.id === activeMatch?.id)?.isLive !==
             false ? (
               <button
                 onClick={handleEndGameLive}
-                className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-red-600 to-red-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-red-500 hover:to-red-700 shadow-md border-t border-red-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap"
+                className="px-2 sm:px-3.5 py-2.5 sm:py-3.5 bg-gradient-to-b from-red-600 to-red-800 text-white rounded-xl sm:rounded-2xl font-black tracking-wider flex items-center justify-center hover:from-red-500 hover:to-red-700 shadow-md border-t border-red-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap shrink-0 min-h-[44px]"
+                title="End Game"
               >
-                End Game
+                <span className="hidden sm:inline">END GAME</span>
+                <span className="sm:hidden">END</span>
               </button>
             ) : (
               <button
@@ -12819,9 +12347,11 @@ export default function App() {
                   } catch (e) {}
                   setView("menu");
                 }}
-                className="px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-b from-slate-600 to-slate-800 text-white rounded-xl sm:rounded-2xl font-black tracking-widest flex items-center justify-center hover:from-slate-500 hover:to-slate-700 shadow-md border-t border-slate-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap"
+                className="px-2 sm:px-3.5 py-2.5 sm:py-3.5 bg-gradient-to-b from-slate-600 to-slate-800 text-white rounded-xl sm:rounded-2xl font-black tracking-wider flex items-center justify-center hover:from-slate-500 hover:to-slate-700 shadow-md border-t border-slate-500 transition-all active:scale-95 text-xs sm:text-sm uppercase whitespace-nowrap shrink-0 min-h-[44px]"
+                title="Exit Match"
               >
-                Exit Match
+                <span className="hidden sm:inline">EXIT MATCH</span>
+                <span className="sm:hidden">EXIT</span>
               </button>
             )}
           </div>
@@ -13379,138 +12909,126 @@ export default function App() {
               </div>
 
               <div className="p-3 sm:p-4 space-y-3 sm:space-y-4 bg-slate-50 overflow-y-auto w-full">
-                {/* SERVE SECTION - available pre-rally when serving, or mid-rally */}
-                {(serving === "ucc" || rallyPhase === "play" || rallyPhase === "serve" || rallyPhase === "opp_receive") && (
-                  <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
-                        <Activity size={12} className="mr-1 text-purple-600" /> Serve
-                      </h4>
-                      {selectedPlayerId === lineup[0] ? (
-                        <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
-                          Current Server (Pos 1)
-                        </span>
-                      ) : rallyPhase === "play" ? (
-                        <span className="text-[9px] font-bold uppercase bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200">
-                          Serve
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedPlayerId(null);
-                          setPendingAceData({
-                            serverId: selectedPlayerId,
-                            team: "ucc",
-                            isOpp: false,
-                          });
-                          setAceReceiverPrompt("ucc");
-                        }}
-                        className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
-                      >
-                        ACE
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedPlayerId(null);
-                          pushToHistory();
-                          logStat(selectedPlayerId, "Serve", "Attempt", 1, false);
-                          changeRallyPhase(trackOppReceives ? "opp_receive" : "play");
-                          if (trackOppReceives) {
-                            setOppPassingPrompt({
-                              passerId: null,
-                              serverId: selectedPlayerId,
-                            });
-                          }
-                        }}
-                        className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
-                      >
-                        IN PLAY
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedPlayerId(null);
-                          setServeErrorPrompt("ucc");
-                        }}
-                        className="bg-gradient-to-b from-red-500 to-red-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
-                      >
-                        ERROR
-                      </button>
-                    </div>
+                {/* SERVE SECTION */}
+                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                    <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
+                      <Activity size={12} className="mr-1 text-purple-600" /> Serve
+                    </h4>
+                    {selectedPlayerId === lineup[0] && (
+                      <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
+                        Current Server (Pos 1)
+                      </span>
+                    )}
                   </div>
-                )}
-
-                {/* PASS / SERVE RECEIVE SECTION - available pre-rally when receiving, or mid-rally */}
-                {(serving === "opp" || rallyPhase === "play" || rallyPhase === "receive") && (
-                  <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
-                        <Target size={12} className="mr-1 text-indigo-600" /> Receive / Pass (0-3)
-                      </h4>
-                      {rallyPhase === "receive" ? (
-                        <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-900 px-1.5 py-0.5 rounded border border-indigo-300 animate-pulse">
-                          Awaiting Receive
-                        </span>
-                      ) : rallyPhase === "play" ? (
-                        <span className="text-[9px] font-bold uppercase bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-200">
-                          Pass
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-2">
-                      {[
-                        { val: 3, label: "Perfect (3)", color: "from-green-500 to-green-600" },
-                        { val: 2, label: "Good (2)", color: "from-emerald-500 to-teal-600" },
-                        { val: 1, label: "Poor (1)", color: "from-amber-500 to-orange-600" },
-                        { val: 0, label: "0 / Shank", color: "from-slate-600 to-slate-700" },
-                      ].map(({ val, label, color }) => (
-                        <button
-                          key={`modal-pass-${val}`}
-                          type="button"
-                          onClick={() => {
-                            if (val === 0) {
-                              logStat(selectedPlayerId, "Pass", "Rating", 0, false);
-                              changeRallyPhase("play");
-                              setSelectedPlayerId(null);
-                              showToast("0-Pass (Overbump) recorded • Play continues", "info");
-                            } else {
-                              recordStatAndCheckPoint(selectedPlayerId, "Pass", "Rating", val);
-                              setSelectedPlayerId(null);
-                            }
-                          }}
-                          className={`bg-gradient-to-b ${color} text-white p-2 sm:p-2.5 rounded-lg sm:rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all cursor-pointer`}
-                        >
-                          <span className="text-xl sm:text-2xl leading-none">{val}</span>
-                          <span className="text-[8px] uppercase tracking-wider opacity-90 mt-0.5 text-center font-bold">
-                            {label.split(" ")[0]}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
+                  <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                     <button
                       type="button"
                       onClick={() => {
-                        const sId = oppLineup[0] || "Opponent";
-                        logMultipleStats([
-                          { playerId: selectedPlayerId, category: "Pass", metric: "Aced", value: 0, isOpponent: false },
-                          { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: true },
-                        ]);
-                        handlePoint("opp", true);
                         setSelectedPlayerId(null);
-                        showToast(`Aced! #${selectedPlayerObj?.number} got aced -> Point Opponent`, "info");
+                        setPendingAceData({
+                          serverId: selectedPlayerId,
+                          team: "ucc",
+                          isOpp: false,
+                        });
+                        setAceReceiverPrompt("ucc");
                       }}
-                      className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
-                      title="Receiver got aced (reception error) -> Point for Opponent"
+                      className="bg-gradient-to-b from-green-500 to-green-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
                     >
-                      <XCircle size={15} />
-                      <span>Aced / Reception Error (+1 Pt Opponent)</span>
+                      ACE
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPlayerId(null);
+                        pushToHistory();
+                        logStat(selectedPlayerId, "Serve", "Attempt", 1, false);
+                        changeRallyPhase(trackOppReceives ? "opp_receive" : "play");
+                        if (trackOppReceives) {
+                          setOppPassingPrompt({
+                            passerId: null,
+                            serverId: selectedPlayerId,
+                          });
+                        }
+                      }}
+                      className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
+                    >
+                      IN PLAY
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPlayerId(null);
+                        setServeErrorPrompt("ucc");
+                      }}
+                      className="bg-gradient-to-b from-red-500 to-red-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
+                    >
+                      ERROR
                     </button>
                   </div>
-                )}
+                </div>
+
+                {/* PASS / SERVE RECEIVE SECTION */}
+                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-1.5 sm:mb-2">
+                    <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
+                      <Target size={12} className="mr-1 text-indigo-600" /> Receive / Pass (0-3)
+                    </h4>
+                    {rallyPhase === "receive" && (
+                      <span className="text-[9px] font-black uppercase bg-indigo-100 text-indigo-900 px-1.5 py-0.5 rounded border border-indigo-300 animate-pulse">
+                        Awaiting Receive
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-2">
+                    {[
+                      { val: 3, label: "Perfect (3)", color: "from-green-500 to-green-600" },
+                      { val: 2, label: "Good (2)", color: "from-emerald-500 to-teal-600" },
+                      { val: 1, label: "Poor (1)", color: "from-amber-500 to-orange-600" },
+                      { val: 0, label: "0 / Shank", color: "from-slate-600 to-slate-700" },
+                    ].map(({ val, label, color }) => (
+                      <button
+                        key={`modal-pass-${val}`}
+                        type="button"
+                        onClick={() => {
+                          if (val === 0) {
+                            logStat(selectedPlayerId, "Pass", "Rating", 0, false);
+                            changeRallyPhase("play");
+                            setSelectedPlayerId(null);
+                            showToast("0-Pass (Overbump) recorded • Play continues", "info");
+                          } else {
+                            recordStatAndCheckPoint(selectedPlayerId, "Pass", "Rating", val);
+                            setSelectedPlayerId(null);
+                          }
+                        }}
+                        className={`bg-gradient-to-b ${color} text-white p-2 sm:p-2.5 rounded-lg sm:rounded-xl font-black shadow-sm active:scale-95 flex flex-col items-center justify-center transition-all cursor-pointer`}
+                      >
+                        <span className="text-xl sm:text-2xl leading-none">{val}</span>
+                        <span className="text-[8px] uppercase tracking-wider opacity-90 mt-0.5 text-center font-bold">
+                          {label.split(" ")[0]}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sId = oppLineup[0] || "Opponent";
+                      logMultipleStats([
+                        { playerId: selectedPlayerId, category: "Pass", metric: "Aced", value: 0, isOpponent: false },
+                        { playerId: sId, category: "Serve", metric: "Ace", value: 1, isOpponent: true },
+                      ]);
+                      handlePoint("opp", true);
+                      setSelectedPlayerId(null);
+                      showToast(`Aced! #${selectedPlayerObj?.number} got aced -> Point Opponent`, "info");
+                    }}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                    title="Receiver got aced (reception error) -> Point for Opponent"
+                  >
+                    <XCircle size={15} />
+                    <span>Aced / Reception Error (+1 Pt Opponent)</span>
+                  </button>
+                </div>
 
                 <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                   <button
@@ -13933,115 +13451,107 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Opponent Passing - available pre-rally or mid-rally */}
-                {(!rallyPhase.includes("receive") || rallyPhase === "play") && (
-                  <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest flex items-center">
+                {!rallyPhase.includes("receive") && (
+                  <>
+                    <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                      <h4 className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 sm:mb-2 flex items-center">
                         <Activity size={12} className="mr-1 text-blue-500" />{" "}
                         Passing
                       </h4>
-                      {rallyPhase === "play" && (
-                        <span className="text-[9px] font-bold uppercase bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-200">
-                          Pass
-                        </span>
-                      )}
+                      <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                        {[3, 2, 1, 0].map((val) => (
+                          <button
+                            key={`opp-pass-rate-${val}`}
+                            onClick={() => {
+                              recordOppStatAndCheckPoint(
+                                selectedOppId,
+                                "Pass",
+                                "Rating",
+                                val,
+                              );
+                              setSelectedOppId(null);
+                            }}
+                            className={`p-2 sm:p-3 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 transition-all ${
+                              val === 3
+                                ? "bg-green-100 text-green-700 border border-green-200"
+                                : val === 0
+                                  ? "bg-red-100 text-red-700 border border-red-200"
+                                  : "bg-slate-100 text-slate-700 border border-slate-200"
+                            }`}
+                          >
+                            {val}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
-                      {[3, 2, 1, 0].map((val) => (
+
+                    <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                      <textarea
+                        className="w-full h-12 sm:h-16 p-2 sm:p-3 bg-slate-50 border border-slate-200 rounded-lg sm:rounded-xl outline-none resize-none font-bold text-xs sm:text-sm text-slate-700 placeholder-slate-400 mb-1.5 sm:mb-2 transition-all focus:ring-2 focus:ring-blue-400"
+                        placeholder="Scouting notes..."
+                        value={tempNote || oppNotesMem[selectedOppId] || ""}
+                        onChange={(e) => setTempNote(e.target.value)}
+                        onBlur={() => {
+                          if (tempNote) saveOppNote();
+                        }}
+                      />
+                      <div className="flex gap-1.5 sm:gap-2">
                         <button
-                          key={`opp-pass-rate-${val}`}
-                          onClick={() => {
-                            recordOppStatAndCheckPoint(
-                              selectedOppId,
-                              "Pass",
-                              "Rating",
-                              val,
-                            );
-                            setSelectedOppId(null);
-                          }}
-                          className={`p-2 sm:p-3 rounded-lg sm:rounded-xl font-black text-lg sm:text-xl shadow-sm active:scale-95 transition-all ${
-                            val === 3
-                              ? "bg-green-100 text-green-700 border border-green-200"
-                              : val === 0
-                                ? "bg-red-100 text-red-700 border border-red-200"
-                                : "bg-slate-100 text-slate-700 border border-slate-200"
+                          onClick={handleOppSetterSwap}
+                          className={`flex-1 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm uppercase ${
+                            oppSetterId === selectedOppId
+                              ? "bg-gradient-to-b from-green-500 to-green-600 text-white"
+                              : "bg-slate-100 text-slate-600 border border-slate-200"
                           }`}
                         >
-                          {val}
+                          {oppSetterId === selectedOppId
+                            ? "Setter"
+                            : "Mark Setter"}
                         </button>
-                      ))}
+                        {oppLiberoId &&
+                          (oppLineup.indexOf(selectedOppId) === 0 ||
+                            oppLineup.indexOf(selectedOppId) === 4 ||
+                            oppLineup.indexOf(selectedOppId) === 5 ||
+                            selectedOppId === oppLiberoId) && (
+                            <button
+                              onClick={() => handleOppLiberoToggle(selectedOppId)}
+                              className="flex-1 bg-gradient-to-b from-amber-100 to-amber-200 text-amber-800 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl border border-amber-300 uppercase shadow-sm"
+                            >
+                              {selectedOppId === oppLiberoId
+                                ? "Lib Out"
+                                : "Lib In"}
+                            </button>
+                          )}
+                      </div>
                     </div>
-                  </div>
-                )}
 
-                {/* Scouting Notes, Setter, Libero */}
-                <div className="bg-white p-2 sm:p-3 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
-                  <textarea
-                    className="w-full h-12 sm:h-16 p-2 sm:p-3 bg-slate-50 border border-slate-200 rounded-lg sm:rounded-xl outline-none resize-none font-bold text-xs sm:text-sm text-slate-700 placeholder-slate-400 mb-1.5 sm:mb-2 transition-all focus:ring-2 focus:ring-blue-400"
-                    placeholder="Scouting notes..."
-                    value={tempNote || oppNotesMem[selectedOppId] || ""}
-                    onChange={(e) => setTempNote(e.target.value)}
-                    onBlur={() => {
-                      if (tempNote) saveOppNote();
-                    }}
-                  />
-                  <div className="flex gap-1.5 sm:gap-2">
-                    <button
-                      onClick={handleOppSetterSwap}
-                      className={`flex-1 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-sm uppercase ${
-                        oppSetterId === selectedOppId
-                          ? "bg-gradient-to-b from-green-500 to-green-600 text-white"
-                          : "bg-slate-100 text-slate-600 border border-slate-200"
-                      }`}
-                    >
-                      {oppSetterId === selectedOppId
-                        ? "Setter"
-                        : "Mark Setter"}
-                    </button>
-                    {oppLiberoId &&
-                      (oppLineup.indexOf(selectedOppId) === 0 ||
-                        oppLineup.indexOf(selectedOppId) === 4 ||
-                        oppLineup.indexOf(selectedOppId) === 5 ||
-                        selectedOppId === oppLiberoId) && (
+                    <div className="flex gap-1.5 sm:gap-2 items-center bg-slate-200 p-1.5 sm:p-2 rounded-xl sm:rounded-2xl">
+                      {subPairs[selectedOppId] ? (
                         <button
-                          onClick={() => handleOppLiberoToggle(selectedOppId)}
-                          className="flex-1 bg-gradient-to-b from-amber-100 to-amber-200 text-amber-800 text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl border border-amber-300 uppercase shadow-sm"
+                          onClick={handleOppSub}
+                          className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
                         >
-                          {selectedOppId === oppLiberoId
-                            ? "Lib Out"
-                            : "Lib In"}
+                          Auto Sub #{subPairs[selectedOppId]} In
                         </button>
+                      ) : (
+                        <>
+                          <input
+                            placeholder="New#"
+                            value={newOppNumber}
+                            onChange={(e) => setNewOppNumber(e.target.value)}
+                            className="w-12 sm:w-16 p-2 sm:p-3 bg-white border border-slate-300 rounded-lg sm:rounded-xl outline-none text-center font-black text-slate-800 uppercase text-xs sm:text-base"
+                          />
+                          <button
+                            onClick={handleOppSub}
+                            className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
+                          >
+                            Sub In
+                          </button>
+                        </>
                       )}
-                  </div>
-                </div>
-
-                {/* Sub In */}
-                <div className="flex gap-1.5 sm:gap-2 items-center bg-slate-200 p-1.5 sm:p-2 rounded-xl sm:rounded-2xl">
-                  {subPairs[selectedOppId] ? (
-                    <button
-                      onClick={handleOppSub}
-                      className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
-                    >
-                      Auto Sub #{subPairs[selectedOppId]} In
-                    </button>
-                  ) : (
-                    <>
-                      <input
-                        placeholder="New#"
-                        value={newOppNumber}
-                        onChange={(e) => setNewOppNumber(e.target.value)}
-                        className="w-12 sm:w-16 p-2 sm:p-3 bg-white border border-slate-300 rounded-lg sm:rounded-xl outline-none text-center font-black text-slate-800 uppercase text-xs sm:text-base"
-                      />
-                      <button
-                        onClick={handleOppSub}
-                        className="flex-1 bg-gradient-to-b from-slate-700 to-slate-800 text-white p-2 sm:p-3 rounded-lg sm:rounded-xl font-black uppercase text-xs sm:text-sm tracking-widest active:scale-95 shadow-sm"
-                      >
-                        Sub In
-                      </button>
-                    </>
-                  )}
-                </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -14602,34 +14112,21 @@ export default function App() {
             <div className="text-6xl sm:text-8xl mb-4 sm:mb-6 animate-pulse drop-shadow-[0_0_30px_rgba(251,191,36,0.4)]">
               Trophy
             </div>
-            <h2 className="text-3xl sm:text-5xl font-black mb-4 sm:mb-6 text-center tracking-widest uppercase">
+            <h2 className="text-3xl sm:text-5xl font-black mb-8 sm:mb-10 text-center tracking-widest uppercase">
               Who Scored?
             </h2>
 
-            {!isGameStarter && (
-              <div className="bg-amber-400/20 border border-amber-400/40 rounded-xl px-4 py-2.5 mb-6 text-center max-w-sm">
-                <p className="text-amber-300 text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5">
-                  <Lock size={14} /> Score changes restricted to match starter
-                </p>
-                <p className="text-slate-300 text-[10px] mt-0.5">
-                  You are contributing stats in real-time synced mode.
-                </p>
-              </div>
-            )}
-
             <div className="flex w-full max-w-sm gap-3 sm:gap-4">
               <button
-                disabled={!isGameStarter}
                 onClick={() => handlePoint("ucc")}
-                className="flex-1 bg-[#0033A0] text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-xl sm:text-3xl flex flex-col items-center shadow-[0_15px_30px_rgba(0,51,160,0.5)] active:scale-95 border-t border-white/20 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="flex-1 bg-[#0033A0] text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-xl sm:text-3xl flex flex-col items-center shadow-[0_15px_30px_rgba(0,51,160,0.5)] active:scale-95 border-t border-white/20"
               >
                 <Shield size={40} className="mb-2 opacity-80 sm:w-12 sm:h-12" />
                 Lancers
               </button>
               <button
-                disabled={!isGameStarter}
                 onClick={() => handlePoint("opp")}
-                className="flex-1 bg-slate-700 text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-xl sm:text-3xl flex flex-col items-center shadow-[0_15px_30px_rgba(0,0,0,0.5)] active:scale-95 border-t border-white/10 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="flex-1 bg-slate-700 text-white py-6 sm:py-8 rounded-2xl sm:rounded-3xl font-black text-xl sm:text-3xl flex flex-col items-center shadow-[0_15px_30px_rgba(0,0,0,0.5)] active:scale-95 border-t border-white/10"
               >
                 <Users size={40} className="mb-2 opacity-80 sm:w-12 sm:h-12" />
                 {opponentName.substring(0, 6)}
@@ -19895,6 +19392,7 @@ export default function App() {
                       currentSetId={activeSetId || statsPath.find((p) => p.level === "set")?.id || null}
                       teamName={effectiveTeamName}
                       onDeleteMatch={handleDeleteMatch}
+                      timeoutEvents={timeoutEvents}
                     />
                   )}
 

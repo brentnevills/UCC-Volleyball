@@ -32,6 +32,7 @@ export interface StatsTrendChartProps {
   currentSetId?: string | null;
   teamName?: string;
   onDeleteMatch?: (matchId: string) => void;
+  timeoutEvents?: any[];
 }
 
 export type TimelineScope = "single_match" | "tournament_league" | "all_season";
@@ -275,6 +276,8 @@ interface RallyPoint {
   runningServes: number;
   isRunLead?: boolean;
   runCount?: number;
+  hasTimeout?: boolean;
+  timeoutRecord?: any;
 }
 
 interface TournamentLeagueGroup {
@@ -299,6 +302,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
   currentSetId = null,
   teamName = "UCC Lancers",
   onDeleteMatch,
+  timeoutEvents = [],
 }) => {
   // Scopes: Single Match, League Day / Tournament, All Season
   const [scope, setScope] = useState<TimelineScope>("single_match");
@@ -308,6 +312,9 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
 
   // Chart Presentation Mode: "metrics" (rates) | "running_score" (dual point-by-point curves) | "momentum" (differential) | "swings" (attack evolution)
   const [chartMode, setChartMode] = useState<"running_score" | "momentum" | "metrics" | "swings">("metrics");
+
+  // Benchmark Reference Target Lines Toggle (e.g. .300 Elite, .200 Good hitting eff, 40% kill, 2.0 pass)
+  const [showBenchmarks, setShowBenchmarks] = useState<boolean>(true);
 
   // Selected Match ID (for single match scope)
   const [selectedMatchId, setSelectedMatchId] = useState<string>(() => {
@@ -332,6 +339,7 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
   const [hoveredPoint, setHoveredPoint] = useState<any | null>(null);
   const [hoveredDiscretePoint, setHoveredDiscretePoint] = useState<any | null>(null);
   const [hoveredSwingPoint, setHoveredSwingPoint] = useState<any | null>(null);
+  const [hoveredTimeout, setHoveredTimeout] = useState<any | null>(null);
 
   // Group Matches into League Days and Tournaments
   const tournamentGroups = useMemo<TournamentLeagueGroup[]>(() => {
@@ -647,6 +655,12 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         const runUnforcedErrors = cumulativeAttackErrors + cumulativeServeErrors;
         const runFrontSetPct = cumulativeAttacks > 0 ? cumulativeFrontAttacks / cumulativeAttacks : 0;
 
+        const matchedTimeout = (timeoutEvents || []).find((to: any) => {
+          if (to.matchId && to.matchId !== setObj.matchId) return false;
+          if (to.setNum && Number(to.setNum) !== Number(setObj.setNum || 1)) return false;
+          return Number(to.scoreUcc) === u && Number(to.scoreOpp) === o;
+        });
+
         return {
           rallyNum: idx + 1,
           setNum: setObj.setNum || 1,
@@ -675,6 +689,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           runningFrontAttacks: cumulativeFrontAttacks,
           runningBackAttacks: cumulativeBackAttacks,
           runningFrontSetPct: runFrontSetPct,
+          hasTimeout: Boolean(matchedTimeout),
+          timeoutRecord: matchedTimeout || null,
           runningAttackErrors: cumulativeAttackErrors,
           runningBlockedAttacks: cumulativeAttackBlocked,
           runningPassSum: cumulativePassSum,
@@ -859,6 +875,8 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
           runningPassCount: cumulativePassCount,
           runningAces: cumulativeAces,
           runningServes: cumulativeServes,
+          hasTimeout: Boolean((timeoutEvents || []).find((to: any) => to.matchId === setObj.matchId && Number(to.setNum) === Number(setObj.setNum || 1) && Number(to.scoreUcc) === curUcc && Number(to.scoreOpp) === curOpp)),
+          timeoutRecord: (timeoutEvents || []).find((to: any) => to.matchId === setObj.matchId && Number(to.setNum) === Number(setObj.setNum || 1) && Number(to.scoreUcc) === curUcc && Number(to.scoreOpp) === curOpp) || null,
         });
       }
     });
@@ -1536,6 +1554,72 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
     };
   }, [stats, roster, scope, targetMatch, selectedSetFilter, activeGroup, selectedPlayerId]);
 
+  // Automated Coaching Insights & Momentum Takeaways for the active selection
+  const coachTrendInsights = useMemo(() => {
+    const pointsList = rallyProgressionData.length > 0 ? rallyProgressionData : [];
+    let trendDirection: "up" | "down" | "even" = "even";
+    let deltaDisplay = "0.0%";
+    if (pointsList.length >= 6) {
+      const recentWindow = pointsList.slice(-4);
+      const earlyWindow = pointsList.slice(0, 4);
+      const recentDiff = (recentWindow[recentWindow.length - 1]?.pointDiff || 0) - (recentWindow[0]?.pointDiff || 0);
+      const recentEff = recentWindow[recentWindow.length - 1]?.runningHittingEff || 0;
+      const earlyEff = earlyWindow[earlyWindow.length - 1]?.runningHittingEff || 0;
+      const effDelta = recentEff - earlyEff;
+
+      if (effDelta > 0.05 || recentDiff > 1) {
+        trendDirection = "up";
+        deltaDisplay = `+${(effDelta * 100).toFixed(1)}% eff`;
+      } else if (effDelta < -0.05 || recentDiff < -1) {
+        trendDirection = "down";
+        deltaDisplay = `${(effDelta * 100).toFixed(1)}% eff`;
+      } else {
+        trendDirection = "even";
+        deltaDisplay = "Steady pace";
+      }
+    }
+
+    let maxUccRun = 0;
+    let maxOppRun = 0;
+    let curUccRun = 0;
+    let curOppRun = 0;
+    pointsList.forEach((pt) => {
+      if (pt.scoringTeam === "ucc") {
+        curUccRun++;
+        curOppRun = 0;
+        if (curUccRun > maxUccRun) maxUccRun = curUccRun;
+      } else if (pt.scoringTeam === "opp") {
+        curOppRun++;
+        curUccRun = 0;
+        if (curOppRun > maxOppRun) maxOppRun = curOppRun;
+      }
+    });
+
+    const crunchPoints = pointsList.filter((pt) => pt.scoreUcc >= 20 || pt.scoreOpp >= 20);
+    const crunchUccWon = crunchPoints.filter((pt) => pt.scoringTeam === "ucc").length;
+    const crunchTotal = crunchPoints.length;
+    const crunchSideoutPct = crunchTotal > 0 ? (crunchUccWon / crunchTotal) * 100 : null;
+
+    const relevantTimeouts = (timeoutEvents || []).filter((to: any) => {
+      if (targetMatch && to.matchId && to.matchId !== targetMatch.id) return false;
+      return to.team === "ucc";
+    });
+    const toWithOutcome = relevantTimeouts.filter((to: any) => to.nextRallyWinner !== undefined);
+    const toSideouts = toWithOutcome.filter((to: any) => to.sideoutAchieved === true || to.nextRallyWinner === "ucc");
+    const toFbsoRate = toWithOutcome.length > 0 ? (toSideouts.length / toWithOutcome.length) * 100 : null;
+
+    return {
+      trendDirection,
+      deltaDisplay,
+      maxUccRun,
+      maxOppRun,
+      crunchSideoutPct,
+      crunchPointsCount: crunchTotal,
+      toCount: relevantTimeouts.length,
+      toFbsoRate,
+    };
+  }, [rallyProgressionData, timeoutEvents, targetMatch]);
+
   return (
     <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm overflow-hidden p-4 sm:p-6 mb-8 transition-all">
       {/* HEADER & SCOPE SELECTION */}
@@ -1986,6 +2070,152 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
         </div>
       )}
 
+      {/* COACHING INSIGHTS & MOMENTUM TAKEAWAYS BANNER */}
+      <div className="mt-4 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white rounded-2xl p-4 shadow-md border border-slate-700/60">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3 pb-2.5 border-b border-slate-700/70">
+          <div className="flex items-center gap-2">
+            <span className="p-1 rounded-md bg-amber-400/20 text-amber-400">
+              <Zap size={14} />
+            </span>
+            <span className="text-xs font-black tracking-wide uppercase text-amber-300">
+              Coaching Intel & Momentum Takeaways
+            </span>
+            <span className="text-[10px] text-slate-400 font-medium hidden sm:inline">
+              Automated live match dynamics & tactical sideout analysis
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowBenchmarks(!showBenchmarks)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1.5 cursor-pointer border ${
+                showBenchmarks
+                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm"
+                  : "bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200"
+              }`}
+            >
+              <Target size={12} className={showBenchmarks ? "text-emerald-400" : "text-slate-400"} />
+              Target Benchmarks: {showBenchmarks ? "ON" : "OFF"}
+            </button>
+          </div>
+        </div>
+
+        {/* 4 Metric Takeaway Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+          {/* 1. Momentum Trajectory */}
+          <div className="bg-slate-800/70 rounded-xl p-2.5 border border-slate-700/50 flex flex-col justify-between">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+              <span>Momentum</span>
+              {coachTrendInsights.trendDirection === "up" ? (
+                <ArrowUpRight size={13} className="text-emerald-400" />
+              ) : coachTrendInsights.trendDirection === "down" ? (
+                <ArrowDownRight size={13} className="text-rose-400" />
+              ) : (
+                <Activity size={13} className="text-amber-400" />
+              )}
+            </div>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span
+                className={`text-sm font-black ${
+                  coachTrendInsights.trendDirection === "up"
+                    ? "text-emerald-400"
+                    : coachTrendInsights.trendDirection === "down"
+                    ? "text-rose-400"
+                    : "text-amber-300"
+                }`}
+              >
+                {coachTrendInsights.trendDirection === "up"
+                  ? "↗ Surging"
+                  : coachTrendInsights.trendDirection === "down"
+                  ? "↘ Slipping"
+                  : "➔ Steady"}
+              </span>
+              <span className="text-[10px] font-mono text-slate-300">
+                {coachTrendInsights.deltaDisplay}
+              </span>
+            </div>
+            <div className="text-[9px] text-slate-400 mt-0.5">
+              Net point differential slope
+            </div>
+          </div>
+
+          {/* 2. Longest Scoring Run */}
+          <div className="bg-slate-800/70 rounded-xl p-2.5 border border-slate-700/50 flex flex-col justify-between">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+              <span>Peak Scoring Run</span>
+              <Flame size={13} className="text-orange-400" />
+            </div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-sm font-black text-emerald-400 font-mono">
+                {coachTrendInsights.maxUccRun} pts
+              </span>
+              <span className="text-[10px] text-slate-400">vs</span>
+              <span className="text-xs font-black text-rose-400 font-mono">
+                {coachTrendInsights.maxOppRun} opp
+              </span>
+            </div>
+            <div className="text-[9px] text-slate-400 mt-0.5">
+              {coachTrendInsights.maxUccRun >= coachTrendInsights.maxOppRun
+                ? `${teamName} holds the biggest surge`
+                : "Opponent had higher run streak"}
+            </div>
+          </div>
+
+          {/* 3. Crunch Time Conversion (>=20 pts) */}
+          <div className="bg-slate-800/70 rounded-xl p-2.5 border border-slate-700/50 flex flex-col justify-between">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+              <span>Crunch-Time (≥20)</span>
+              <Trophy size={13} className="text-amber-400" />
+            </div>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="text-sm font-black text-amber-300 font-mono">
+                {coachTrendInsights.crunchSideoutPct !== null
+                  ? `${coachTrendInsights.crunchSideoutPct.toFixed(0)}%`
+                  : "—"}
+              </span>
+              <span className="text-[10px] text-slate-300">
+                {coachTrendInsights.crunchPointsCount > 0
+                  ? `(${coachTrendInsights.crunchPointsCount} rallies)`
+                  : "Pending 20+ pts"}
+              </span>
+            </div>
+            <div className="text-[9px] text-slate-400 mt-0.5">
+              Late-set winning percentage
+            </div>
+          </div>
+
+          {/* 4. Timeout Sideout Response */}
+          <div className="bg-slate-800/70 rounded-xl p-2.5 border border-slate-700/50 flex flex-col justify-between">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+              <span>Timeout Impact</span>
+              <Shield size={13} className="text-indigo-400" />
+            </div>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="text-sm font-black text-indigo-300 font-mono">
+                {coachTrendInsights.toFbsoRate !== null
+                  ? `${coachTrendInsights.toFbsoRate.toFixed(0)}%`
+                  : coachTrendInsights.toCount > 0
+                  ? `${coachTrendInsights.toCount} calls`
+                  : "—"}
+              </span>
+              <span className="text-[10px] text-slate-300">
+                {coachTrendInsights.toFbsoRate !== null
+                  ? "FBSO sideout"
+                  : coachTrendInsights.toCount > 0
+                  ? "Logged"
+                  : "0 timeouts"}
+              </span>
+            </div>
+            <div className="text-[9px] text-slate-400 mt-0.5">
+              {coachTrendInsights.toCount > 0
+                ? `${coachTrendInsights.toCount} tactical timeouts analyzed`
+                : "Timeouts plot as ⏱ TO flags"}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* MAIN CHART CONTAINER */}
       <div className="mt-4 relative">
         {/* CASE 0: POINT-BY-POINT DUAL SCORE LINES (Both teams rising 0 to 25) */}
@@ -2168,6 +2398,60 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                       );
                     })()}
 
+                    {/* Interactive Timeout Event Markers (Dual Score Lines) */}
+                    {rallyProgressionData.map((pt, idx) => {
+                      if (!pt.hasTimeout) return null;
+                      const x = padding.left + (idx / (rallyProgressionData.length - 1)) * graphWidth;
+                      const toRec = pt.timeoutRecord;
+                      const isUcc = toRec ? toRec.team === "ucc" : false;
+                      return (
+                        <g
+                          key={`to_dual_${idx}`}
+                          className="cursor-pointer"
+                          onMouseEnter={() =>
+                            setHoveredTimeout(
+                              toRec || {
+                                team: isUcc ? "ucc" : "opp",
+                                scoreUccAtCall: pt.scoreUcc,
+                                scoreOppAtCall: pt.scoreOpp,
+                                setNumber: pt.setNum,
+                              }
+                            )
+                          }
+                          onMouseLeave={() => setHoveredTimeout(null)}
+                        >
+                          <line
+                            x1={x}
+                            y1={padding.top}
+                            x2={x}
+                            y2={svgHeight - padding.bottom}
+                            stroke={isUcc ? "#f59e0b" : "#ec4899"}
+                            strokeWidth="2"
+                            strokeDasharray="4 3"
+                            opacity="0.85"
+                          />
+                          <rect
+                            x={x - 18}
+                            y={padding.top - 18}
+                            width="36"
+                            height="18"
+                            rx="4"
+                            fill={isUcc ? "#d97706" : "#be185d"}
+                          />
+                          <text
+                            x={x}
+                            y={padding.top - 5}
+                            fill="#ffffff"
+                            fontSize="9"
+                            fontWeight="bold"
+                            textAnchor="middle"
+                          >
+                            ⏱ TO
+                          </text>
+                        </g>
+                      );
+                    })}
+
                     {/* X Axis Labels */}
                     {rallyProgressionData.map((pt, idx) => {
                       const totalPts = rallyProgressionData.length;
@@ -2286,6 +2570,72 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                           </span>
                         </div>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Hovered Timeout Popup Card */}
+                {hoveredTimeout && (
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-slate-900/95 text-white p-3.5 rounded-xl shadow-2xl text-xs backdrop-blur-md border border-amber-500/50 z-30 min-w-[260px] max-w-[340px]">
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
+                      <span className="font-black text-amber-400 flex items-center gap-1.5">
+                        <span>⏱ Tactical Timeout</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">
+                          Set {hoveredTimeout.setNumber || "1"}
+                        </span>
+                      </span>
+                      <span
+                        className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                          hoveredTimeout.team === "ucc"
+                            ? "bg-amber-500 text-slate-900"
+                            : "bg-rose-500 text-white"
+                        }`}
+                      >
+                        {hoveredTimeout.team === "ucc" ? `${teamName} Call` : "Opponent Call"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between font-black text-sm my-1">
+                      <span className="text-emerald-400">{teamName}: {hoveredTimeout.scoreUccAtCall ?? 0}</span>
+                      <span className="text-slate-400 text-xs">vs</span>
+                      <span className="text-rose-400">{hoveredTimeout.matchOpponent || "Opp"}: {hoveredTimeout.scoreOppAtCall ?? 0}</span>
+                    </div>
+
+                    <div className="text-[11px] text-slate-300 mb-1.5">
+                      {hoveredTimeout.situation ||
+                        (hoveredTimeout.activeRunPoints >= 2
+                          ? `${hoveredTimeout.activeRunTeam === "ucc" ? teamName : "Opponent"} on ${hoveredTimeout.activeRunPoints}-pt run`
+                          : "Standard tactical timeout")}
+                    </div>
+
+                    {/* Outcome Badges */}
+                    <div className="border-t border-slate-800 pt-1.5 mt-1.5 space-y-1">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">First Rally Next:</span>
+                        <span
+                          className={`font-black ${
+                            hoveredTimeout.sideoutAchieved || hoveredTimeout.nextRallyWinner === "ucc"
+                              ? "text-emerald-400"
+                              : hoveredTimeout.nextRallyWinner === "opp"
+                              ? "text-rose-400"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          {hoveredTimeout.sideoutAchieved || hoveredTimeout.nextRallyWinner === "ucc"
+                            ? `✓ Point ${teamName}`
+                            : hoveredTimeout.nextRallyWinner === "opp"
+                            ? "✗ Point Opponent"
+                            : "Ongoing"}
+                        </span>
+                      </div>
+                      {hoveredTimeout.next3RalliesUcc !== undefined && hoveredTimeout.next3RalliesOpp !== undefined && (
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-400">Next 3 Rallies:</span>
+                          <span className="font-mono font-bold text-indigo-300">
+                            {hoveredTimeout.next3RalliesUcc} - {hoveredTimeout.next3RalliesOpp}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2468,6 +2818,60 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                       );
                     })()}
 
+                    {/* Interactive Timeout Event Markers (Lead Margin Momentum) */}
+                    {rallyProgressionData.map((pt, idx) => {
+                      if (!pt.hasTimeout) return null;
+                      const x = padding.left + (idx / (rallyProgressionData.length - 1)) * graphWidth;
+                      const toRec = pt.timeoutRecord;
+                      const isUcc = toRec ? toRec.team === "ucc" : false;
+                      return (
+                        <g
+                          key={`to_mom_${idx}`}
+                          className="cursor-pointer"
+                          onMouseEnter={() =>
+                            setHoveredTimeout(
+                              toRec || {
+                                team: isUcc ? "ucc" : "opp",
+                                scoreUccAtCall: pt.scoreUcc,
+                                scoreOppAtCall: pt.scoreOpp,
+                                setNumber: pt.setNum,
+                              }
+                            )
+                          }
+                          onMouseLeave={() => setHoveredTimeout(null)}
+                        >
+                          <line
+                            x1={x}
+                            y1={padding.top}
+                            x2={x}
+                            y2={svgHeight - padding.bottom}
+                            stroke={isUcc ? "#f59e0b" : "#ec4899"}
+                            strokeWidth="2"
+                            strokeDasharray="4 3"
+                            opacity="0.85"
+                          />
+                          <rect
+                            x={x - 18}
+                            y={padding.top - 18}
+                            width="36"
+                            height="18"
+                            rx="4"
+                            fill={isUcc ? "#d97706" : "#be185d"}
+                          />
+                          <text
+                            x={x}
+                            y={padding.top - 5}
+                            fill="#ffffff"
+                            fontSize="9"
+                            fontWeight="bold"
+                            textAnchor="middle"
+                          >
+                            ⏱ TO
+                          </text>
+                        </g>
+                      );
+                    })}
+
                     {/* X Axis Labels */}
                     {rallyProgressionData.map((pt, idx) => {
                       const totalPts = rallyProgressionData.length;
@@ -2590,6 +2994,72 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                     </div>
                   </div>
                 )}
+
+                {/* Hovered Timeout Popup Card */}
+                {hoveredTimeout && (
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-slate-900/95 text-white p-3.5 rounded-xl shadow-2xl text-xs backdrop-blur-md border border-amber-500/50 z-30 min-w-[260px] max-w-[340px]">
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-700 pb-1.5 mb-1.5">
+                      <span className="font-black text-amber-400 flex items-center gap-1.5">
+                        <span>⏱ Tactical Timeout</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">
+                          Set {hoveredTimeout.setNumber || "1"}
+                        </span>
+                      </span>
+                      <span
+                        className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                          hoveredTimeout.team === "ucc"
+                            ? "bg-amber-500 text-slate-900"
+                            : "bg-rose-500 text-white"
+                        }`}
+                      >
+                        {hoveredTimeout.team === "ucc" ? `${teamName} Call` : "Opponent Call"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between font-black text-sm my-1">
+                      <span className="text-emerald-400">{teamName}: {hoveredTimeout.scoreUccAtCall ?? 0}</span>
+                      <span className="text-slate-400 text-xs">vs</span>
+                      <span className="text-rose-400">{hoveredTimeout.matchOpponent || "Opp"}: {hoveredTimeout.scoreOppAtCall ?? 0}</span>
+                    </div>
+
+                    <div className="text-[11px] text-slate-300 mb-1.5">
+                      {hoveredTimeout.situation ||
+                        (hoveredTimeout.activeRunPoints >= 2
+                          ? `${hoveredTimeout.activeRunTeam === "ucc" ? teamName : "Opponent"} on ${hoveredTimeout.activeRunPoints}-pt run`
+                          : "Standard tactical timeout")}
+                    </div>
+
+                    {/* Outcome Badges */}
+                    <div className="border-t border-slate-800 pt-1.5 mt-1.5 space-y-1">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">First Rally Next:</span>
+                        <span
+                          className={`font-black ${
+                            hoveredTimeout.sideoutAchieved || hoveredTimeout.nextRallyWinner === "ucc"
+                              ? "text-emerald-400"
+                              : hoveredTimeout.nextRallyWinner === "opp"
+                              ? "text-rose-400"
+                              : "text-slate-400"
+                          }`}
+                        >
+                          {hoveredTimeout.sideoutAchieved || hoveredTimeout.nextRallyWinner === "ucc"
+                            ? `✓ Point ${teamName}`
+                            : hoveredTimeout.nextRallyWinner === "opp"
+                            ? "✗ Point Opponent"
+                            : "Ongoing"}
+                        </span>
+                      </div>
+                      {hoveredTimeout.next3RalliesUcc !== undefined && hoveredTimeout.next3RalliesOpp !== undefined && (
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-400">Next 3 Rallies:</span>
+                          <span className="font-mono font-bold text-indigo-300">
+                            {hoveredTimeout.next3RalliesUcc} - {hoveredTimeout.next3RalliesOpp}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2684,6 +3154,73 @@ export const StatsTrendChart: React.FC<StatsTrendChartProps> = ({
                         </g>
                       );
                     });
+                  })()}
+
+                  {/* Benchmark Targets Overlay Lines */}
+                  {showBenchmarks && (() => {
+                    const isSingle = activeMetricKeys.length === 1;
+                    const singleKey = isSingle ? activeMetricKeys[0] : null;
+                    const benchmarkLines: Array<{ y: number; label: string; color: string; bg: string }> = [];
+
+                    if (singleKey === "passAvg") {
+                      const yGood = padding.top + graphHeight * (1 - 2.0 / 3.0);
+                      const yElite = padding.top + graphHeight * (1 - 2.3 / 3.0);
+                      benchmarkLines.push({ y: yGood, label: "Target: 2.00 Good Pass", color: "#10b981", bg: "#ecfdf5" });
+                      benchmarkLines.push({ y: yElite, label: "Elite: 2.30+ In-System", color: "#059669", bg: "#d1fae5" });
+                    } else if (singleKey === "hittingEff" || (!isSingle && activeMetricKeys.includes("hittingEff"))) {
+                      const normElite = (0.300 - (-0.20)) / 1.20;
+                      const normGood = (0.200 - (-0.20)) / 1.20;
+                      const yElite = padding.top + graphHeight * (1 - normElite);
+                      const yGood = padding.top + graphHeight * (1 - normGood);
+                      benchmarkLines.push({ y: yElite, label: "Elite: .300+ Hitting Eff", color: "#10b981", bg: "#ecfdf5" });
+                      benchmarkLines.push({ y: yGood, label: "Target: .200 Good", color: "#3b82f6", bg: "#eff6ff" });
+                    } else if (singleKey === "killPct" || (!isSingle && activeMetricKeys.includes("killPct"))) {
+                      const norm40 = (0.40 - (-0.20)) / 1.20;
+                      const y40 = padding.top + graphHeight * (1 - norm40);
+                      benchmarkLines.push({ y: y40, label: "Target: 40%+ Kill Rate", color: "#10b981", bg: "#ecfdf5" });
+                    }
+
+                    if (benchmarkLines.length === 0) return null;
+
+                    return (
+                      <g>
+                        {benchmarkLines.map((bm, bIdx) => (
+                          <g key={`bm_${bIdx}`}>
+                            <line
+                              x1={padding.left}
+                              y1={bm.y}
+                              x2={svgWidth - padding.right}
+                              y2={bm.y}
+                              stroke={bm.color}
+                              strokeWidth="1.5"
+                              strokeDasharray="6 3"
+                              opacity="0.85"
+                            />
+                            <rect
+                              x={svgWidth - padding.right - 145}
+                              y={bm.y - 14}
+                              width="140"
+                              height="14"
+                              rx="3"
+                              fill={bm.bg}
+                              stroke={bm.color}
+                              strokeWidth="0.8"
+                              opacity="0.9"
+                            />
+                            <text
+                              x={svgWidth - padding.right - 75}
+                              y={bm.y - 3}
+                              fill={bm.color}
+                              fontSize="8"
+                              fontWeight="bold"
+                              textAnchor="middle"
+                            >
+                              {bm.label}
+                            </text>
+                          </g>
+                        ))}
+                      </g>
+                    );
                   })()}
 
                   {/* Render Data Series */}
