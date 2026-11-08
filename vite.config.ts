@@ -96,6 +96,16 @@ export default defineConfig(({mode}) => {
         },
       },
     },
+    optimizeDeps: {
+      include: [
+        'firebase/app',
+        'firebase/auth',
+        'firebase/firestore',
+        'react',
+        'react-dom',
+        'lucide-react',
+      ],
+    },
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },

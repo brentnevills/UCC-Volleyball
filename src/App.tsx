@@ -96,9 +96,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 // Firebase Imports
-import { initializeApp } from "firebase/app";
 import {
-  getAuth,
   signInWithPopup,
   signInAnonymously,
   GoogleAuthProvider,
@@ -106,7 +104,6 @@ import {
   signOut,
 } from "firebase/auth";
 import {
-  getFirestore,
   collection,
   doc,
   getDoc,
@@ -122,34 +119,10 @@ import {
   enableIndexedDbPersistence,
   disableNetwork,
   enableNetwork,
-  setLogLevel,
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 import { handleFirestoreError, OperationType } from "./firebaseErrors";
-
-// Silence internal Firestore SDK retry and backoff log spam
-try {
-  setLogLevel("silent");
-} catch {}
-
-// -------------------------------------------------------------
-// ENVIRONMENT & CLOUD CONFIGURATION
-// -------------------------------------------------------------
-const isFirebaseAvailable = !!firebaseConfig.apiKey;
-
-let app, auth, db;
-try {
-  if (isFirebaseAvailable) {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-    console.log("Firebase initialized successfully");
-  } else {
-    console.warn("Firebase configuration missing - running in LOCAL mode");
-  }
-} catch (e) {
-  console.error("Firebase Initialization Failed:", e);
-}
+import { app, auth, db, isFirebaseAvailable } from "./firebase";
 
 // Enable Persistence for "Offline Changes"
 if (typeof window !== "undefined" && db) {
@@ -11510,172 +11483,199 @@ export default function App() {
 
         {/* NEW COLLAPSIBLE COURT AND TABLE VIEW */}
         <div className="flex-1 flex flex-col relative bg-slate-100 overflow-hidden min-h-0 landscape:min-w-0">
-          <div className="p-2 sm:p-3 flex flex-wrap items-center justify-between bg-white border-b border-slate-200 shrink-0 gap-2">
-            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-              <button
-                onClick={() => setShowPositioning(true)}
-                className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-slate-200 text-slate-800 rounded-lg font-bold text-xs sm:text-sm tracking-widest uppercase hover:bg-slate-300 transition-colors cursor-pointer"
-              >
-                Show Court
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!viewOppStats) {
-                    rotateUCC();
-                    showToast(`${effectiveTeamName} rotated 1 position clockwise`, "info");
-                  } else {
-                    rotateOpp();
-                    showToast(`${opponentName} rotated 1 position clockwise`, "info");
-                  }
-                }}
-                className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1 border border-indigo-200 shadow-xs transition-all active:scale-95 cursor-pointer"
-                title={`Rotate ${!viewOppStats ? effectiveTeamName : opponentName} 1 position clockwise`}
-              >
-                <ArrowRightLeft size={13} className="text-indigo-600" />
-                <span className="hidden sm:inline">Rotate</span>
-                <span className="sm:hidden">Rot</span>
-              </button>
-              <button
-                onClick={() => {
-                  setReportOpponentName(opponentName);
-                  setShowOpponentReportModal(true);
-                }}
-                className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-blue-50 text-blue-800 rounded-lg font-bold text-xs sm:text-sm tracking-wider uppercase hover:bg-blue-100 transition-colors flex items-center gap-1.5 border border-blue-200 shadow-xs cursor-pointer"
-                title="View Opponent Scouting & History"
-              >
-                <Shield size={14} className="text-blue-600" />
-                <span className="hidden sm:inline">Opponents</span>
-                <span className="sm:hidden">Opp</span>
-              </button>
-              <button
-                type="button"
-                onClick={viewStatsWithCurrentMatch}
-                className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-                title="View Live Match Stats"
-              >
-                <Activity size={14} className="text-slate-950" />
-                <span className="hidden sm:inline">Live Stats</span>
-                <span className="sm:hidden">Stats</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowTimeoutModal(true)}
-                className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer active:scale-95"
-                title="Open Timeout Key Stats & 60-Second Huddle Dashboard"
-              >
-                <Clock size={14} className="text-amber-300" />
-                <span>TO</span>
-                <span className="bg-amber-400 text-slate-950 text-[9px] px-1 py-0.2 rounded font-black">
-                  {teamStats.uccTimeouts}/2
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const nextVal = !autoScoreTracking;
-                  setAutoScoreTracking(nextVal);
-                  showToast(
-                    `Auto Score Tracking: ${nextVal ? "ON" : "OFF"}`,
-                    "info",
-                  );
-                }}
-                className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 border transition-all cursor-pointer ${
-                  autoScoreTracking
-                    ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs hover:bg-emerald-100"
-                    : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
-                }`}
-                title={
-                  autoScoreTracking
-                    ? "Auto-awards points & rotates on Kills, Aces, Stuff Blocks, and Errors"
-                    : "Auto-scoring is disabled (manual rally scoring)"
-                }
-              >
-                <Check size={13} className={autoScoreTracking ? "text-emerald-600" : "text-slate-400"} />
-                <span className="hidden sm:inline">Auto Score</span>
-                <span className="sm:hidden">Auto</span>
-                <span
-                  className={`text-[8px] font-black px-1 py-0.2 rounded ${
+          {/* ACTION SUB-BAR (Structured into 2 Non-Scrolling Rows) */}
+          <div className="px-2 sm:px-3 py-1.5 sm:py-2 flex flex-col gap-1.5 bg-white border-b border-slate-200 shrink-0 shadow-2xs">
+            {/* ROW 1: PRIMARY GAMEPLAY & ROTATION CONTROLS + TEAM SWITCHER */}
+            <div className="flex items-center justify-between gap-1.5 sm:gap-2 w-full flex-wrap sm:flex-nowrap">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <button
+                  onClick={() => setShowPositioning(true)}
+                  className="px-2.5 sm:px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg font-bold text-xs tracking-wider uppercase transition-colors cursor-pointer flex items-center gap-1 shadow-2xs shrink-0 active:scale-95"
+                  title="Show interactive court positioning"
+                >
+                  <Eye size={12} className="text-slate-600 hidden sm:inline" />
+                  <span>Court</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!viewOppStats) {
+                      rotateUCC();
+                      showToast(`${effectiveTeamName} rotated 1 position clockwise`, "info");
+                    } else {
+                      rotateOpp();
+                      showToast(`${opponentName} rotated 1 position clockwise`, "info");
+                    }
+                  }}
+                  className="px-2.5 sm:px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-black text-xs tracking-wider uppercase flex items-center gap-1 border border-indigo-200 shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0"
+                  title={`Rotate ${!viewOppStats ? effectiveTeamName : opponentName} 1 position clockwise`}
+                >
+                  <ArrowRightLeft size={12} className="text-indigo-600" />
+                  <span>Rotate</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={viewStatsWithCurrentMatch}
+                  className="px-2.5 sm:px-3 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg font-black text-xs tracking-wider uppercase flex items-center gap-1 shadow-2xs transition-colors cursor-pointer shrink-0 active:scale-95"
+                  title="View Live Match Stats"
+                >
+                  <Activity size={12} className="text-slate-950" />
+                  <span>Live Stats</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowTimeoutModal(true)}
+                  className="px-2.5 sm:px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-black text-xs tracking-wider uppercase flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer active:scale-95 shrink-0"
+                  title="Open Timeout Key Stats & 60-Second Huddle Dashboard"
+                >
+                  <Clock size={12} className="text-amber-300" />
+                  <span>TO</span>
+                  <span className="bg-amber-400 text-slate-950 text-[9px] px-1 py-0.2 rounded font-black">
+                    {teamStats.uccTimeouts}/2
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !autoScoreTracking;
+                    setAutoScoreTracking(nextVal);
+                    showToast(
+                      `Auto Score Tracking: ${nextVal ? "ON" : "OFF"}`,
+                      "info",
+                    );
+                  }}
+                  className={`px-2 sm:px-2.5 py-1 rounded-lg font-black text-xs tracking-wider uppercase flex items-center gap-1 border transition-all cursor-pointer shrink-0 active:scale-95 ${
                     autoScoreTracking
-                      ? "bg-emerald-200 text-emerald-900"
-                      : "bg-slate-200 text-slate-600"
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs hover:bg-emerald-100"
+                      : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
+                  }`}
+                  title={
+                    autoScoreTracking
+                      ? "Auto-awards points & rotates on Kills, Aces, Stuff Blocks, and Errors"
+                      : "Auto-scoring is disabled (manual rally scoring)"
+                  }
+                >
+                  <Check size={12} className={autoScoreTracking ? "text-emerald-600" : "text-slate-400"} />
+                  <span className="hidden sm:inline">Auto Score</span>
+                  <span className="sm:hidden">Auto</span>
+                  <span
+                    className={`text-[8px] font-black px-1 py-0.2 rounded ${
+                      autoScoreTracking
+                        ? "bg-emerald-200 text-emerald-900"
+                        : "bg-slate-200 text-slate-600"
+                    }`}
+                  >
+                    {autoScoreTracking ? "ON" : "OFF"}
+                  </span>
+                </button>
+              </div>
+
+              {/* Team Perspective Toggle */}
+              <div className="flex bg-slate-100 rounded-lg p-0.5 border border-slate-200 shrink-0 ml-auto">
+                <button
+                  onClick={() => setViewOppStats(false)}
+                  className={`px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-md font-bold text-xs transition-all cursor-pointer ${
+                    !viewOppStats ? "bg-white shadow-2xs text-blue-700 font-black" : "text-slate-500 hover:text-slate-700"
                   }`}
                 >
-                  {autoScoreTracking ? "ON" : "OFF"}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setOppPassingPrompt({
-                    passerId: null,
-                    serverId: lineup[0] || undefined,
-                  });
-                }}
-                className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg font-black text-xs sm:text-sm tracking-wider uppercase flex items-center gap-1.5 border transition-all cursor-pointer ${
-                  trackOppReceives
-                    ? "bg-amber-50 text-amber-900 border-amber-300 shadow-xs hover:bg-amber-100"
-                    : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
-                }`}
-                title="Track opponent passing / serve receive (3 to 0 rating)"
-              >
-                <Activity size={13} className="text-amber-600" />
-                <span className="hidden md:inline">Track Opp. Passing</span>
-                <span className="md:hidden">Opp Pass</span>
-              </button>
-              <div
-                className="flex items-center gap-1.5 bg-slate-100 px-2 sm:px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700"
-                title="Official Team Substitutions (Libero replacements are free and do not count toward this total)"
-              >
-                <Users size={13} className="text-[#0033A0]" />
-                <span className="hidden md:inline">Team Subs:</span>
-                <span className="md:hidden">Subs:</span>
-                <span className="font-black text-[#0033A0] tabular-nums">
-                  {!viewOppStats ? teamStats.uccSubs : teamStats.oppSubs}
-                </span>
-                <div className="flex items-center space-x-0.5 ml-0.5">
-                  <button
-                    onClick={() => {
-                      if (!viewOppStats) {
-                        setTeamStats((s) => ({ ...s, uccSubs: Math.max(0, s.uccSubs - 1) }));
-                      } else {
-                        setTeamStats((s) => ({ ...s, oppSubs: Math.max(0, s.oppSubs - 1) }));
-                      }
-                    }}
-                    className="p-0.5 text-slate-400 hover:text-slate-800 active:scale-90"
-                    title="Manual sub adjust: minus 1"
-                  >
-                    <Minus size={11} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!viewOppStats) {
-                        setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
-                      } else {
-                        setTeamStats((s) => ({ ...s, oppSubs: s.oppSubs + 1 }));
-                      }
-                    }}
-                    className="p-0.5 text-slate-400 hover:text-slate-800 active:scale-90"
-                    title="Manual sub adjust: plus 1"
-                  >
-                    <Plus size={11} />
-                  </button>
-                </div>
+                  {effectiveTeamName}
+                </button>
+                <button
+                  onClick={() => setViewOppStats(true)}
+                  className={`px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-md font-bold text-xs transition-all cursor-pointer ${
+                    viewOppStats ? "bg-white shadow-2xs text-blue-700 font-black" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {opponentName || "Opponent"}
+                </button>
               </div>
             </div>
-            <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200 shrink-0 ml-auto">
-              <button
-                onClick={() => setViewOppStats(false)}
-                className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all cursor-pointer ${!viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}
-              >
-                {effectiveTeamName}
-              </button>
-              <button
-                onClick={() => setViewOppStats(true)}
-                className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-md font-bold text-xs sm:text-sm transition-all cursor-pointer ${viewOppStats ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-700"}`}
-              >
-                {opponentName || "Opponent"}
-              </button>
+
+            {/* ROW 2: SCOUTING, PASSING PROMPT & TEAM SUBSTITUTIONS (FITS WITHOUT SCROLLING) */}
+            <div className="flex items-center justify-between gap-1.5 sm:gap-2 w-full pt-1 border-t border-slate-100 flex-wrap sm:flex-nowrap">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <button
+                  onClick={() => {
+                    setReportOpponentName(opponentName);
+                    setShowOpponentReportModal(true);
+                  }}
+                  className="px-2.5 sm:px-3 py-1 bg-blue-50 text-blue-800 rounded-lg font-bold text-xs tracking-wider uppercase hover:bg-blue-100 transition-colors flex items-center gap-1.5 border border-blue-200 shadow-2xs cursor-pointer shrink-0 active:scale-95"
+                  title="View Opponent Scouting & History"
+                >
+                  <Shield size={12} className="text-blue-600" />
+                  <span>Opponents</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOppPassingPrompt({
+                      passerId: null,
+                      serverId: lineup[0] || undefined,
+                    });
+                  }}
+                  className={`px-2.5 sm:px-3 py-1 rounded-lg font-black text-xs tracking-wider uppercase flex items-center gap-1.5 border transition-all cursor-pointer shrink-0 active:scale-95 ${
+                    trackOppReceives
+                      ? "bg-amber-50 text-amber-900 border-amber-300 shadow-2xs hover:bg-amber-100"
+                      : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                  }`}
+                  title="Track opponent passing / serve receive (3 to 0 rating)"
+                >
+                  <Activity size={12} className="text-amber-600" />
+                  <span>Track Opp Pass</span>
+                </button>
+                <div
+                  className="flex items-center gap-1.5 bg-slate-100 px-2 sm:px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-bold text-slate-700 shrink-0"
+                  title="Official Team Substitutions (Libero replacements are free and do not count toward this total)"
+                >
+                  <Users size={12} className="text-[#0033A0]" />
+                  <span>Subs:</span>
+                  <span className="font-black text-[#0033A0] tabular-nums">
+                    {!viewOppStats ? teamStats.uccSubs : teamStats.oppSubs}
+                  </span>
+                  <div className="flex items-center space-x-0.5 ml-0.5">
+                    <button
+                      onClick={() => {
+                        if (!viewOppStats) {
+                          setTeamStats((s) => ({ ...s, uccSubs: Math.max(0, s.uccSubs - 1) }));
+                        } else {
+                          setTeamStats((s) => ({ ...s, oppSubs: Math.max(0, s.oppSubs - 1) }));
+                        }
+                      }}
+                      className="p-0.5 text-slate-400 hover:text-slate-800 active:scale-90"
+                      title="Manual sub adjust: minus 1"
+                    >
+                      <Minus size={11} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!viewOppStats) {
+                          setTeamStats((s) => ({ ...s, uccSubs: s.uccSubs + 1 }));
+                        } else {
+                          setTeamStats((s) => ({ ...s, oppSubs: s.oppSubs + 1 }));
+                        }
+                      }}
+                      className="p-0.5 text-slate-400 hover:text-slate-800 active:scale-90"
+                      title="Manual sub adjust: plus 1"
+                    >
+                      <Plus size={11} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Serving Indicator Badge */}
+              <div className="flex items-center gap-1 text-[11px] font-black text-slate-500 uppercase tracking-wider shrink-0 ml-auto sm:ml-0">
+                <span className="text-[10px] text-slate-400">Serving:</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
+                    serving === "ucc"
+                      ? "bg-blue-100 text-blue-900 border border-blue-200"
+                      : "bg-rose-100 text-rose-900 border border-rose-200"
+                  }`}
+                >
+                  {serving === "ucc" ? effectiveTeamName : opponentName}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -17977,181 +17977,188 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ACTION TOOLBAR & NAVIGATION */}
-              <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-start lg:justify-end">
-                {/* 1. PRIMARY GAME & MENU BUTTONS - ALWAYS PROMINENT AND VISIBLE */}
-                {((activeMatch && (activeMatch as any).isLive !== false) || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false)) && (
-                  <button
-                    type="button"
-                    onClick={returnToActiveGame}
-                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-4 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-lg text-xs sm:text-sm uppercase tracking-wider transition-all duration-150 active:scale-95 cursor-pointer ring-2 ring-emerald-300"
-                    title="Return directly back into the live game or practice"
-                  >
-                    <Play className="mr-1.5 fill-current shrink-0" size={15} />
-                    <span>
-                      {(activeMatch && (activeMatch as any).isLive !== false ? activeMatch?.type : null) === "Practice" || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false ? lastActiveMatchRef.current?.type : null) === "Practice"
-                        ? "Return to Practice"
-                        : "Return to Game"}
-                    </span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => setView("menu")}
-                  className="bg-white/15 hover:bg-white/25 text-white px-3.5 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[11px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors cursor-pointer active:scale-95"
-                  title="Main Menu"
-                >
-                  <Home className="mr-1.5 shrink-0" size={14} />
-                  <span>Menu</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={runDebugDiagnostics}
-                  className="bg-indigo-600/80 hover:bg-indigo-600 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-indigo-400/30 transition-colors cursor-pointer active:scale-95"
-                  title="Run state & session diagnostics"
-                >
-                  <Activity className="mr-1 sm:mr-1.5 shrink-0" size={13} />
-                  <span>Debug</span>
-                </button>
-
-                {/* 2. SECONDARY TOOLS */}
-                <button
-                  onClick={() => setView("compare")}
-                  className="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                >
-                  <ArrowRightLeft className="mr-1 sm:mr-1.5" size={13} /> Compare
-                </button>
-
-                {isPlayerRole && (
-                  <button
-                    type="button"
-                    onClick={() => setShowCoachLoginModal(true)}
-                    className="bg-amber-500 hover:bg-amber-400 text-slate-950 px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                    title="Sign in with Coach account or enter Coach Code"
-                  >
-                    <Shield className="mr-1 sm:mr-1.5" size={13} /> Coach Login
-                  </button>
-                )}
-
-                {teamInfo.role !== "player" && (
-                  <>
-                    <button
-                      onClick={() => setShowPlayerAccessModal(true)}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                      title="View which players & Google accounts have accessed stats"
-                    >
-                      <Eye className="mr-1 sm:mr-1.5" size={13} /> Player Access
-                    </button>
+              {/* ACTION TOOLBAR & NAVIGATION (Structured into 2 Non-Scrolling Rows) */}
+              <div className="flex flex-col gap-2 w-full lg:w-auto">
+                {/* ROW 1: PRIMARY NAVIGATION, CORE VIEWS & EDITING */}
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 justify-start lg:justify-end">
+                  {((activeMatch && (activeMatch as any).isLive !== false) || (appData.matches && appData.matches.some((m: any) => m.isLive === true)) || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false)) && (
                     <button
                       type="button"
-                      onClick={togglePlayerAccess}
-                      className={`flex-none ${
-                        isPlayerAccessAllowed
-                          ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
-                          : "bg-red-600 hover:bg-red-700 text-white shadow-red-500/20"
-                      } px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer`}
-                      title={
-                        isPlayerAccessAllowed
-                          ? "Player access to stats is currently OPEN. Click to lock/disable."
-                          : "Player access to stats is currently LOCKED. Click to unlock/allow."
-                      }
+                      onClick={returnToActiveGame}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-3.5 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-md text-xs uppercase tracking-wider transition-all duration-150 active:scale-95 cursor-pointer ring-2 ring-emerald-300 shrink-0"
+                      title="Return directly back into the live game or practice"
                     >
-                      {isPlayerAccessAllowed ? (
-                        <>
-                          <Unlock className="mr-1 sm:mr-1.5" size={13} /> Players: ON
-                        </>
-                      ) : (
-                        <>
-                          <Lock className="mr-1 sm:mr-1.5" size={13} /> Players: OFF
-                        </>
-                      )}
+                      <Play className="mr-1.5 fill-current shrink-0" size={14} />
+                      <span>
+                        {(activeMatch && (activeMatch as any).isLive !== false ? activeMatch?.type : null) === "Practice" || (lastActiveMatchRef.current && (lastActiveMatchRef.current as any).isLive !== false ? lastActiveMatchRef.current?.type : null) === "Practice"
+                          ? "Return to Practice"
+                          : "Return to Game"}
+                      </span>
                     </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setView("menu")}
+                    className="bg-white/15 hover:bg-white/25 text-white px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider border border-white/20 transition-colors cursor-pointer active:scale-95 shrink-0"
+                    title="Main Menu"
+                  >
+                    <Home className="mr-1.5 shrink-0" size={13} />
+                    <span>Menu</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStatsViewMode(statsViewMode === "trends" ? "standard" : "trends")}
+                    className={`${
+                      statsViewMode === "trends"
+                        ? "bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-300 shadow-md"
+                        : "bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                    } px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95 shrink-0`}
+                    title="View charts for kill%, efficiency, serving, and passing over games & tournament"
+                  >
+                    <TrendingUp className="mr-1 sm:mr-1.5 shrink-0" size={13} />
+                    <span>{statsViewMode === "trends" ? "Table View" : "Trend Charts"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStatsViewMode(statsViewMode === "spreadsheet" ? "standard" : "spreadsheet")}
+                    className={`${
+                      statsViewMode === "spreadsheet"
+                        ? "bg-emerald-400 hover:bg-emerald-300 text-slate-950 ring-2 ring-emerald-300 shadow-md"
+                        : "bg-blue-600 hover:bg-blue-500 text-white"
+                    } px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95 shrink-0`}
+                    title="Toggle Spreadsheet Mode - Type in stats directly like a spreadsheet"
+                  >
+                    <FileSpreadsheet className="mr-1 sm:mr-1.5 shrink-0" size={13} />
+                    <span>{statsViewMode === "spreadsheet" ? "Standard View" : "Spreadsheet Mode"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowSeasonHistoryModal(true)}
+                    className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95 ring-2 ring-amber-300/60 shrink-0"
+                    title="View Season History, Game Log, and Set Scores"
+                  >
+                    <Trophy className="mr-1 sm:mr-1.5 shrink-0 text-slate-950" size={13} />
+                    <span>Season History</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      const currentMatchNav = statsPath.find((p) => p.level === "match");
+                      const currentSetNav = statsPath.find((p) => p.level === "set");
+                      setStatCorrectionConfig({
+                        isOpen: true,
+                        initialMatchId: currentMatchNav?.id || activeMatch?.id || null,
+                        initialSetId: currentSetNav?.id || activeSetId || null,
+                      });
+                    }}
+                    className="bg-amber-400 hover:bg-amber-500 text-slate-950 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider cursor-pointer transition-colors shrink-0"
+                    title={teamInfo.role === "player" ? "View recorded stats" : "Edit recorded stats"}
+                  >
+                    <Edit3 className="mr-1 sm:mr-1.5" size={13} /> {teamInfo.role === "player" ? "Stat Log" : "Edit Stats"}
+                  </button>
+                </div>
+
+                {/* ROW 2: MANAGEMENT, ACCESS, EXPORTS & UTILITIES */}
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 justify-start lg:justify-end">
+                  <button
+                    onClick={() => setView("compare")}
+                    className="bg-indigo-500 hover:bg-indigo-600 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider transition-colors cursor-pointer shrink-0"
+                    title="Compare Players"
+                  >
+                    <ArrowRightLeft className="mr-1 sm:mr-1.5" size={13} /> Compare
+                  </button>
+
+                  {isPlayerRole && (
                     <button
-                      onClick={exportCSV}
-                      className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                      type="button"
+                      onClick={() => setShowCoachLoginModal(true)}
+                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider transition-colors cursor-pointer shrink-0"
+                      title="Sign in with Coach account or enter Coach Code"
                     >
-                      <Download className="mr-1 sm:mr-1.5" size={13} /> CSV
+                      <Shield className="mr-1 sm:mr-1.5" size={13} /> Coach Login
                     </button>
-                    <button
-                      onClick={exportPDF}
-                      className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider transition-colors cursor-pointer"
-                    >
-                      <FileText className="mr-1 sm:mr-1.5" size={13} /> PDF
-                    </button>
-                  </>
-                )}
+                  )}
 
-                <button
-                  type="button"
-                  onClick={() => setShowSeasonHistoryModal(true)}
-                  className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95 ring-2 ring-amber-300/60"
-                  title="View Season History, Game Log, and Set Scores"
-                >
-                  <Trophy className="mr-1 sm:mr-1.5 shrink-0 text-slate-950" size={13} />
-                  <span>Season History</span>
-                </button>
+                  {teamInfo.role !== "player" && (
+                    <>
+                      <button
+                        onClick={() => setShowPlayerAccessModal(true)}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider transition-colors cursor-pointer shrink-0"
+                        title="View which players & Google accounts have accessed stats"
+                      >
+                        <Eye className="mr-1 sm:mr-1.5" size={13} /> Player Access
+                      </button>
+                      <button
+                        type="button"
+                        onClick={togglePlayerAccess}
+                        className={`flex-none ${
+                          isPlayerAccessAllowed
+                            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+                            : "bg-red-600 hover:bg-red-700 text-white shadow-red-500/20"
+                        } px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider transition-colors cursor-pointer shrink-0`}
+                        title={
+                          isPlayerAccessAllowed
+                            ? "Player access to stats is currently OPEN. Click to lock/disable."
+                            : "Player access to stats is currently LOCKED. Click to unlock/allow."
+                        }
+                      >
+                        {isPlayerAccessAllowed ? (
+                          <>
+                            <Unlock className="mr-1 sm:mr-1.5" size={13} /> Players: ON
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="mr-1 sm:mr-1.5" size={13} /> Players: OFF
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={exportCSV}
+                        className="bg-green-600 hover:bg-green-700 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider transition-colors cursor-pointer shrink-0"
+                        title="Export CSV"
+                      >
+                        <Download className="mr-1 sm:mr-1.5" size={13} /> CSV
+                      </button>
+                      <button
+                        onClick={exportPDF}
+                        className="bg-red-600 hover:bg-red-700 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider transition-colors cursor-pointer shrink-0"
+                        title="Export PDF Report"
+                      >
+                        <FileText className="mr-1 sm:mr-1.5" size={13} /> PDF
+                      </button>
+                    </>
+                  )}
 
-                <button
-                  type="button"
-                  onClick={() => setStatsViewMode(statsViewMode === "trends" ? "standard" : "trends")}
-                  className={`${
-                    statsViewMode === "trends"
-                      ? "bg-amber-400 hover:bg-amber-300 text-slate-950 ring-2 ring-amber-300 shadow-md"
-                      : "bg-white/10 hover:bg-white/20 text-white border border-white/20"
-                  } px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95`}
-                  title="View charts for kill%, efficiency, serving, and passing over games & tournament"
-                >
-                  <TrendingUp className="mr-1 sm:mr-1.5 shrink-0" size={13} />
-                  <span>{statsViewMode === "trends" ? "Table View" : "Trend Charts"}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={runDebugDiagnostics}
+                    className="bg-indigo-600/80 hover:bg-indigo-600 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider border border-indigo-400/30 transition-colors cursor-pointer active:scale-95 shrink-0"
+                    title="Run state & session diagnostics"
+                  >
+                    <Activity className="mr-1 sm:mr-1.5 shrink-0" size={13} />
+                    <span>Debug</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setStatsViewMode(statsViewMode === "spreadsheet" ? "standard" : "spreadsheet")}
-                  className={`${
-                    statsViewMode === "spreadsheet"
-                      ? "bg-emerald-400 hover:bg-emerald-300 text-slate-950 ring-2 ring-emerald-300 shadow-md"
-                      : "bg-blue-600 hover:bg-blue-500 text-white"
-                  } px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer transition-all active:scale-95`}
-                  title="Toggle Spreadsheet Mode - Type in stats directly like a spreadsheet"
-                >
-                  <FileSpreadsheet className="mr-1 sm:mr-1.5 shrink-0" size={13} />
-                  <span>{statsViewMode === "spreadsheet" ? "Standard View" : "Spreadsheet Mode"}</span>
-                </button>
+                  <button
+                    onClick={toggleFullscreen}
+                    className="bg-white/10 hover:bg-white/20 text-white px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider border border-white/20 transition-colors shrink-0"
+                    title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
+                  >
+                    {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}
+                  </button>
 
-                <button
-                  onClick={() => {
-                    const currentMatchNav = statsPath.find((p) => p.level === "match");
-                    const currentSetNav = statsPath.find((p) => p.level === "set");
-                    setStatCorrectionConfig({
-                      isOpen: true,
-                      initialMatchId: currentMatchNav?.id || activeMatch?.id || null,
-                      initialSetId: currentSetNav?.id || activeSetId || null,
-                    });
-                  }}
-                  className="bg-amber-400 hover:bg-amber-500 text-slate-950 px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider cursor-pointer transition-colors"
-                  title={teamInfo.role === "player" ? "View recorded stats" : "Edit recorded stats"}
-                >
-                  <Edit3 className="mr-1 sm:mr-1.5" size={13} /> {teamInfo.role === "player" ? "Stat Log" : "Edit Stats"}
-                </button>
-
-                <button
-                  onClick={toggleFullscreen}
-                  className="bg-white/10 hover:bg-white/20 text-white px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors"
-                  title={isFullscreen ? "Exit Fullscreen" : "Full Screen"}
-                >
-                  {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}
-                </button>
-
-                <button
-                  onClick={handleInstallApp}
-                  className="bg-white/10 hover:bg-white/20 text-white px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl font-black flex items-center justify-center shadow-sm text-[10px] sm:text-xs uppercase tracking-wider border border-white/20 transition-colors"
-                  title="Download App"
-                >
-                  <Download size={13} />
-                </button>
+                  <button
+                    onClick={handleInstallApp}
+                    className="bg-white/10 hover:bg-white/20 text-white px-2 sm:px-2.5 py-1.5 sm:py-2 rounded-xl font-black flex items-center justify-center shadow-xs text-xs uppercase tracking-wider border border-white/20 transition-colors shrink-0"
+                    title="Download App"
+                  >
+                    <Download size={13} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
