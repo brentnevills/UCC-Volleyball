@@ -2317,6 +2317,20 @@ export default function App() {
       setOppLineup(currentSet.oppLineup);
     }
 
+    if (
+      currentSet.liberoSwappedOutId !== undefined &&
+      currentSet.liberoSwappedOutId !== liberoSwappedOutId
+    ) {
+      setLiberoSwappedOutId(currentSet.liberoSwappedOutId);
+    }
+
+    if (
+      currentSet.oppLiberoSwappedOutId !== undefined &&
+      currentSet.oppLiberoSwappedOutId !== oppLiberoSwappedOutId
+    ) {
+      setOppLiberoSwappedOutId(currentSet.oppLiberoSwappedOutId);
+    }
+
     lastLoadedSetIdRef.current = activeSetId;
   }, [activeSetId, activeMatch, appData.sets, appData.matches, view]);
 
@@ -2759,75 +2773,132 @@ export default function App() {
     }
   };
 
-  const rotateUCC = () => {
-    let nextL: string[] = [];
-    let promptLiberoOut = false;
-    pushToHistory();
-    setLineup((prev) => {
-      let newLineup = [...prev.slice(1), prev[0]];
-      // If libero rotates to the front row (indices 1, 2, 3 correspond to Pos 2, 3, 4)
-      if (
-        liberoId &&
-        (newLineup[1] === liberoId ||
-          newLineup[2] === liberoId ||
-          newLineup[3] === liberoId)
-      ) {
-        const libFrontIdx = newLineup.indexOf(liberoId);
-        if (libFrontIdx !== -1) {
-          if (liberoSwappedOutId && !newLineup.includes(liberoSwappedOutId)) {
-            newLineup[libFrontIdx] = liberoSwappedOutId;
-            setLiberoSwappedOutId(null);
-            showToast("Libero automatically subbed out to bench as rotation reached front row", "info");
+  const computeRotatedUCCLineup = (
+    currentLineup: string[],
+    currentLiberoId: string | null,
+    swappedOutId: string | null,
+  ) => {
+    if (!Array.isArray(currentLineup) || currentLineup.length !== 6) {
+      return {
+        newLineup: Array.isArray(currentLineup) ? [...currentLineup] : [],
+        newSwappedOutId: swappedOutId,
+        autoSubbedMsg: null,
+      };
+    }
+    // Standard clockwise rotation: Pos 2 (index 1) -> Pos 1 (index 0 / server), Pos 1 (index 0) -> Pos 6 (index 5)
+    const newLineup = [...currentLineup.slice(1), currentLineup[0]];
+    let newSwappedOutId = swappedOutId;
+    let autoSubbedMsg: string | null = null;
+
+    // Front row positions: indices 1, 2, 3 correspond to Pos 2, Pos 3, Pos 4
+    if (
+      currentLiberoId &&
+      (newLineup[1] === currentLiberoId ||
+        newLineup[2] === currentLiberoId ||
+        newLineup[3] === currentLiberoId)
+    ) {
+      const libFrontIdx = newLineup.indexOf(currentLiberoId);
+      if (libFrontIdx !== -1) {
+        // Auto sub Libero back out to bench
+        if (newSwappedOutId && !newLineup.includes(newSwappedOutId)) {
+          newLineup[libFrontIdx] = newSwappedOutId;
+          const originalPlayer = sortedRoster.find((p) => p.id === newSwappedOutId);
+          autoSubbedMsg = originalPlayer
+            ? `Libero auto-subbed out: #${originalPlayer.number} ${originalPlayer.name} back on court`
+            : "Libero automatically subbed out to bench as rotation reached front row";
+          newSwappedOutId = null;
+        } else {
+          // Find an available bench player to take front row slot
+          const benchPlayer = sortedRoster.find(
+            (p) =>
+              (showRetired || !p.isRetired) &&
+              !newLineup.includes(p.id) &&
+              p.id !== currentLiberoId,
+          );
+          if (benchPlayer) {
+            newLineup[libFrontIdx] = benchPlayer.id;
+            newSwappedOutId = null;
+            autoSubbedMsg = `Libero auto-subbed out for #${benchPlayer.number} ${benchPlayer.name}`;
           } else {
-            // Find an available bench player to take front row slot
-            const benchPlayer = sortedRoster.find(
-              (p) => (showRetired || !p.isRetired) && !newLineup.includes(p.id) && p.id !== liberoId,
+            const fallbackPlayer = sortedRoster.find(
+              (p) => p.id !== currentLiberoId && !newLineup.includes(p.id),
             );
-            if (benchPlayer) {
-              newLineup[libFrontIdx] = benchPlayer.id;
-              setLiberoSwappedOutId(null);
-              showToast(`Libero auto-subbed out for #${benchPlayer.number} ${benchPlayer.name}`, "info");
+            if (fallbackPlayer) {
+              newLineup[libFrontIdx] = fallbackPlayer.id;
+              newSwappedOutId = null;
+              autoSubbedMsg = `Libero auto-subbed out for #${fallbackPlayer.number} ${fallbackPlayer.name}`;
             } else {
-              promptLiberoOut = true;
+              newSwappedOutId = null;
             }
           }
         }
       }
-      nextL = newLineup;
-      return newLineup;
-    });
-    if (nextL.length > 0) {
-      updateSetState({ lineup: nextL });
     }
-    if (promptLiberoOut) {
-      setLiberoPromptPlayerId(liberoId);
-      setShowLiberoOutModal(true);
-    }
+    return { newLineup, newSwappedOutId, autoSubbedMsg };
   };
-  const rotateOpp = () => {
-    let nextL: string[] = [];
-    pushToHistory();
-    setOppLineup((prev) => {
-      const newLineup = [...prev.slice(1), prev[0]];
-      // If opp libero rotates to front row
-      if (
-        oppLiberoId &&
-        (newLineup[1] === oppLiberoId ||
-          newLineup[2] === oppLiberoId ||
-          newLineup[3] === oppLiberoId)
-      ) {
-        const oppLibIdx = newLineup.indexOf(oppLiberoId);
-        if (oppLibIdx !== -1 && oppLiberoSwappedOutId && !newLineup.includes(oppLiberoSwappedOutId)) {
-          newLineup[oppLibIdx] = oppLiberoSwappedOutId;
-          setOppLiberoSwappedOutId(null);
+
+  const computeRotatedOppLineup = (
+    currentOppLineup: string[],
+    currentOppLiberoId: string | null,
+    oppSwappedOutId: string | null,
+  ) => {
+    if (!Array.isArray(currentOppLineup) || currentOppLineup.length !== 6) {
+      return {
+        newOppLineup: Array.isArray(currentOppLineup) ? [...currentOppLineup] : [],
+        newOppSwappedOutId: oppSwappedOutId,
+      };
+    }
+    const newOppLineup = [...currentOppLineup.slice(1), currentOppLineup[0]];
+    let newOppSwappedOutId = oppSwappedOutId;
+    if (
+      currentOppLiberoId &&
+      (newOppLineup[1] === currentOppLiberoId ||
+        newOppLineup[2] === currentOppLiberoId ||
+        newOppLineup[3] === currentOppLiberoId)
+    ) {
+      const oppLibIdx = newOppLineup.indexOf(currentOppLiberoId);
+      if (oppLibIdx !== -1) {
+        if (newOppSwappedOutId && !newOppLineup.includes(newOppSwappedOutId)) {
+          newOppLineup[oppLibIdx] = newOppSwappedOutId;
+          newOppSwappedOutId = null;
+        } else {
+          newOppLineup[oppLibIdx] = `O${oppLibIdx + 1}`;
+          newOppSwappedOutId = null;
         }
       }
-      nextL = newLineup;
-      return newLineup;
-    });
-    if (nextL.length > 0) {
-      updateSetState({ oppLineup: nextL });
     }
+    return { newOppLineup, newOppSwappedOutId };
+  };
+
+  const rotateUCC = (explicitLineup?: string[]) => {
+    pushToHistory();
+    const source = explicitLineup || lineup;
+    const { newLineup, newSwappedOutId, autoSubbedMsg } =
+      computeRotatedUCCLineup(source, liberoId, liberoSwappedOutId);
+    setLineup(newLineup);
+    setLiberoSwappedOutId(newSwappedOutId);
+    updateSetState({
+      lineup: newLineup,
+      liberoSwappedOutId: newSwappedOutId,
+    });
+    if (autoSubbedMsg) {
+      showToast(autoSubbedMsg, "info");
+    }
+    return { newLineup, newSwappedOutId };
+  };
+
+  const rotateOpp = (explicitOppLineup?: string[]) => {
+    pushToHistory();
+    const source = explicitOppLineup || oppLineup;
+    const { newOppLineup, newOppSwappedOutId } =
+      computeRotatedOppLineup(source, oppLiberoId, oppLiberoSwappedOutId);
+    setOppLineup(newOppLineup);
+    setOppLiberoSwappedOutId(newOppSwappedOutId);
+    updateSetState({
+      oppLineup: newOppLineup,
+      oppLiberoSwappedOutId: newOppSwappedOutId,
+    });
+    return { newOppLineup, newOppSwappedOutId };
   };
 
   const changeRallyPhase = (newPhase) => {
@@ -4501,19 +4572,42 @@ export default function App() {
     setScore({ ucc: newUcc, opp: newOpp });
 
     let nextServing = serving;
+    let nextPhase = "serve";
+    let updatedLineup: string[] | null = null;
+    let updatedLiberoSwappedOut: string | null = liberoSwappedOutId;
+    let updatedOppLineup: string[] | null = null;
+    let updatedOppLiberoSwappedOut: string | null = oppLiberoSwappedOutId;
+
     if (team === "ucc") {
       if (serving === "opp") {
         nextServing = "ucc";
+        nextPhase = "serve";
         setServing("ucc");
-        rotateUCC();
+        const res = rotateUCC();
+        updatedLineup = res.newLineup;
+        updatedLiberoSwappedOut = res.newSwappedOutId;
+      } else {
+        nextServing = "ucc";
+        nextPhase = "serve";
+        setServing("ucc");
       }
     } else {
       if (serving === "ucc") {
         nextServing = "opp";
+        nextPhase = "receive";
         setServing("opp");
-        rotateOpp();
+        const res = rotateOpp();
+        updatedOppLineup = res.newOppLineup;
+        updatedOppLiberoSwappedOut = res.newOppSwappedOutId;
+      } else {
+        nextServing = "opp";
+        nextPhase = "receive";
+        setServing("opp");
       }
     }
+
+    setServing(nextServing);
+    setRallyPhase(nextPhase);
 
     const targetSetId =
       activeSetId ||
@@ -4595,7 +4689,9 @@ export default function App() {
       scoreOpp: newOpp,
       pointHistory: updatedPointHistory,
       serving: nextServing,
-      rallyPhase: "serve",
+      rallyPhase: nextPhase,
+      ...(updatedLineup ? { lineup: updatedLineup, liberoSwappedOutId: updatedLiberoSwappedOut } : {}),
+      ...(updatedOppLineup ? { oppLineup: updatedOppLineup, oppLiberoSwappedOutId: updatedOppLiberoSwappedOut } : {}),
     });
 
     const winner = checkSetWin(newUcc, newOpp);
@@ -4603,7 +4699,7 @@ export default function App() {
       setSetWinnerModal(winner);
       setNextSetServing(nextServing === "ucc" ? "opp" : "ucc");
     } else {
-      changeRallyPhase("serve");
+      changeRallyPhase(nextPhase);
     }
   };
 
@@ -5343,9 +5439,11 @@ export default function App() {
     const index = oppLineup.indexOf(target);
     if (index === -1) return;
     const newLineup = [...oppLineup];
+    let newOppSwappedOut: string | null = null;
     if (target === oppLiberoId) {
       newLineup[index] = oppLiberoSwappedOutId || "";
       setOppLiberoSwappedOutId(null);
+      newOppSwappedOut = null;
     } else {
       const currentOppLibIdx = newLineup.indexOf(oppLiberoId);
       if (currentOppLibIdx !== -1 && oppLiberoSwappedOutId) {
@@ -5353,9 +5451,13 @@ export default function App() {
       }
       setOppLiberoSwappedOutId(target);
       newLineup[index] = oppLiberoId;
+      newOppSwappedOut = target;
     }
     setOppLineup(newLineup);
-    updateSetState({ oppLineup: newLineup });
+    updateSetState({
+      oppLineup: newLineup,
+      oppLiberoSwappedOutId: newOppSwappedOut,
+    });
     setSelectedOppId(null);
   };
 
@@ -5406,16 +5508,28 @@ export default function App() {
     const index = lineup.indexOf(target);
     if (index === -1) return;
     const newLineup = [...lineup];
+    let newSwappedOut: string | null = null;
     if (target === liberoId) {
       // Swapping Libero OUT -> restore original swapped out player
       if (liberoSwappedOutId) {
         newLineup[index] = liberoSwappedOutId;
         setLiberoSwappedOutId(null);
+        newSwappedOut = null;
       } else {
-        // Prompt for replacement bench player to enter without charging a sub
-        setLiberoPromptPlayerId(target);
-        setShowLiberoOutModal(true);
-        return;
+        // Find bench player to take spot without prompt if possible
+        const benchPlayer = sortedRoster.find(
+          (p) => (showRetired || !p.isRetired) && !newLineup.includes(p.id) && p.id !== liberoId,
+        );
+        if (benchPlayer) {
+          newLineup[index] = benchPlayer.id;
+          setLiberoSwappedOutId(null);
+          newSwappedOut = null;
+          showToast(`Libero swapped out for #${benchPlayer.number} ${benchPlayer.name}`, "info");
+        } else {
+          setLiberoPromptPlayerId(target);
+          setShowLiberoOutModal(true);
+          return;
+        }
       }
     } else {
       // Swapping Libero IN for this back-row player
@@ -5425,9 +5539,13 @@ export default function App() {
       }
       setLiberoSwappedOutId(target);
       newLineup[index] = liberoId;
+      newSwappedOut = target;
     }
     setLineup(newLineup);
-    updateSetState({ lineup: newLineup });
+    updateSetState({
+      lineup: newLineup,
+      liberoSwappedOutId: newSwappedOut,
+    });
     setSelectedPlayerId(null);
   };
 
@@ -11745,6 +11863,8 @@ export default function App() {
                             oppNotesMem[oppId].trim() !== "";
                           const isSetter = oppId === oppSetterId;
                           const isLibero = oppId === oppLiberoId;
+                          const isServer = idx === 0 && serving === "opp";
+                          const posLabel = idx === 0 ? "Pos 1" : idx === 5 ? "Pos 6" : "Pos 5";
                           return (
                             <button
                               key={idx}
@@ -11763,8 +11883,16 @@ export default function App() {
                                   size={12}
                                 />
                               )}
-                              <span className="text-sm sm:text-xl drop-shadow-md">
+                              {isServer && (
+                                <div className="absolute -bottom-1 -right-1 sm:-bottom-3 sm:-right-3 text-lg sm:text-3xl drop-shadow-md animate-bounce z-30">
+                                  <span className="text-[10px] font-black uppercase bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded shadow-xs">SRV</span>
+                                </div>
+                              )}
+                              <span className="text-sm sm:text-xl drop-shadow-md leading-none">
                                 {oppId}
+                              </span>
+                              <span className="text-[7px] sm:text-[9px] font-bold text-white/70 uppercase">
+                                {posLabel}
                               </span>
                             </button>
                           );
@@ -11778,6 +11906,7 @@ export default function App() {
                             oppNotesMem[oppId].trim() !== "";
                           const isSetter = oppId === oppSetterId;
                           const isLibero = oppId === oppLiberoId;
+                          const posLabel = idx === 1 ? "Pos 2" : idx === 2 ? "Pos 3" : "Pos 4";
                           return (
                             <button
                               key={idx}
@@ -11796,8 +11925,11 @@ export default function App() {
                                   size={12}
                                 />
                               )}
-                              <span className="text-sm sm:text-xl drop-shadow-md">
+                              <span className="text-sm sm:text-xl drop-shadow-md leading-none">
                                 {oppId}
+                              </span>
+                              <span className="text-[7px] sm:text-[9px] font-bold text-white/70 uppercase">
+                                {posLabel}
                               </span>
                             </button>
                           );
