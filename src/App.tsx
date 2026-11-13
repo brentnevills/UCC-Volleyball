@@ -768,6 +768,9 @@ export default function App() {
   const [showLiberoDesignateModal, setShowLiberoDesignateModal] = useState(false);
   const [liberoPromptPlayerId, setLiberoPromptPlayerId] = useState<string | null>(null);
   const [showLiberoOutModal, setShowLiberoOutModal] = useState(false);
+  const [liberoManualOverride, setLiberoManualOverride] = useState(false);
+  const [oppPassingAskedForMatch, setOppPassingAskedForMatch] = useState(false);
+  const [askOppPassingModal, setAskOppPassingModal] = useState<{ serverId: string } | null>(null);
   const [showOppLineupPrompt, setShowOppLineupPrompt] = useState(false);
   const [tempOppLineup, setTempOppLineup] = useState(["", "", "", "", "", ""]);
   const [newOppNumber, setNewOppNumber] = useState("");
@@ -2839,6 +2842,67 @@ export default function App() {
     return [...uniqueRoster].sort(sortPlayersByNumberThenAlpha);
   }, [appData.roster, sortPlayersByNumberThenAlpha]);
 
+  const inferAutoLiberoId = useCallback(
+    (targetLineup: (string | null)[], preferredLiberoId?: string | null): string => {
+      const activePlayers = sortedRoster.filter((p: any) => showRetired || !p.isRetired);
+      const starterIds = new Set((targetLineup || []).filter(Boolean) as string[]);
+      const offCourt = activePlayers.filter((p: any) => !starterIds.has(p.id));
+      if (offCourt.length === 0) return "";
+
+      // 1. If 6 starters are chosen and exactly 1 active player remains off court, that player is the Libero
+      if (starterIds.size === 6 && offCourt.length === 1) {
+        return offCourt[0].id;
+      }
+
+      // 2. Keep an explicit off-court preferred Libero if still off the starting court
+      if (
+        preferredLiberoId &&
+        !starterIds.has(preferredLiberoId) &&
+        offCourt.some((p: any) => p.id === preferredLiberoId)
+      ) {
+        return preferredLiberoId;
+      }
+
+      // 3. Auto-detect an off-court player marked as Libero on the roster
+      const rosterLibero = offCourt.find((p: any) => p.isLibero || p.position === "Libero");
+      if (rosterLibero) return rosterLibero.id;
+
+      // 4. Fallback: previously saved lineup preset or recent set Libero currently off court
+      const savedLineupVals = Object.values(appData.savedLineups || {}) as any[];
+      for (const preset of savedLineupVals) {
+        if (
+          preset?.liberoId &&
+          !starterIds.has(preset.liberoId) &&
+          offCourt.some((p: any) => p.id === preset.liberoId)
+        ) {
+          return preset.liberoId;
+        }
+      }
+      const pastSets = [...(appData.sets || [])].reverse();
+      for (const s of pastSets) {
+        if (
+          s?.liberoId &&
+          !starterIds.has(s.liberoId) &&
+          offCourt.some((p: any) => p.id === s.liberoId)
+        ) {
+          return s.liberoId;
+        }
+      }
+
+      return "";
+    },
+    [sortedRoster, showRetired, appData.savedLineups, appData.sets],
+  );
+
+  useEffect(() => {
+    if (view === "setup") {
+      const nextLib = inferAutoLiberoId(lineup, liberoManualOverride ? liberoId : "");
+      if (nextLib !== liberoId) {
+        setLiberoId(nextLib);
+      }
+    }
+  }, [view, lineup, inferAutoLiberoId, liberoManualOverride, liberoId]);
+
   const updateSetState = async (updates: any, overrideSetId?: string) => {
     const targetSetId = overrideSetId || activeSetId;
     if (!targetSetId) return;
@@ -3315,17 +3379,19 @@ export default function App() {
 
     if (targetCourt === "setup") {
       setLineup(loadedLineup);
-      setLiberoId(loadedLibero);
+      const resolvedLib = inferAutoLiberoId(loadedLineup, loadedLibero);
+      setLiberoId(resolvedLib);
+      setLiberoManualOverride(Boolean(loadedLibero && resolvedLib === loadedLibero));
     } else if (targetCourt === "inGame") {
       setTempInGameLineup(loadedLineup);
-      setTempInGameLibero(loadedLibero);
+      setTempInGameLibero(inferAutoLiberoId(loadedLineup, loadedLibero) || loadedLibero);
     } else if (targetCourt === "betweenSets") {
       setBetweenSetsModal((prev) => {
         if (!prev) return null;
         return {
           ...prev,
           tempLineup: loadedLineup,
-          tempLibero: loadedLibero,
+          tempLibero: inferAutoLiberoId(loadedLineup, loadedLibero),
         };
       });
     }
@@ -3475,6 +3541,8 @@ export default function App() {
 
     setMatchType(type);
     setView("setup");
+    setLiberoManualOverride(false);
+    setOppPassingAskedForMatch(false);
     if (activeMatch) {
       setActiveMatch(null);
       setActiveSetId(null);
@@ -3554,6 +3622,7 @@ export default function App() {
       setOppLiberoId(opp.liberoId || "");
     }
 
+    setOppPassingAskedForMatch(false);
     setView("game");
   };
 
@@ -3813,6 +3882,8 @@ export default function App() {
         }
       }
       setLineup(safeLineup);
+      const resolvedStartLibero = inferAutoLiberoId(safeLineup, liberoId);
+      setLiberoId(resolvedStartLibero);
 
       const newSet = {
         id: setId,
@@ -3822,7 +3893,7 @@ export default function App() {
         scoreOpp: 0,
         lineup: safeLineup,
         oppLineup: finalOppLineup,
-        liberoId: liberoId || "",
+        liberoId: resolvedStartLibero || "",
         oppLiberoId: oppLiberoId || "",
         liberoSwappedOutId: liberoSwappedOutId || null,
         oppLiberoSwappedOutId: oppLiberoSwappedOutId || null,
@@ -3860,6 +3931,7 @@ export default function App() {
       setTeamStats({ uccSubs: 0, oppSubs: 0, uccTimeouts: 0, oppTimeouts: 0 });
       setHistory([]);
       setShowOppLineupPrompt(false);
+      setOppPassingAskedForMatch(true);
       setView("game");
       setRallyPhase((serving || "ucc") === "ucc" ? "serve" : "receive");
       setServePromptVisible(true);
@@ -5167,6 +5239,9 @@ export default function App() {
       if (team === "opp") {
         changeRallyPhase("receive");
         setOppServeReceivePrompt({ passerId: null, serverId });
+      } else if (!oppPassingAskedForMatch) {
+        changeRallyPhase("play");
+        setAskOppPassingModal({ serverId });
       } else {
         changeRallyPhase(
           trackOppReceives ? "opp_receive" : "play",
@@ -11128,33 +11203,47 @@ export default function App() {
                 </div>
                 {matchType !== "Practice" && (
                   <>
-                    <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
+                    <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200 gap-2">
                       <div className="flex flex-col ml-2">
                         <label className="text-[10px] sm:text-[12px] font-black text-slate-700 uppercase tracking-widest">
-                          Track Opponent Serve Receive
+                          Track Opponent Passing?
                         </label>
                         <span className="text-[9px] text-slate-400 font-medium">
-                          Asks who on the other team passed (3–0 rating) after In Play serve
+                          Asks who on the other team passed (3–0 rating) after our serves
                         </span>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="sr-only peer"
-                          checked={trackOppReceives}
-                          onChange={(e) => {
-                            setTrackOppReceives(e.target.checked);
-                            localStorage.setItem("ucc_track_opp_receives", e.target.checked.toString());
-                            showToast(
-                              e.target.checked
-                                ? "Opponent serve receive tracking enabled"
-                                : "Opponent serve receive tracking disabled",
-                              "info",
-                            );
+                      <div className="flex gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTrackOppReceives(true);
+                            setOppPassingAskedForMatch(true);
+                            localStorage.setItem("ucc_track_opp_receives", "true");
                           }}
-                        />
-                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0033A0]"></div>
-                      </label>
+                          className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                            trackOppReceives
+                              ? "bg-[#0033A0] text-white shadow-sm"
+                              : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                          }`}
+                        >
+                          Yes
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTrackOppReceives(false);
+                            setOppPassingAskedForMatch(true);
+                            localStorage.setItem("ucc_track_opp_receives", "false");
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                            !trackOppReceives
+                              ? "bg-slate-800 text-white shadow-sm"
+                              : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                          }`}
+                        >
+                          No
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200">
@@ -11331,10 +11420,10 @@ export default function App() {
               </div>
 
               <div className="flex flex-wrap justify-between items-center mb-3 sm:mb-4 gap-2">
-                <div className="flex items-center space-x-1.5 sm:space-x-2 bg-slate-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200">
+                <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 bg-slate-50 px-2.5 sm:px-3 py-1.5 rounded-lg sm:rounded-xl border border-slate-200">
                   <Shield
                     size={14}
-                    className="text-[#0033A0] hidden sm:block"
+                    className="text-amber-500 hidden sm:block"
                   />
                   <span className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">
                     Libero:
@@ -11342,25 +11431,36 @@ export default function App() {
                   <select
                     className="bg-transparent border-none font-black text-[#0033A0] focus:ring-0 outline-none cursor-pointer text-xs sm:text-sm"
                     value={liberoId}
-                    onChange={(e) => setLiberoId(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setLiberoId(val);
+                      setLiberoManualOverride(Boolean(val));
+                    }}
                   >
                     <option value="">None</option>
                     {sortedRoster
-                      .filter((p) => showRetired || !p.isRetired)
+                      .filter((p) => (showRetired || !p.isRetired) && !lineup.includes(p.id))
                       .map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.number ? `#${p.number} ` : ""}{p.name}
                         </option>
                       ))}
                   </select>
+                  <span className="text-[8px] sm:text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded border border-amber-200">
+                    {liberoManualOverride ? "Manual" : "Auto from Lineup"}
+                  </span>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => {
-                    const available = sortedRoster.filter(
-                      (p) => (showRetired || !p.isRetired) && p.id !== liberoId,
+                    const nonLiberoAvailable = sortedRoster.filter(
+                      (p) => (showRetired || !p.isRetired) && !(p.isLibero || p.position === "Libero") && p.id !== liberoId,
                     );
+                    const fallbackAvailable = sortedRoster.filter(
+                      (p) => showRetired || !p.isRetired,
+                    );
+                    const available = nonLiberoAvailable.length >= 6 ? nonLiberoAvailable : fallbackAvailable;
                     const newLineup = [...lineup];
                     let aIdx = 0;
                     for (let i = 0; i < 6; i++) {
@@ -11377,6 +11477,8 @@ export default function App() {
                       }
                     }
                     setLineup(newLineup);
+                    setLiberoManualOverride(false);
+                    setLiberoId(inferAutoLiberoId(newLineup, liberoId));
                     showToast("Starters automatically assigned to court", "success");
                   }}
                   className="bg-blue-50 hover:bg-blue-100 text-[#0033A0] border border-blue-200 font-bold px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -11406,18 +11508,27 @@ export default function App() {
                         className="p-2 sm:p-3 bg-transparent font-black text-slate-800 outline-none w-full appearance-none cursor-pointer text-center text-sm sm:text-base"
                         value={lineup[arrIdx] || ""}
                         onChange={(e) => {
+                          const val = e.target.value;
                           const newLineup = [...lineup];
-                          newLineup[arrIdx] = e.target.value;
+                          if (val) {
+                            const existingIdx = newLineup.findIndex((p, i) => i !== arrIdx && p === val);
+                            if (existingIdx !== -1) {
+                              newLineup[existingIdx] = newLineup[arrIdx] || null;
+                            }
+                          }
+                          newLineup[arrIdx] = val || null;
                           setLineup(newLineup);
+                          if (val && val === liberoId) {
+                            setLiberoManualOverride(false);
+                            setLiberoId(inferAutoLiberoId(newLineup, ""));
+                          } else {
+                            setLiberoId(inferAutoLiberoId(newLineup, liberoManualOverride ? liberoId : ""));
+                          }
                         }}
                       >
                         <option value="">Select Player</option>
                         {sortedRoster
-                          .filter(
-                            (p) =>
-                              (showRetired || !p.isRetired) &&
-                              p.id !== liberoId,
-                          )
+                          .filter((p) => showRetired || !p.isRetired)
                           .map((p) => (
                             <option
                               key={p.id}
@@ -11426,7 +11537,7 @@ export default function App() {
                                 lineup.includes(p.id) && lineup[arrIdx] !== p.id
                               }
                             >
-                              {p.number ? `#${p.number} ` : ""}{p.name}
+                              {p.number ? `#${p.number} ` : ""}{p.name}{(p.isLibero || p.position === "Libero") ? " (L)" : ""}
                             </option>
                           ))}
                       </select>
@@ -11626,10 +11737,28 @@ export default function App() {
                       </div>
                       <div className="flex items-center space-x-1 shrink-0 ml-2">
                         <button
+                          type="button"
+                          onClick={() => {
+                            const nextIsLib = !(p.isLibero || p.position === "Libero");
+                            updatePlayer(p.id, {
+                              isLibero: nextIsLib,
+                              position: nextIsLib ? "Libero" : "",
+                            });
+                          }}
+                          className={`text-[10px] sm:text-xs px-2 py-1 rounded font-bold uppercase tracking-wider cursor-pointer transition-colors ${
+                            p.isLibero || p.position === "Libero"
+                              ? "bg-amber-500 text-white hover:bg-amber-600"
+                              : "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                          }`}
+                          title="Designate as team Libero"
+                        >
+                          {p.isLibero || p.position === "Libero" ? "Libero" : "Set Lib"}
+                        </button>
+                        <button
                           onClick={() =>
                             updatePlayer(p.id, { isRetired: !p.isRetired })
                           }
-                          className={`text-[10px] sm:text-xs ml-2 px-2 py-1 rounded font-bold uppercase tracking-widest ${p.isRetired ? "bg-amber-100 text-amber-700 hover:bg-amber-200" : "bg-slate-200 text-slate-500 hover:bg-slate-300"}`}
+                          className={`text-[10px] sm:text-xs px-2 py-1 rounded font-bold uppercase tracking-widest ${p.isRetired ? "bg-amber-100 text-amber-700 hover:bg-amber-200" : "bg-slate-200 text-slate-500 hover:bg-slate-300"}`}
                         >
                           {p.isRetired ? "Unretire" : "Retire"}
                         </button>
@@ -11735,6 +11864,48 @@ export default function App() {
                     onChange={(e) => setOppLiberoId(e.target.value)}
                     className="w-12 sm:w-16 bg-white p-1.5 sm:p-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-slate-400 outline-none text-center font-black text-slate-700 uppercase shadow-sm text-sm sm:text-base"
                   />
+                </div>
+                <div className="flex items-center justify-between bg-blue-50/70 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl border border-blue-200 gap-2">
+                  <div className="flex flex-col">
+                    <label className="font-black text-slate-800 uppercase tracking-wider text-xs sm:text-sm">
+                      Track Opponent Passing?
+                    </label>
+                    <span className="text-[10px] text-slate-500 font-medium">
+                      Ask who passed (3–0) after Lancers serves
+                    </span>
+                  </div>
+                  <div className="flex gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTrackOppReceives(true);
+                        setOppPassingAskedForMatch(true);
+                        localStorage.setItem("ucc_track_opp_receives", "true");
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                        trackOppReceives
+                          ? "bg-[#0033A0] text-white shadow-sm"
+                          : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      Yes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTrackOppReceives(false);
+                        setOppPassingAskedForMatch(true);
+                        localStorage.setItem("ucc_track_opp_receives", "false");
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                        !trackOppReceives
+                          ? "bg-slate-800 text-white shadow-sm"
+                          : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      No
+                    </button>
+                  </div>
                 </div>
                 <div className="flex gap-2 sm:gap-3">
                   <button
@@ -13151,39 +13322,28 @@ export default function App() {
               <span className="hidden sm:inline">UNDO</span>
             </button>
             {(rallyPhase === "serve" || (rallyPhase === "receive" && serving === "opp")) && !servePromptVisible ? (
-              <div className="flex-1 min-w-[100px] flex gap-1">
-                <button
-                  onClick={() => {
-                    if (serving === "opp") {
-                      setOppServeReceivePrompt({
-                        passerId: null,
-                        serverId: oppLineup[0],
-                      });
-                    } else {
-                      setServePromptVisible(true);
-                    }
-                  }}
-                  className={`flex-1 bg-gradient-to-b ${
-                    serving === "opp"
-                      ? "from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30"
-                      : "from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30"
-                  } text-white py-2 sm:py-3.5 px-2 rounded-xl sm:rounded-2xl font-black text-xs sm:text-base transition-all active:scale-95 tracking-wider uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer min-h-[44px]`}
-                >
-                  <span>{serving === "opp" ? "OPP SERVE" : "SERVE"}</span>
-                  <span className="text-[7px] sm:text-[9px] tracking-wider opacity-85 mt-0.5 hidden sm:inline">
-                    {serving === "opp" ? "TAP TO PASS" : "TAP WHEN SERVED"}
-                  </span>
-                </button>
-                {isGameStarter && (
-                  <button
-                    onClick={() => setEndRallyVisible(true)}
-                    className="px-2.5 sm:px-3 py-2 bg-gradient-to-b from-[#0044cc] to-[#001b5e] hover:from-[#0055ff] hover:to-[#002277] text-white rounded-xl sm:rounded-2xl font-black text-[10px] sm:text-xs uppercase tracking-wider border-t border-blue-400/30 transition-all active:scale-95 min-h-[44px] shrink-0"
-                    title="End Rally & Award Point"
-                  >
-                    +Pt
-                  </button>
-                )}
-              </div>
+              <button
+                onClick={() => {
+                  if (serving === "opp") {
+                    setOppServeReceivePrompt({
+                      passerId: null,
+                      serverId: oppLineup[0],
+                    });
+                  } else {
+                    setServePromptVisible(true);
+                  }
+                }}
+                className={`flex-1 min-w-[90px] bg-gradient-to-b ${
+                  serving === "opp"
+                    ? "from-purple-600 to-indigo-800 hover:from-purple-500 hover:to-indigo-700 shadow-[0_5px_15px_rgba(147,51,234,0.4)] border-t border-purple-400/30"
+                    : "from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 shadow-[0_5px_15px_rgba(34,197,94,0.4)] border-t border-green-400/30"
+                } text-white py-2 sm:py-3.5 px-2 rounded-xl sm:rounded-2xl font-black text-xs sm:text-base transition-all active:scale-95 tracking-wider uppercase animate-pulse flex flex-col items-center justify-center leading-none cursor-pointer min-h-[44px]`}
+              >
+                <span>{serving === "opp" ? "OPP SERVE" : "SERVE"}</span>
+                <span className="text-[7px] sm:text-[9px] tracking-wider opacity-85 mt-0.5 hidden sm:inline">
+                  {serving === "opp" ? "TAP TO PASS" : "TAP WHEN SERVED"}
+                </span>
+              </button>
             ) : isGameStarter ? (
               <button
                 onClick={() => setEndRallyVisible(true)}
@@ -13392,6 +13552,9 @@ export default function App() {
                         if (wasOpp) {
                           changeRallyPhase("receive");
                           setOppServeReceivePrompt({ passerId: null, serverId: statPrompt.playerId });
+                        } else if (!oppPassingAskedForMatch) {
+                          changeRallyPhase("play");
+                          setAskOppPassingModal({ serverId: statPrompt.playerId });
                         } else {
                           changeRallyPhase(trackOppReceives ? "opp_receive" : "play");
                           if (trackOppReceives) {
@@ -13842,12 +14005,17 @@ export default function App() {
                         setSelectedPlayerId(null);
                         pushToHistory();
                         logStat(selectedPlayerId, "Serve", "Attempt", 1, false);
-                        changeRallyPhase(trackOppReceives ? "opp_receive" : "play");
-                        if (trackOppReceives) {
-                          setOppPassingPrompt({
-                            passerId: null,
-                            serverId: selectedPlayerId,
-                          });
+                        if (!oppPassingAskedForMatch) {
+                          changeRallyPhase("play");
+                          setAskOppPassingModal({ serverId: selectedPlayerId });
+                        } else {
+                          changeRallyPhase(trackOppReceives ? "opp_receive" : "play");
+                          if (trackOppReceives) {
+                            setOppPassingPrompt({
+                              passerId: null,
+                              serverId: selectedPlayerId,
+                            });
+                          }
                         }
                       }}
                       className="bg-gradient-to-b from-blue-500 to-blue-600 text-white py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl font-black text-sm sm:text-base shadow-sm active:scale-95 border-t border-white/20 cursor-pointer"
@@ -16046,7 +16214,10 @@ export default function App() {
                               return {
                                 ...prev,
                                 tempLineup: p.lineup || [null, null, null, null, null, null],
-                                tempLibero: p.liberoId || "",
+                                tempLibero: inferAutoLiberoId(
+                                  p.lineup || [null, null, null, null, null, null],
+                                  p.liberoId || "",
+                                ),
                               };
                             });
                             showToast(`Loaded preset "${name}"`, "info");
@@ -16119,7 +16290,11 @@ export default function App() {
                                   }
                                 }
                               }
-                              return { ...prev, tempLineup: nextL };
+                              return {
+                                ...prev,
+                                tempLineup: nextL,
+                                tempLibero: inferAutoLiberoId(nextL, prev.tempLibero),
+                              };
                             });
                             showToast("Open court slots filled from roster", "info");
                           }}
@@ -16136,7 +16311,11 @@ export default function App() {
                               const cur = [...(prev.tempLineup || [])];
                               while (cur.length < 6) cur.push("");
                               const rotated = [cur[1], cur[2], cur[3], cur[4], cur[5], cur[0]];
-                              return { ...prev, tempLineup: rotated };
+                              return {
+                                ...prev,
+                                tempLineup: rotated,
+                                tempLibero: inferAutoLiberoId(rotated, prev.tempLibero),
+                              };
                             });
                           }}
                           className="text-[9px] font-black uppercase tracking-wider bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded-lg border border-white/20 flex items-center gap-1 transition-colors cursor-pointer"
@@ -16183,7 +16362,11 @@ export default function App() {
                                     }
                                   }
                                   nextL[idx] = val;
-                                  return { ...prev, tempLineup: nextL };
+                                  return {
+                                    ...prev,
+                                    tempLineup: nextL,
+                                    tempLibero: inferAutoLiberoId(nextL, val === prev.tempLibero ? "" : prev.tempLibero),
+                                  };
                                 });
                               }}
                               className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none cursor-pointer"
@@ -16245,7 +16428,11 @@ export default function App() {
                                     }
                                   }
                                   nextL[idx] = val;
-                                  return { ...prev, tempLineup: nextL };
+                                  return {
+                                    ...prev,
+                                    tempLineup: nextL,
+                                    tempLibero: inferAutoLiberoId(nextL, val === prev.tempLibero ? "" : prev.tempLibero),
+                                  };
                                 });
                               }}
                               className="w-full bg-slate-800 text-white border border-white/20 rounded-lg px-2 py-1.5 text-xs font-bold outline-none cursor-pointer"
@@ -17401,6 +17588,50 @@ export default function App() {
                       <span className="text-xs font-black text-blue-600 uppercase">Return to Court</span>
                     </button>
                   ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {askOppPassingModal && (
+          <div className="fixed inset-0 bg-slate-950/80 z-[130] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-150">
+            <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden border border-slate-200">
+              <div className="bg-gradient-to-r from-[#001b5e] to-[#0033A0] p-5 text-white text-center">
+                <h3 className="font-black text-base sm:text-lg uppercase tracking-wider">
+                  Track Opponent Passing?
+                </h3>
+                <p className="text-xs text-blue-200 mt-1">
+                  Record which opponent passed and their pass rating (3–0) after Lancers serves in this match?
+                </p>
+              </div>
+              <div className="p-5 flex flex-col gap-2.5 bg-slate-50">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sId = askOppPassingModal.serverId;
+                    setTrackOppReceives(true);
+                    setOppPassingAskedForMatch(true);
+                    localStorage.setItem("ucc_track_opp_receives", "true");
+                    setAskOppPassingModal(null);
+                    changeRallyPhase("opp_receive");
+                    setOppPassingPrompt({ passerId: null, serverId: sId });
+                  }}
+                  className="w-full py-3.5 bg-[#0033A0] hover:bg-blue-800 text-white rounded-xl font-black text-sm uppercase tracking-wider shadow-sm active:scale-95 transition-all cursor-pointer"
+                >
+                  Yes, Track Opponent Passing
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTrackOppReceives(false);
+                    setOppPassingAskedForMatch(true);
+                    localStorage.setItem("ucc_track_opp_receives", "false");
+                    setAskOppPassingModal(null);
+                    changeRallyPhase("play");
+                  }}
+                  className="w-full py-3 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl font-black text-sm uppercase tracking-wider active:scale-95 transition-all cursor-pointer"
+                >
+                  No, Skip Opponent Passing
+                </button>
               </div>
             </div>
           </div>
